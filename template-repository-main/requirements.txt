@@ -1,0 +1,50 @@
+# Python Dependencies for Transport AR Installation
+# Install with: pip install -r requirements.txt
+
+# GTFS Data Processing
+pandas>=2.0.0
+gtfs-realtime-bindings>=1.0.0
+requests>=2.31.0
+
+# Geographic Data (optional but recommended)
+geopandas>=0.14.0
+shapely>=2.0.0
+
+# Data Validation
+protobuf>=4.24.0
+
+# Utilities
+python-dotenv>=1.0.0
+pytz>=2023.3
+
+# Development/Testing (optional)
+pytest>=7.4.0
+pytest-cov>=4.1.0
+black>=23.7.0
+flake8>=6.1.0
+
+# Web Framework (if building web-based AR)
+# Uncomment if needed:
+# flask>=2.3.0
+# fastapi>=0.100.0
+# uvicorn>=0.23.0
+
+# Visualization (examples)
+# Uncomment based on your needs:
+# matplotlib>=3.7.0
+# plotly>=5.15.0
+# folium>=0.14.0
+
+# AR Frameworks (examples - choose based on your approach)
+# pygame>=2.5.0  # For 2D/simple 3D
+# PyOpenGL>=3.1.0  # For OpenGL-based AR
+# panda3d>=1.10.0  # For 3D graphics
+
+# Real-time Processing
+# schedule>=1.2.0  # For periodic tasks
+# apscheduler>=3.10.0  # Advanced scheduling
+
+# Additional Utilities
+# pillow>=10.0.0  # Image processing
+# numpy>=1.24.0  # Numerical operations
+# scipy>=1.11.0  # Scientific computing

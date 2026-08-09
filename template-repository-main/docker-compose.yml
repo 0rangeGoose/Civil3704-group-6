@@ -1,0 +1,45 @@
+version: '3.8'
+
+services:
+  ar-transit:
+    build:
+      context: .
+      dockerfile: Dockerfile
+    container_name: ar-transit-app
+    volumes:
+      - ./src:/app/src
+      - ./data:/app/data
+      - ./config.json:/app/config.json
+      - ./.env:/app/.env
+    environment:
+      - PYTHONUNBUFFERED=1
+      - NODE_ENV=development
+    env_file:
+      - .env
+    ports:
+      - "8080:8080"   # Web interface (adjust as needed)
+      - "5000:5000"   # API server (adjust as needed)
+    command: ["make", "run"]
+    restart: unless-stopped
+    networks:
+      - ar-network
+
+networks:
+  ar-network:
+    driver: bridge
+
+# Optional: Add a service for development with hot reload
+# Uncomment and customize based on your stack
+#
+# ar-transit-dev:
+#   build:
+#     context: .
+#     dockerfile: Dockerfile.dev
+#   volumes:
+#     - ./src:/app/src
+#     - ./data:/app/data
+#   ports:
+#     - "8080:8080"
+#   command: ["make", "dev"]
+#   environment:
+#     - DEBUG=true
