@@ -9,8 +9,13 @@ import os
 import sys
 import json
 import logging
+import time
+from datetime import datetime, timezone
 from pathlib import Path
-from typing import Dict, Any
+from typing import Any, Dict
+
+import requests
+from google.transit import gtfs_realtime_pb2
 
 # Configure logging
 logging.basicConfig(
@@ -19,33 +24,82 @@ logging.basicConfig(
 )
 logger = logging.getLogger(__name__)
 
+DEFAULT_GTFS_RT_URL = "https://api.transport.nsw.gov.au/v1/gtfs/vehiclepos/buses"
+
 
 def load_config() -> Dict[str, Any]:
     """Load configuration from config.json"""
-    config_path = Path(__file__).parent.parent / 'config.json'
-    
-    if not config_path.exists():
-        logger.error("config.json not found. Run 'make setup' first.")
-        sys.exit(1)
-    
-    with open(config_path, 'r') as f:
-        return json.load(f)
+    repo_root = Path(__file__).parent.parent
+    config_path = repo_root / 'config.json'
+    example_path = repo_root / 'config.example.json'
+
+    if config_path.exists():
+        with open(config_path, 'r') as f:
+            return json.load(f)
+
+    if example_path.exists():
+        logger.warning("config.json not found, loading config.example.json instead")
+        with open(example_path, 'r') as f:
+            return json.load(f)
+
+    logger.warning("No config.json or config.example.json found; using empty config")
+    return {}
 
 
 def load_env():
     """Load environment variables from .env file"""
-    env_path = Path(__file__).parent.parent / '.env'
-    
-    if not env_path.exists():
+    repo_root = Path(__file__).parent.parent
+    env_path = repo_root / '.env'
+    alt_path = Path(__file__).parent / 'file.env'
+
+    target = None
+    if env_path.exists():
+        target = env_path
+    elif alt_path.exists():
+        logger.info("Using src/file.env as environment file")
+        target = alt_path
+    else:
         logger.warning(".env file not found. Using defaults.")
         return
-    
-    with open(env_path, 'r') as f:
+
+    with open(target, 'r') as f:
         for line in f:
             line = line.strip()
             if line and not line.startswith('#'):
                 key, _, value = line.partition('=')
                 os.environ[key.strip()] = value.strip()
+
+
+def download_gtfs_realtime_feed(url: str, api_key: str) -> gtfs_realtime_pb2.FeedMessage:
+    """Download and decode a GTFS-Realtime feed from the TfNSW Open Data Hub."""
+    response = requests.get(
+        url,
+        headers={"Authorization": f"apikey {api_key}"},
+        timeout=30,
+    )
+    response.raise_for_status()
+
+    feed = gtfs_realtime_pb2.FeedMessage()
+    feed.ParseFromString(response.content)
+    return feed
+
+
+def log_vehicle_positions(feed: gtfs_realtime_pb2.FeedMessage) -> None:
+    """Log up to ten vehicle positions from a decoded feed."""
+    feed_time = datetime.fromtimestamp(feed.header.timestamp, timezone.utc)
+    vehicles = [entity.vehicle for entity in feed.entity if entity.HasField("vehicle")]
+
+    logger.info(f"Feed timestamp: {feed_time:%Y-%m-%d %H:%M:%S %Z}")
+    logger.info(f"Vehicle positions: {len(vehicles)}")
+
+    for vehicle in vehicles[:10]:
+        label = vehicle.vehicle.label or vehicle.vehicle.id or "unknown"
+        route = vehicle.trip.route_id or "unknown"
+        latitude = vehicle.position.latitude
+        longitude = vehicle.position.longitude
+        logger.info(
+            f"{label:>12}  route={route:<10}  lat={latitude:.5f}  lon={longitude:.5f}"
+        )
 
 
 def check_gtfs_data(config: Dict[str, Any]) -> bool:
@@ -92,38 +146,40 @@ def main():
         sys.exit(1)
     
     logger.info("✓ GTFS data found")
-    
-    # TODO: Students implement the following:
-    # 1. Load GTFS static data
-    # 2. Connect to GTFS-Realtime feed
-    # 3. Initialize AR visualization
-    # 4. Start the main application loop
-    
-    logger.info("\n" + "=" * 60)
-    logger.info("TODO: Implement your AR installation here!")
-    logger.info("=" * 60)
-    logger.info("\nNext steps:")
-    logger.info("1. Implement GTFS data loading in data_fetcher/")
-    logger.info("2. Create AR visualization in visualization/")
-    logger.info("3. Connect components in this main.py file")
-    logger.info("4. Document your architecture in docs/ARCHITECTURE.md")
-    
+
     # Example: Print some basic info if data exists
     gtfs_path = Path(__file__).parent.parent / 'data' / 'gtfs'
     stops_file = gtfs_path / 'stops.txt'
-    
+
     if stops_file.exists():
         with open(stops_file, 'r') as f:
             lines = f.readlines()
             logger.info(f"\nFound {len(lines) - 1} stops in GTFS data")
-    
-    logger.info("\nPress Ctrl+C to exit")
-    
+
+    # Connect to the GTFS-Realtime feed
+    api_key = os.environ.get("TFNSW_API_KEY", "").strip()
+    if not api_key:
+        logger.error("TFNSW_API_KEY is missing. Add it to your .env file.")
+        sys.exit(1)
+
+    feed_url = os.environ.get("TFNSW_GTFS_RT_URL", DEFAULT_GTFS_RT_URL).strip()
+    update_interval = config.get("gtfs_realtime", {}).get("update_interval_seconds", 30)
+
+    logger.info(f"\nConnecting to GTFS-Realtime feed: {feed_url}")
+    logger.info("Press Ctrl+C to exit")
+
     try:
-        # Keep running until interrupted
-        import time
         while True:
-            time.sleep(1)
+            try:
+                feed = download_gtfs_realtime_feed(feed_url, api_key)
+                log_vehicle_positions(feed)
+            except requests.HTTPError as error:
+                status = error.response.status_code if error.response is not None else "unknown"
+                logger.error(f"TfNSW returned HTTP {status}. Check your API key and feed URL.")
+            except requests.RequestException as error:
+                logger.error(f"Could not download the TfNSW feed: {error}")
+
+            time.sleep(update_interval)
     except KeyboardInterrupt:
         logger.info("\nShutting down...")
 
