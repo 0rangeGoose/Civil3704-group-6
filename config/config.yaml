@@ -25,18 +25,45 @@ static_gtfs:
 realtime_gtfs:
   base_host: "https://api.transport.nsw.gov.au"
   poll_interval_seconds: 15
-  modes:
-    - sydneytrains
-    - nswtrains
-    - metro
-    - buses
-    - ferries/sydneyferries
-    - lightrail/innerwest
-    - lightrail/cbdandsoutheast
-  endpoints:
-    trip_updates: "/v1/gtfs/realtime/{mode}"
-    vehicle_positions: "/v1/gtfs/vehiclepos/{mode}"
-    service_alerts: "/v1/gtfs/alerts/{mode}"
+  # Checked against opendata.transport.nsw.gov.au dataset/resource pages on
+  # 2026-08-19. sydneytrains, metro and lightrail/innerwest were migrated to
+  # v2 for trip_updates and vehicle_positions ("v1 ... superseded by v2" on
+  # their resource pages); alerts is v2 across every mode, with a combined
+  # /all path. Several resource pages sit behind a login wall so this
+  # couldn't be confirmed against a live 200 -- the live source in
+  # engine/sources/live.py logs and skips (not crashes on) any path that
+  # 404s/403s, per the project brief, so a wrong guess here surfaces
+  # immediately in logs rather than silently losing a mode. See
+  # docs/DECISIONS.md.
+  feeds:
+    trip_updates:
+      sydneytrains: "/v2/gtfs/realtime/sydneytrains"
+      metro: "/v2/gtfs/realtime/metro"
+      lightrail_innerwest: "/v2/gtfs/realtime/lightrail/innerwest"
+      nswtrains: "/v1/gtfs/realtime/nswtrains"
+      buses: "/v1/gtfs/realtime/buses"
+      ferries: "/v1/gtfs/realtime/ferries/sydneyferries"
+      lightrail_cbdandsoutheast: "/v1/gtfs/realtime/lightrail/cbdandsoutheast"
+    vehicle_positions:
+      sydneytrains: "/v2/gtfs/vehiclepos/sydneytrains"
+      metro: "/v2/gtfs/vehiclepos/metro"
+      lightrail_innerwest: "/v2/gtfs/vehiclepos/lightrail/innerwest"
+      nswtrains: "/v1/gtfs/vehiclepos/nswtrains"
+      buses: "/v1/gtfs/vehiclepos/buses"
+      ferries: "/v1/gtfs/vehiclepos/ferries/sydneyferries"
+      lightrail_cbdandsoutheast: "/v1/gtfs/vehiclepos/lightrail/cbdandsoutheast"
+    service_alerts:
+      all: "/v2/gtfs/alerts/all"
+      sydneytrains: "/v2/gtfs/alerts/sydneytrains"
+      metro: "/v2/gtfs/alerts/metro"
+      lightrail: "/v2/gtfs/alerts/lightrail"
+      nswtrains: "/v2/gtfs/alerts/nswtrains"
+      buses: "/v2/gtfs/alerts/buses"
+      ferries: "/v2/gtfs/alerts/ferries"
+      regionbuses: "/v2/gtfs/alerts/regionbuses"
+  # Bus trip IDs mutate under trip alteration; this many stale seconds past
+  # poll_interval before a vehicle is treated as gone rather than just late.
+  stale_after_seconds: 90
 
 adherence_thresholds_seconds:
   # Positive means running late. Defaults from the project brief;

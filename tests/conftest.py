@@ -1,3 +1,4 @@
+import sqlite3
 import sys
 from pathlib import Path
 
@@ -6,10 +7,30 @@ sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
 import pytest
 
 from engine.config import BoundingBox
+from engine.static.cache import SCHEMA
 
 # Simple unit-square box, independent of the real CBD bounding box, so the
 # expected in/out membership of each fixture point is obvious by inspection.
 TEST_BBOX = BoundingBox(north=1.0, south=0.0, west=0.0, east=1.0)
+
+
+@pytest.fixture
+def static_db(tmp_path: Path) -> Path:
+    """A minimal SQLite cache (routes+trips only) for static-join tests."""
+    db_path = tmp_path / "cache.db"
+    conn = sqlite3.connect(db_path)
+    conn.executescript(SCHEMA)
+    conn.execute(
+        "INSERT INTO routes VALUES (?,?,?,?,?,?,?,?)",
+        ("R1", "A1", "333", "Route Three Three Three", "", "3", "FF0000", "FFFFFF"),
+    )
+    conn.execute(
+        "INSERT INTO trips VALUES (?,?,?,?,?,?,?,?)",
+        ("T1", "R1", "SVC1", "SH1", "City Circular", "0", None, "1"),
+    )
+    conn.commit()
+    conn.close()
+    return db_path
 
 _FILES = {
     "agency.txt": [
