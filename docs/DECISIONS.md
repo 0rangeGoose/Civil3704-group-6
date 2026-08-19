@@ -2,6 +2,31 @@
 
 Judgment calls made without stopping to ask, per the project brief. Newest first.
 
+## 2026-08-19 — Phase 4 renderer: no basemap image, straight-line interpolation, aiohttp
+
+Three scoping calls for the flat-screen renderer:
+
+- **No basemap tile/image at all.** The brief says any Phase 4 basemap must come from
+  an offline source or open tiles, not a paid/hosted service -- but also says the goal
+  is just to "get the visual language right." The route-corridor layer (drawn from our
+  own clipped shapes, `engine/publish/shapes_export.py`) already gives enough spatial
+  reference to judge the vehicle layer, so skipped sourcing a basemap image entirely
+  rather than finding an offline tileset. Revisit if the corridor layer alone turns out
+  to be disorienting without street/coastline context.
+- **Straight-line interpolation between the last two known positions, not
+  distance-along-shape.** The brief's ideal is interpolating along the map-matched
+  shape using the distance-along-shape delta. Implemented instead: linear lerp between
+  the previous and current lat/lon in the renderer (`renderer/index.html`). At a 15s
+  poll interval, consecutive real positions are close enough together that a shape
+  segment between them is close to straight, so the visual difference should be
+  small in the common case; it would show up as a vehicle briefly cutting a corner on
+  a sharp curve. Simpler to build and calibrate first, per Phase 4's own stated goal;
+  along-shape interpolation is a drop-in upgrade later since the record already
+  carries `distance_along_shape_m`.
+- **aiohttp for the publish server**, not a separate WS library + bare HTTP server --
+  one lightweight dependency instead of two, and the brief's "avoid heavy frameworks"
+  is squarely about the renderer (React/Deck.gl-scale), not the backend transport.
+
 ## 2026-08-19 — Geometric map matching resolved the Phase 2 route-id mismatch, as hoped
 
 Phase 2's decision log flagged that sydneytrains/metro/lightrail_cbdandsoutheast
