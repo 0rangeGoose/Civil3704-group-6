@@ -1,0 +1,58 @@
+# Pulse CBD configuration
+# Bounding box, thresholds, endpoints, palette and poll intervals live here.
+# Secrets (API keys) stay in .env, never here.
+
+bounding_box:
+  # WGS84. Adjust after measuring the physical model.
+  north: -33.8550
+  south: -33.9000
+  west: 151.1830
+  east: 151.2262
+
+static_gtfs:
+  # Transport for NSW Open Data Hub product name.
+  bundle_name: "timetables_complete_gtfs"
+  # Verified 2026-08-19 against opendata.transport.nsw.gov.au dataset page.
+  # GET this URL with the apikey header to download the combined zip.
+  download_url: "https://api.transport.nsw.gov.au/v1/publictransport/timetables/complete/gtfs"
+  # Refresh cadence: static data updates daily, never refetch on every start.
+  refresh_interval_hours: 24
+  cache_dir: "data/static_cache"
+  raw_zip_path: "data/static_cache/raw_bundle.zip"
+  db_path: "data/static_cache/gtfs_cbd.db"
+  manifest_path: "data/static_cache/manifest.json"
+
+realtime_gtfs:
+  base_host: "https://api.transport.nsw.gov.au"
+  poll_interval_seconds: 15
+  modes:
+    - sydneytrains
+    - nswtrains
+    - metro
+    - buses
+    - ferries/sydneyferries
+    - lightrail/innerwest
+    - lightrail/cbdandsoutheast
+  endpoints:
+    trip_updates: "/v1/gtfs/realtime/{mode}"
+    vehicle_positions: "/v1/gtfs/vehiclepos/{mode}"
+    service_alerts: "/v1/gtfs/alerts/{mode}"
+
+adherence_thresholds_seconds:
+  # Positive means running late. Defaults from the project brief;
+  # Transport for NSW's own on-time definitions differ by mode.
+  suburban_rail: 300
+  intercity: 360
+  metro: 120
+  light_rail: 120
+
+interchanges:
+  - Central
+  - Town Hall
+  - Wynyard
+  - Martin Place
+  - Circular Quay
+  - Barangaroo
+  - Gadigal
+  - Museum
+  - St James
