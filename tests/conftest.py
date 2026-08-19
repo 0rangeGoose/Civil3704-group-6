@@ -28,6 +28,15 @@ def static_db(tmp_path: Path) -> Path:
         "INSERT INTO trips VALUES (?,?,?,?,?,?,?,?)",
         ("T1", "R1", "SVC1", "SH1", "City Circular", "0", None, "1"),
     )
+    # A short straight shape near the real CBD, for map-matching tests --
+    # roughly a 1.1km north-south line just east of Circular Quay.
+    conn.executemany(
+        "INSERT INTO shapes VALUES (?,?,?,?,?)",
+        [
+            ("SH1", -33.870, 151.207, 1, 0.0),
+            ("SH1", -33.860, 151.207, 2, 1100.0),
+        ],
+    )
     conn.commit()
     conn.close()
     return db_path

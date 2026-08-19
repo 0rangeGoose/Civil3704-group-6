@@ -1,8 +1,9 @@
-"""The normalised record Phase 2 emits per vehicle currently in the bounding box.
+"""The normalised record emitted per vehicle currently in the bounding box.
 
-Map-matched position, schedule deviation and adherence state are Phase 3's
-job (they need the shapes/stop_times tables and Trip Updates) -- this is
-deliberately just the raw-but-joined view.
+Phase 2 fields are the raw-but-joined view (id, route, position, confidence).
+Phase 3 adds the map-matched position and schedule-adherence fields, filled
+in by enrich.py -- they default to None so a bare Phase-2 record is still
+valid (e.g. if enrichment is skipped or a trip has no shape/Trip Update).
 """
 from __future__ import annotations
 
@@ -23,7 +24,17 @@ class VehicleRecord:
     bearing: float | None
     position_timestamp: int | None
     occupancy_status: str | None
-    confidence: str  # "static_join" | "degraded_route_fallback" | "unmatched"
+    # "static_join" | "degraded_route_fallback" | "geometric_match" | "unmatched"
+    confidence: str
+
+    # Phase 3: map matching
+    matched_lat: float | None = None
+    matched_lon: float | None = None
+    distance_along_shape_m: float | None = None
+
+    # Phase 3: schedule adherence
+    schedule_deviation_seconds: int | None = None
+    adherence_state: str | None = None  # on_time | late | very_late | cancelled | unknown
 
     def to_json(self) -> dict:
         return {
@@ -40,4 +51,9 @@ class VehicleRecord:
             "position_timestamp": self.position_timestamp,
             "occupancy_status": self.occupancy_status,
             "confidence": self.confidence,
+            "matched_lat": self.matched_lat,
+            "matched_lon": self.matched_lon,
+            "distance_along_shape_m": self.distance_along_shape_m,
+            "schedule_deviation_seconds": self.schedule_deviation_seconds,
+            "adherence_state": self.adherence_state,
         }
