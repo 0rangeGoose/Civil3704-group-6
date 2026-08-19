@@ -1,0 +1,250 @@
+<!doctype html>
+<html>
+<head>
+<meta charset="utf-8" />
+<title>Pulse CBD</title>
+<style>
+  /* Fullscreen black background -- anything projected as black reads as
+     unlit model surface once this moves onto the physical model (Phase 5). */
+  html, body { margin: 0; padding: 0; background: #000; overflow: hidden; height: 100%; }
+  canvas { display: block; }
+  #status {
+    position: fixed; top: 8px; left: 8px; z-index: 10;
+    font: 11px/1.4 ui-monospace, monospace; color: #556;
+    background: rgba(0,0,0,0.5); padding: 4px 8px; border-radius: 3px;
+    pointer-events: none;
+  }
+</style>
+</head>
+<body>
+<div id="status">connecting...</div>
+<canvas id="canvas"></canvas>
+<script>
+"use strict";
+
+// Colour encodes adherence state. Chosen for luminance separation (not just
+// hue) since projected colour on a matte model reads poorly at low
+// brightness -- brief's suggested starting palette, tuned so on_time reads
+// distinctly brighter than late, which reads brighter than very_late.
+const ADHERENCE_COLOR = {
+  on_time:   { core: "#39ff6a", glow: "rgba(57,255,106,0.55)" },
+  late:      { core: "#ffb020", glow: "rgba(255,176,32,0.55)" },
+  very_late: { core: "#c81c2e", glow: "rgba(200,28,46,0.55)" },
+  cancelled: { core: "#c81c2e", glow: "rgba(200,28,46,0.55)" },
+  unknown:   { core: "#93a3b5", glow: "rgba(147,163,181,0.45)" },
+};
+const DEFAULT_COLOR = ADHERENCE_COLOR.unknown;
+
+// Size/glow radius encodes mode, so heavy rail reads differently from a bus.
+const MODE_RADIUS = {
+  sydneytrains: 7, nswtrains: 7, metro: 7,
+  lightrail_innerwest: 5.5, lightrail_cbdandsoutheast: 5.5,
+  buses: 4, ferries: 4.5,
+};
+const DEFAULT_RADIUS = 4;
+
+const TAIL_WINDOW_MS = 30000; // "last 30 seconds of travel"
+
+const canvas = document.getElementById("canvas");
+const ctx = canvas.getContext("2d");
+const statusEl = document.getElementById("status");
+
+let cfg = null;
+let shapes = null;
+let corridorLayer = null; // offscreen canvas, drawn once
+let projector = null;
+
+// vehicleKey -> { prev: {lat,lon,ts}, curr: {lat,lon,ts}, currReceivedAt: number,
+//                 route_color, adherence, mode, history: [{lat,lon,ts}] }
+const vehicles = new Map();
+
+function resize() {
+  canvas.width = window.innerWidth;
+  canvas.height = window.innerHeight;
+  if (cfg) {
+    projector = makeProjector(cfg.bounding_box, canvas.width, canvas.height);
+    drawCorridorLayer();
+  }
+}
+window.addEventListener("resize", resize);
+
+// Aspect-correct fit of the bounding box into the canvas: a naive
+// lon/lat -> x/y stretch would visibly distort corridor shapes since the box
+// isn't square (~5km N-S x 4km E-W). Longitude degrees are scaled by
+// cos(latitude) so a metre is a metre in both directions.
+function makeProjector(bbox, width, height) {
+  const midLatRad = ((bbox.north + bbox.south) / 2) * Math.PI / 180;
+  const lonScale = Math.cos(midLatRad);
+  const spanX = (bbox.east - bbox.west) * lonScale;
+  const spanY = (bbox.north - bbox.south);
+  const scale = Math.min(width / spanX, height / spanY) * 0.94; // small margin
+  const offsetX = (width - spanX * scale) / 2;
+  const offsetY = (height - spanY * scale) / 2;
+  return {
+    project(lat, lon) {
+      const x = (lon - bbox.west) * lonScale * scale + offsetX;
+      const y = (bbox.north - lat) * scale + offsetY; // lat increases north; screen y increases down
+      return [x, y];
+    },
+  };
+}
+
+function drawCorridorLayer() {
+  const off = document.createElement("canvas");
+  off.width = canvas.width;
+  off.height = canvas.height;
+  const octx = off.getContext("2d");
+  octx.strokeStyle = "rgba(70,95,135,0.35)";
+  octx.lineWidth = 1;
+  octx.lineJoin = "round";
+  for (const shapeId in shapes) {
+    const pts = shapes[shapeId];
+    octx.beginPath();
+    for (let i = 0; i < pts.length; i++) {
+      const [x, y] = projector.project(pts[i][0], pts[i][1]);
+      if (i === 0) octx.moveTo(x, y); else octx.lineTo(x, y);
+    }
+    octx.stroke();
+  }
+  corridorLayer = off;
+}
+
+function applyFrame(frameVehicles) {
+  const seen = new Set();
+  for (const v of frameVehicles) {
+    seen.add(v.k);
+    let entry = vehicles.get(v.k);
+    if (!entry) {
+      entry = { prev: null, curr: null, currReceivedAt: 0, history: [] };
+      vehicles.set(v.k, entry);
+    }
+    entry.mode = v.m;
+    entry.route_color = v.rc;
+    entry.adherence = v.adh;
+
+    const sample = { lat: v.lat, lon: v.lon, ts: v.ts };
+    if (!entry.curr || entry.curr.ts !== sample.ts) {
+      entry.prev = entry.curr;
+      entry.curr = sample;
+      entry.currReceivedAt = performance.now();
+      entry.history.push(sample);
+      const cutoff = (v.ts || 0) - TAIL_WINDOW_MS / 1000;
+      entry.history = entry.history.filter((s) => (s.ts || 0) >= cutoff);
+    }
+  }
+}
+
+function lerp(a, b, t) { return a + (b - a) * t; }
+
+function currentRenderPosition(entry, nowMs) {
+  const pollMs = (cfg.poll_interval_seconds || 15) * 1000;
+  if (!entry.curr) return null;
+  if (!entry.prev) return [entry.curr.lat, entry.curr.lon, 0];
+  const elapsed = nowMs - entry.currReceivedAt;
+  const t = Math.max(0, Math.min(1, elapsed / pollMs)); // never extrapolate past one poll interval
+  const lat = lerp(entry.prev.lat, entry.curr.lat, t);
+  const lon = lerp(entry.prev.lon, entry.curr.lon, t);
+  return [lat, lon, elapsed];
+}
+
+function render() {
+  requestAnimationFrame(render);
+  if (!projector || !corridorLayer) return;
+
+  ctx.fillStyle = "#000";
+  ctx.fillRect(0, 0, canvas.width, canvas.height);
+  ctx.drawImage(corridorLayer, 0, 0);
+
+  const nowMs = performance.now();
+  const staleMs = (cfg.stale_after_seconds || 90) * 1000;
+  const pollMs = (cfg.poll_interval_seconds || 15) * 1000;
+  const toDelete = [];
+
+  for (const [key, entry] of vehicles) {
+    const pos = currentRenderPosition(entry, nowMs);
+    if (!pos) continue;
+    const [lat, lon, elapsedSinceCurr] = pos;
+
+    // Fade out once stale rather than freezing in place.
+    let opacity = 1;
+    if (elapsedSinceCurr > pollMs) {
+      opacity = 1 - Math.min(1, (elapsedSinceCurr - pollMs) / (staleMs - pollMs));
+    }
+    if (opacity <= 0.02) { toDelete.push(key); continue; }
+
+    const color = ADHERENCE_COLOR[entry.adherence] || DEFAULT_COLOR;
+    const radius = MODE_RADIUS[entry.mode] || DEFAULT_RADIUS;
+
+    // Comet tail: the last ~30s of actual history plus the live interpolated point.
+    const tailPts = entry.history.map((s) => projector.project(s.lat, s.lon));
+    tailPts.push(projector.project(lat, lon));
+    if (tailPts.length > 1) {
+      for (let i = 1; i < tailPts.length; i++) {
+        const tailT = i / (tailPts.length - 1);
+        ctx.strokeStyle = withAlpha(color.core, tailT * 0.5 * opacity);
+        ctx.lineWidth = Math.max(1, radius * 0.4);
+        ctx.beginPath();
+        ctx.moveTo(tailPts[i - 1][0], tailPts[i - 1][1]);
+        ctx.lineTo(tailPts[i][0], tailPts[i][1]);
+        ctx.stroke();
+      }
+    }
+
+    const [x, y] = projector.project(lat, lon);
+
+    // Soft glow, then a bright core -- points of light, not flat dots.
+    const glowR = radius * 3.2;
+    const grad = ctx.createRadialGradient(x, y, 0, x, y, glowR);
+    grad.addColorStop(0, withAlpha(color.core, 0.9 * opacity));
+    grad.addColorStop(0.35, withAlpha(color.core, 0.35 * opacity));
+    grad.addColorStop(1, withAlpha(color.core, 0));
+    ctx.fillStyle = grad;
+    ctx.beginPath();
+    ctx.arc(x, y, glowR, 0, Math.PI * 2);
+    ctx.fill();
+
+    ctx.fillStyle = withAlpha(color.core, opacity);
+    ctx.beginPath();
+    ctx.arc(x, y, radius, 0, Math.PI * 2);
+    ctx.fill();
+  }
+
+  for (const key of toDelete) vehicles.delete(key);
+
+  statusEl.textContent = `pulse-cbd  |  ${vehicles.size} vehicles  |  ${wsStatus}`;
+}
+
+function withAlpha(hex, alpha) {
+  const r = parseInt(hex.slice(1, 3), 16);
+  const g = parseInt(hex.slice(3, 5), 16);
+  const b = parseInt(hex.slice(5, 7), 16);
+  return `rgba(${r},${g},${b},${Math.max(0, Math.min(1, alpha))})`;
+}
+
+let wsStatus = "connecting...";
+
+function connectWebSocket() {
+  const proto = location.protocol === "https:" ? "wss:" : "ws:";
+  const ws = new WebSocket(`${proto}//${location.host}/ws`);
+  ws.onopen = () => { wsStatus = "live"; };
+  ws.onclose = () => { wsStatus = "reconnecting..."; setTimeout(connectWebSocket, 1000); };
+  ws.onerror = () => ws.close();
+  ws.onmessage = (ev) => {
+    const frame = JSON.parse(ev.data);
+    applyFrame(frame.vehicles);
+  };
+}
+
+async function boot() {
+  const [cfgResp, shapesResp] = await Promise.all([fetch("/config"), fetch("/shapes")]);
+  cfg = await cfgResp.json();
+  shapes = await shapesResp.json();
+  resize();
+  connectWebSocket();
+  requestAnimationFrame(render);
+}
+
+boot();
+</script>
+</body>
+</html>
