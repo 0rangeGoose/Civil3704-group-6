@@ -2,6 +2,37 @@
 
 Judgment calls made without stopping to ask, per the project brief. Newest first.
 
+## 2026-08-19 — Geometric map matching resolved the Phase 2 route-id mismatch, as hoped
+
+Phase 2's decision log flagged that sydneytrains/metro/lightrail_cbdandsoutheast
+realtime feeds use route_ids with no relationship to the static GTFS bundle, and
+guessed Phase 3's geometric map matching might make that a non-issue rather than
+something to special-case. Confirmed live: `enrich.py`'s nearest-shape fallback
+resolves real route short names purely from position for every one of those
+vehicles (`sydneytrains 30/30`, `metro 4/4`, `lightrail_cbdandsoutheast 14/14` all
+went from confidence "unmatched" to "geometric_match" with a correct route_short_name
+in a live test run). Also confirmed live trip_id *does* still correlate between a
+mode's vehicle_positions and trip_updates feeds even when neither matches the static
+bundle -- sydneytrains adherence classified correctly (73-77% on_time across two live
+runs) despite the route-id mismatch, because schedule deviation only needs matching
+trip_ids across the two realtime feeds, not against static.
+
+Also confirmed the active-alerts count against the CBD static route/stop id sets
+works correctly (56 matching alerts found directly, 3 in a bounded 2-pass live run)
+-- an earlier single-pass test run showed 0 only because `--cycles` cut the poll
+loop off before it reached the service_alerts endpoints that pass, not a matching bug.
+
+## 2026-08-19 — Bus/ferry adherence thresholds and the late/very_late split
+
+The brief gives on-time thresholds for suburban rail (5 min), intercity (6 min), and
+metro/light rail (2 min), but not buses or ferries. Set both to 300s (5 min), matching
+suburban_rail, since buses in particular share similar real-world schedule slack and
+the brief doesn't suggest tightening it. It also doesn't define where "late" ends and
+"very_late" begins -- added `very_late_multiplier: 2` (so very_late starts at 2x the
+mode's on-time threshold) as a simple, tunable default. Both live in
+`config/config.yaml` under `adherence_thresholds_seconds` so they're one-line changes,
+not a code change, if they turn out wrong once real running/cancelled data is seen.
+
 ## 2026-08-19 — New quirk found live, not in the original brief: sydneytrains/metro/CBD
 light rail route_id and trip_id don't join to static GTFS at all
 

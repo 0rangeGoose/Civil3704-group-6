@@ -66,12 +66,20 @@ realtime_gtfs:
   stale_after_seconds: 90
 
 adherence_thresholds_seconds:
-  # Positive means running late. Defaults from the project brief;
-  # Transport for NSW's own on-time definitions differ by mode.
+  # Positive means running late. suburban_rail/intercity/metro/light_rail
+  # defaults are from the project brief; bus/ferry weren't specified there,
+  # so 300s (5 min) was chosen to match the suburban_rail default -- see
+  # docs/DECISIONS.md. Transport for NSW's own on-time definitions differ by
+  # mode; these are this project's own simplified single-threshold model.
   suburban_rail: 300
   intercity: 360
   metro: 120
   light_rail: 120
+  bus: 300
+  ferry: 300
+  # A trip beyond threshold * this multiplier is "very_late" rather than
+  # just "late". Not specified in the brief -- see docs/DECISIONS.md.
+  very_late_multiplier: 2
 
 interchanges:
   - Central
