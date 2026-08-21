@@ -10,7 +10,15 @@ import logging
 import time
 
 from engine.config import Config
-from engine.normalise.aggregate import RollingAdherence, count_active_alerts, load_cbd_ids
+from engine.normalise.aggregate import (
+    Interchange,
+    RollingAdherence,
+    RollingInterchangeActivity,
+    count_active_alerts,
+    load_cbd_ids,
+    load_interchanges,
+    nearby_interchanges,
+)
 from engine.normalise.build import build_vehicle_records
 from engine.normalise.enrich import enrich_vehicle_record
 from engine.normalise.map_match import ShapeIndex
@@ -39,6 +47,10 @@ class LiveVehicleFeed:
         self.alerts_summary: dict = {"count": 0, "by_severity": {}, "route_ids": []}
         self.rolling_adherence = RollingAdherence()
 
+        self.interchanges: list[Interchange] = load_interchanges(db_path, cfg.raw["interchanges"])
+        self.rolling_interchange_activity = RollingInterchangeActivity()
+        self._interchange_radius_m = cfg.raw.get("interchange_radius_m", 300)
+
         self._trip_update_index_by_mode: dict[str, dict] = {}
         recordings_dir = cfg.root / "data" / "recordings"
         self._source = RecordingSource(LiveSource(cfg), recordings_dir)
@@ -65,11 +77,32 @@ class LiveVehicleFeed:
                 self.snapshot[enriched.vehicle_key] = enriched
                 self.snapshot_updated_at[enriched.vehicle_key] = now
                 self.rolling_adherence.record(enriched.mode, enriched.adherence_state, at=now)
+
+                position_lat = enriched.matched_lat if enriched.matched_lat is not None else enriched.lat
+                position_lon = enriched.matched_lon if enriched.matched_lon is not None else enriched.lon
+                for name in nearby_interchanges(
+                    self.interchanges, position_lat, position_lon, self._interchange_radius_m
+                ):
+                    self.rolling_interchange_activity.record(name, enriched.vehicle_key, at=now)
             self._prune_stale(now)
             logger.info(
                 "vehicle_positions:%s: %d vehicles, snapshot size %d",
                 raw.mode, len(records), len(self.snapshot),
             )
+
+    def aggregate_snapshot(self) -> dict:
+        """Everything the stats panel (and the model renderer's interchange
+        pulses) need: rolling adherence by window, active alerts, and
+        per-interchange recent activity counts."""
+        interchange_counts = self.rolling_interchange_activity.counts()
+        return {
+            "adherence_by_window": self.rolling_adherence.breakdown_all_windows(),
+            "alerts": self.alerts_summary,
+            "interchanges": [
+                {"name": ic.name, "lat": ic.lat, "lon": ic.lon, "count": interchange_counts.get(ic.name, 0)}
+                for ic in self.interchanges
+            ],
+        }
 
     def _prune_stale(self, now: float) -> None:
         """Bounds memory. Fading a stale vehicle out visually is the

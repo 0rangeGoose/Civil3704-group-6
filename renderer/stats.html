@@ -1,0 +1,190 @@
+<!doctype html>
+<html>
+<head>
+<meta charset="utf-8" />
+<title>Pulse CBD — Stats</title>
+<style>
+  /* A separate display for a wall panel or tablet -- per the brief, text
+     never renders onto the model surface itself, so this can be a normal
+     readable dashboard rather than glowing points on black. */
+  * { box-sizing: border-box; }
+  html, body {
+    margin: 0; padding: 0; height: 100%;
+    background: #0a0e14; color: #e6edf3;
+    font: 16px/1.4 -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;
+  }
+  body { padding: 28px; }
+  h1 { font-size: 22px; margin: 0 0 4px; font-weight: 600; }
+  #subtitle { color: #7d8590; font-size: 14px; margin-bottom: 24px; }
+  #subtitle.stale { color: #f0883e; }
+  .grid { display: grid; grid-template-columns: 1.6fr 1fr; gap: 20px; align-items: start; }
+  @media (max-width: 900px) { .grid { grid-template-columns: 1fr; } }
+  section {
+    background: #11161d; border: 1px solid #21262d; border-radius: 8px; padding: 18px 20px;
+  }
+  section h2 { font-size: 14px; text-transform: uppercase; letter-spacing: 0.06em; color: #7d8590; margin: 0 0 14px; }
+
+  .mode-row { display: grid; grid-template-columns: 130px repeat(3, 1fr); gap: 10px; align-items: center; padding: 8px 0; border-top: 1px solid #1c2129; }
+  .mode-row:first-of-type { border-top: none; }
+  .mode-name { font-weight: 600; font-size: 14px; }
+  .window-label { font-size: 10px; color: #7d8590; text-transform: uppercase; text-align: center; }
+  .window-stat { text-align: center; }
+  .window-stat .pct { font-size: 20px; font-weight: 700; }
+  .window-stat .bar { height: 5px; border-radius: 3px; background: #1c2129; margin: 5px 0 3px; overflow: hidden; }
+  .window-stat .bar-fill { height: 100%; background: #39ff6a; }
+  .window-stat .breakdown { font-size: 10px; color: #7d8590; }
+  .headers { display: grid; grid-template-columns: 130px repeat(3, 1fr); gap: 10px; margin-bottom: 4px; }
+
+  .alert-count { font-size: 42px; font-weight: 700; line-height: 1; }
+  .alert-count.zero { color: #3fb950; }
+  .alert-count.nonzero { color: #f0883e; }
+  .alert-sub { color: #7d8590; font-size: 13px; margin-top: 6px; }
+  .severity-chip { display: inline-block; background: #1c2129; border-radius: 4px; padding: 2px 8px; margin: 2px 4px 2px 0; font-size: 12px; }
+  .route-list { font-size: 12px; color: #7d8590; margin-top: 10px; word-break: break-all; }
+
+  .interchange-row { display: flex; align-items: center; gap: 10px; padding: 6px 0; }
+  .interchange-name { width: 110px; flex-shrink: 0; font-size: 13px; }
+  .interchange-bar-track { flex: 1; height: 14px; background: #1c2129; border-radius: 3px; overflow: hidden; }
+  .interchange-bar-fill { height: 100%; background: #bfe8ff; }
+  .interchange-count { width: 28px; text-align: right; font-variant-numeric: tabular-nums; font-size: 13px; }
+</style>
+</head>
+<body>
+<h1>Pulse CBD — Live Status</h1>
+<div id="subtitle">connecting...</div>
+
+<div class="grid">
+  <section>
+    <h2>Schedule adherence by mode</h2>
+    <div class="headers">
+      <div></div>
+      <div class="window-label">5 min</div>
+      <div class="window-label">15 min</div>
+      <div class="window-label">60 min</div>
+    </div>
+    <div id="adherence-table"></div>
+  </section>
+
+  <div style="display:flex; flex-direction:column; gap:20px;">
+    <section>
+      <h2>Active service alerts (CBD)</h2>
+      <div id="alerts-panel"></div>
+    </section>
+
+    <section>
+      <h2>Interchange activity (last 5 min)</h2>
+      <div id="interchange-panel"></div>
+    </section>
+  </div>
+</div>
+
+<script>
+"use strict";
+
+const MODE_ORDER = ["sydneytrains", "metro", "lightrail_innerwest", "lightrail_cbdandsoutheast", "nswtrains", "buses", "ferries"];
+const MODE_LABEL = {
+  sydneytrains: "Sydney Trains", metro: "Metro", nswtrains: "NSW Trains",
+  lightrail_innerwest: "Light Rail (IW)", lightrail_cbdandsoutheast: "Light Rail (CBD)",
+  buses: "Buses", ferries: "Ferries",
+};
+const WINDOWS = [300, 900, 3600];
+
+function pct(n) { return `${n.toFixed(0)}%`; }
+
+function renderAdherenceTable(byWindow) {
+  const modesPresent = new Set();
+  for (const w of WINDOWS) Object.keys(byWindow[w] || {}).forEach((m) => modesPresent.add(m));
+  const modes = MODE_ORDER.filter((m) => modesPresent.has(m));
+
+  const container = document.getElementById("adherence-table");
+  container.innerHTML = "";
+  if (!modes.length) {
+    container.innerHTML = `<div style="color:#7d8590; font-size:13px;">No adherence data yet.</div>`;
+    return;
+  }
+
+  for (const mode of modes) {
+    const row = document.createElement("div");
+    row.className = "mode-row";
+    const nameEl = document.createElement("div");
+    nameEl.className = "mode-name";
+    nameEl.textContent = MODE_LABEL[mode] || mode;
+    row.appendChild(nameEl);
+
+    for (const w of WINDOWS) {
+      const states = (byWindow[w] || {})[mode] || {};
+      const onTime = states.on_time || 0;
+      const cell = document.createElement("div");
+      cell.className = "window-stat";
+      const otherBits = Object.entries(states)
+        .filter(([k]) => k !== "on_time")
+        .map(([k, v]) => `${k} ${v.toFixed(0)}%`)
+        .join(" · ");
+      cell.innerHTML = `
+        <div class="pct">${pct(onTime)}</div>
+        <div class="bar"><div class="bar-fill" style="width:${onTime}%"></div></div>
+        <div class="breakdown">${otherBits || "—"}</div>
+      `;
+      row.appendChild(cell);
+    }
+    container.appendChild(row);
+  }
+}
+
+function renderAlerts(alerts) {
+  const panel = document.getElementById("alerts-panel");
+  const countClass = alerts.count === 0 ? "zero" : "nonzero";
+  const severityChips = Object.entries(alerts.by_severity || {})
+    .map(([sev, n]) => `<span class="severity-chip">${sev}: ${n}</span>`)
+    .join("");
+  const routeIds = alerts.route_ids || [];
+  const shown = routeIds.slice(0, 10).join(", ");
+  const more = routeIds.length > 10 ? ` +${routeIds.length - 10} more` : "";
+
+  panel.innerHTML = `
+    <div class="alert-count ${countClass}">${alerts.count}</div>
+    <div class="alert-sub">active alert${alerts.count === 1 ? "" : "s"} intersecting the CBD</div>
+    <div style="margin-top:10px;">${severityChips || ""}</div>
+    ${routeIds.length ? `<div class="route-list">${routeIds.length} route(s) affected: ${shown}${more}</div>` : ""}
+  `;
+}
+
+function renderInterchanges(interchanges) {
+  const panel = document.getElementById("interchange-panel");
+  const maxCount = Math.max(1, ...interchanges.map((ic) => ic.count));
+  panel.innerHTML = "";
+  const sorted = [...interchanges].sort((a, b) => b.count - a.count);
+  for (const ic of sorted) {
+    const row = document.createElement("div");
+    row.className = "interchange-row";
+    row.innerHTML = `
+      <div class="interchange-name">${ic.name}</div>
+      <div class="interchange-bar-track"><div class="interchange-bar-fill" style="width:${(ic.count / maxCount) * 100}%"></div></div>
+      <div class="interchange-count">${ic.count}</div>
+    `;
+    panel.appendChild(row);
+  }
+}
+
+async function refresh() {
+  const subtitle = document.getElementById("subtitle");
+  try {
+    const resp = await fetch("/aggregate");
+    if (!resp.ok) throw new Error(`HTTP ${resp.status}`);
+    const data = await resp.json();
+    renderAdherenceTable(data.adherence_by_window || {});
+    renderAlerts(data.alerts || { count: 0, by_severity: {}, route_ids: [] });
+    renderInterchanges(data.interchanges || []);
+    subtitle.textContent = `Updated ${new Date().toLocaleTimeString()}`;
+    subtitle.className = "";
+  } catch (e) {
+    subtitle.textContent = `Connection lost -- retrying (${e.message})`;
+    subtitle.className = "stale";
+  }
+}
+
+refresh();
+setInterval(refresh, 3000);
+</script>
+</body>
+</html>
