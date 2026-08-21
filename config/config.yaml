@@ -85,6 +85,10 @@ adherence_thresholds_seconds:
   # just "late". Not specified in the brief -- see docs/DECISIONS.md.
   very_late_multiplier: 2
 
+# How close a vehicle must be to an interchange's stop centroid to count
+# towards its pulse intensity (Phase 6).
+interchange_radius_m: 300
+
 interchanges:
   - Central
   - Town Hall

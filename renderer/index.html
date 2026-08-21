@@ -86,6 +86,10 @@ let projector = null;
 //                 route_color, adherence, mode, history: [{lat,lon,ts}] }
 const vehicles = new Map();
 
+// [{name, lat, lon, count}, ...] -- "services passing through in the last
+// few minutes" per interchange, from the same WS frame as vehicles.
+let interchanges = [];
+
 function resize() {
   canvas.width = window.innerWidth;
   canvas.height = window.innerHeight;
@@ -220,6 +224,8 @@ function render() {
   ctx.fillRect(0, 0, canvas.width, canvas.height);
   ctx.drawImage(verificationMode ? corridorLayerBright : corridorLayerDim, 0, 0);
 
+  drawInterchangePulses(performance.now());
+
   if (calibrateMode) drawCalibrationCrosshairs();
 
   const nowMs = performance.now();
@@ -281,6 +287,35 @@ function render() {
   const modeFlags = [calibrateMode ? "CALIBRATING" : null, verificationMode ? "VERIFY" : null].filter(Boolean);
   statusEl.textContent = `pulse-cbd  |  ${vehicles.size} vehicles  |  ${wsStatus}` +
     (modeFlags.length ? `  |  ${modeFlags.join(" ")}` : "");
+}
+
+const INTERCHANGE_COLOR = "#bfe8ff"; // distinct from any adherence colour -- these are station nodes, not vehicles
+const INTERCHANGE_PULSE_PERIOD_MS = 2200;
+
+// "Pulse the interchange nodes with an intensity proportional to services
+// passing through them in the last few minutes" -- per the brief. A faint
+// base ring always marks the interchange location; brightness/size scale
+// with recent activity, breathing via a sine wave so a busy node reads as
+// alive rather than a static blob.
+function drawInterchangePulses(nowMs) {
+  if (!interchanges.length) return;
+  const phase = 0.5 + 0.5 * Math.sin((nowMs / INTERCHANGE_PULSE_PERIOD_MS) * 2 * Math.PI);
+  for (const ic of interchanges) {
+    const [x, y] = projector.project(ic.lat, ic.lon);
+    const activity = Math.min(1, Math.sqrt(ic.count) / 5); // sqrt so a handful of extra services doesn't dominate
+    const baseRadius = 6 + activity * 22;
+    const radius = baseRadius * (0.85 + 0.15 * phase);
+    const coreAlpha = 0.15 + activity * 0.55 * (0.7 + 0.3 * phase);
+
+    const grad = ctx.createRadialGradient(x, y, 0, x, y, radius);
+    grad.addColorStop(0, withAlpha(INTERCHANGE_COLOR, coreAlpha));
+    grad.addColorStop(0.5, withAlpha(INTERCHANGE_COLOR, coreAlpha * 0.35));
+    grad.addColorStop(1, withAlpha(INTERCHANGE_COLOR, 0));
+    ctx.fillStyle = grad;
+    ctx.beginPath();
+    ctx.arc(x, y, radius, 0, Math.PI * 2);
+    ctx.fill();
+  }
 }
 
 function withAlpha(hex, alpha) {
@@ -451,6 +486,7 @@ function connectWebSocket() {
   ws.onmessage = (ev) => {
     const frame = JSON.parse(ev.data);
     applyFrame(frame.vehicles);
+    if (frame.interchanges) interchanges = frame.interchanges;
   };
 }
 

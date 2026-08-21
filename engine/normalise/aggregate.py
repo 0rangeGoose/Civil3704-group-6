@@ -116,6 +116,50 @@ def count_services_near_interchanges(
     return counts
 
 
+def nearby_interchanges(
+    interchanges: list[Interchange], lat: float, lon: float, radius_m: float = 300
+) -> list[str]:
+    p = Point(to_metric(lat, lon))
+    return [ic.name for ic in interchanges if p.distance(Point(to_metric(ic.lat, ic.lon))) <= radius_m]
+
+
+DEFAULT_INTERCHANGE_WINDOW_SECONDS = 300  # "in the last few minutes"
+
+
+class RollingInterchangeActivity:
+    """Distinct vehicles seen near each interchange over a trailing window --
+    "pulse the interchange nodes with an intensity proportional to services
+    passing through them in the last few minutes," per the brief. Distinct
+    vehicle_keys, not raw observation counts, so a vehicle idling at a
+    platform across several polls counts once rather than inflating the
+    pulse the longer it sits still.
+    """
+
+    def __init__(self, window_seconds: int = DEFAULT_INTERCHANGE_WINDOW_SECONDS):
+        self._window = window_seconds
+        self._obs: deque[tuple[float, str, str]] = deque()  # (at, interchange_name, vehicle_key)
+
+    def record(self, interchange_name: str, vehicle_key: str, at: float | None = None) -> None:
+        ts = at if at is not None else time.time()
+        self._obs.append((ts, interchange_name, vehicle_key))
+        self._prune(ts)
+
+    def _prune(self, now: float) -> None:
+        cutoff = now - self._window
+        while self._obs and self._obs[0][0] < cutoff:
+            self._obs.popleft()
+
+    def counts(self, now: float | None = None) -> dict[str, int]:
+        now = now if now is not None else time.time()
+        cutoff = now - self._window
+        seen: dict[str, set[str]] = {}
+        for ts, name, vehicle_key in self._obs:
+            if ts < cutoff:
+                continue
+            seen.setdefault(name, set()).add(vehicle_key)
+        return {name: len(keys) for name, keys in seen.items()}
+
+
 def load_cbd_ids(db_path: Path) -> tuple[set[str], set[str]]:
     """(route_ids, stop_ids) already retained in the Phase 1 CBD-filtered cache."""
     conn = sqlite3.connect(f"file:{db_path}?mode=ro", uri=True)

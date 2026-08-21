@@ -3,10 +3,12 @@ from pathlib import Path
 from engine.normalise.aggregate import (
     Interchange,
     RollingAdherence,
+    RollingInterchangeActivity,
     count_active_alerts,
     count_services_near_interchanges,
     load_cbd_ids,
     load_interchanges,
+    nearby_interchanges,
 )
 from engine.normalise.proto import pb
 
@@ -112,3 +114,40 @@ def test_load_cbd_ids(static_db: Path):
     route_ids, stop_ids = load_cbd_ids(static_db)
     assert route_ids == {"R1"}
     assert stop_ids == set()  # fixture's static_db has no stops rows by default
+
+
+def test_nearby_interchanges_returns_names_within_radius():
+    interchanges = [
+        Interchange(name="Central", lat=-33.881, lon=151.207),
+        Interchange(name="Wynyard", lat=-33.865, lon=151.206),
+    ]
+    names = nearby_interchanges(interchanges, -33.881, 151.2071, radius_m=300)
+    assert names == ["Central"]
+
+
+def test_nearby_interchanges_empty_when_nothing_close():
+    interchanges = [Interchange(name="Central", lat=-33.881, lon=151.207)]
+    assert nearby_interchanges(interchanges, -34.5, 150.5, radius_m=300) == []
+
+
+def test_rolling_interchange_activity_counts_distinct_vehicles():
+    roll = RollingInterchangeActivity(window_seconds=300)
+    now = 1_000_000.0
+    roll.record("Central", "buses:v1", at=now - 10)
+    roll.record("Central", "buses:v2", at=now - 20)
+    roll.record("Central", "buses:v1", at=now - 5)  # same vehicle again, still 15s poll cadence
+    roll.record("Wynyard", "buses:v3", at=now - 15)
+
+    counts = roll.counts(now=now)
+    assert counts["Central"] == 2  # v1 counted once despite two observations
+    assert counts["Wynyard"] == 1
+
+
+def test_rolling_interchange_activity_prunes_outside_window():
+    roll = RollingInterchangeActivity(window_seconds=300)
+    now = 1_000_000.0
+    roll.record("Central", "buses:v1", at=now - 400)  # outside the window
+    roll.record("Central", "buses:v2", at=now - 10)
+
+    counts = roll.counts(now=now)
+    assert counts == {"Central": 1}

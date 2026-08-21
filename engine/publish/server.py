@@ -23,7 +23,9 @@ from engine.publish.shapes_export import build_render_shapes
 logger = logging.getLogger("pulse_cbd.publish_server")
 
 BROADCAST_INTERVAL_SECONDS = 0.5
-RENDERER_INDEX = Path(__file__).resolve().parent.parent.parent / "renderer" / "index.html"
+RENDERER_DIR = Path(__file__).resolve().parent.parent.parent / "renderer"
+RENDERER_INDEX = RENDERER_DIR / "index.html"
+STATS_INDEX = RENDERER_DIR / "stats.html"
 
 
 def _vehicle_frame(record) -> dict:
@@ -41,8 +43,27 @@ def _vehicle_frame(record) -> dict:
     }
 
 
+def _interchange_frame(feed: "LiveVehicleFeed") -> list[dict]:
+    counts = feed.rolling_interchange_activity.counts()
+    return [
+        {"name": ic.name, "lat": ic.lat, "lon": ic.lon, "count": counts.get(ic.name, 0)}
+        for ic in feed.interchanges
+    ]
+
+
 async def index_handler(request: web.Request) -> web.Response:
     return web.Response(text=RENDERER_INDEX.read_text(), content_type="text/html")
+
+
+async def stats_handler(request: web.Request) -> web.Response:
+    """The separate wall-panel/tablet display -- per the brief, aggregate
+    statistics never render onto the model surface itself."""
+    return web.Response(text=STATS_INDEX.read_text(), content_type="text/html")
+
+
+async def aggregate_handler(request: web.Request) -> web.Response:
+    feed: LiveVehicleFeed = request.app["feed"]
+    return web.json_response(feed.aggregate_snapshot())
 
 
 async def websocket_handler(request: web.Request) -> web.WebSocketResponse:
@@ -141,7 +162,11 @@ async def _broadcast_loop(app: web.Application) -> None:
         if not sockets:
             continue
         frame = json.dumps(
-            {"t": time.time(), "vehicles": [_vehicle_frame(r) for r in feed.snapshot.values()]}
+            {
+                "t": time.time(),
+                "vehicles": [_vehicle_frame(r) for r in feed.snapshot.values()],
+                "interchanges": _interchange_frame(feed),
+            }
         )
         # A slow/frozen client must not be able to stall broadcasts to
         # everyone else -- sent concurrently, each with its own timeout,
@@ -170,10 +195,12 @@ def build_app(cfg: Config) -> web.Application:
     app["shapes"] = build_render_shapes(cfg.path("db_path"), cfg.bounding_box)
 
     app.router.add_get("/", index_handler)
+    app.router.add_get("/stats", stats_handler)
     app.router.add_get("/ws", websocket_handler)
     app.router.add_get("/snapshot", snapshot_handler)
     app.router.add_get("/shapes", shapes_handler)
     app.router.add_get("/config", config_handler)
+    app.router.add_get("/aggregate", aggregate_handler)
     app.router.add_get("/calibration", get_calibration_handler)
     app.router.add_post("/calibration", post_calibration_handler)
 
