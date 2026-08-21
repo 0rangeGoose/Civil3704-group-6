@@ -9,6 +9,10 @@ bounding_box:
   west: 151.1830
   east: 151.2262
 
+# Projector-pixel calibration, computed via the renderer's calibration mode
+# (Phase 5) and persisted here so it survives restarts, per the brief.
+calibration_path: "data/calibration.json"
+
 static_gtfs:
   # Transport for NSW Open Data Hub product name.
   bundle_name: "timetables_complete_gtfs"
