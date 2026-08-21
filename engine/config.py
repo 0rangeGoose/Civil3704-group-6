@@ -52,6 +52,10 @@ class Config:
         return self.root / self.static_gtfs[key]
 
     @property
+    def calibration_path(self) -> Path:
+        return self.root / self.raw["calibration_path"]
+
+    @property
     def api_key(self) -> str | None:
         return os.environ.get("TFNSW_API_KEY") or None
 

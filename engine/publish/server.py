@@ -15,7 +15,9 @@ from pathlib import Path
 from aiohttp import WSMsgType, web
 
 from engine.config import Config, load_config
+from engine.publish.calibration import CalibrationPoint, compute_and_save_calibration, load_calibration
 from engine.publish.feed import LiveVehicleFeed
+from engine.publish.homography import HomographyError
 from engine.publish.shapes_export import build_render_shapes
 
 logger = logging.getLogger("pulse_cbd.publish_server")
@@ -79,6 +81,58 @@ async def config_handler(request: web.Request) -> web.Response:
     )
 
 
+async def get_calibration_handler(request: web.Request) -> web.Response:
+    cfg: Config = request.app["cfg"]
+    calibration = load_calibration(cfg.calibration_path)
+    return web.json_response(calibration)
+
+
+async def post_calibration_handler(request: web.Request) -> web.Response:
+    """Save a new calibration from the renderer's calibration mode: >= 4
+    (lat, lon, pixel_x, pixel_y) correspondences, per the brief."""
+    cfg: Config = request.app["cfg"]
+    try:
+        body = await request.json()
+        raw_points = body["points"]
+        canvas_width = int(body["canvas_width"])
+        canvas_height = int(body["canvas_height"])
+        points = [
+            CalibrationPoint(
+                lat=float(p["lat"]), lon=float(p["lon"]),
+                pixel_x=float(p["pixel_x"]), pixel_y=float(p["pixel_y"]),
+            )
+            for p in raw_points
+        ]
+    except (KeyError, TypeError, ValueError) as exc:
+        return web.json_response({"error": f"invalid calibration payload: {exc}"}, status=400)
+
+    bbox = cfg.bounding_box
+    center_lat = (bbox.north + bbox.south) / 2
+    center_lon = (bbox.west + bbox.east) / 2
+    try:
+        record = compute_and_save_calibration(
+            cfg.calibration_path, points, canvas_width, canvas_height, center_lat, center_lon
+        )
+    except HomographyError as exc:
+        return web.json_response({"error": str(exc)}, status=400)
+
+    logger.info("calibration saved: %d points, canvas %dx%d", len(points), canvas_width, canvas_height)
+    return web.json_response(record)
+
+
+_SEND_TIMEOUT_SECONDS = 2.0
+
+
+async def _send_one(ws: web.WebSocketResponse, frame: str) -> bool:
+    """Returns False if this socket should be dropped."""
+    try:
+        await asyncio.wait_for(ws.send_str(frame), timeout=_SEND_TIMEOUT_SECONDS)
+        return True
+    except (ConnectionResetError, ConnectionAbortedError, RuntimeError, asyncio.TimeoutError) as exc:
+        logger.warning("dropping unresponsive renderer connection: %s", exc)
+        return False
+
+
 async def _broadcast_loop(app: web.Application) -> None:
     feed: LiveVehicleFeed = app["feed"]
     while True:
@@ -89,12 +143,11 @@ async def _broadcast_loop(app: web.Application) -> None:
         frame = json.dumps(
             {"t": time.time(), "vehicles": [_vehicle_frame(r) for r in feed.snapshot.values()]}
         )
-        dead = set()
-        for ws in list(sockets):
-            try:
-                await ws.send_str(frame)
-            except ConnectionResetError:
-                dead.add(ws)
+        # A slow/frozen client must not be able to stall broadcasts to
+        # everyone else -- sent concurrently, each with its own timeout,
+        # rather than one at a time in a plain loop.
+        results = await asyncio.gather(*(_send_one(ws, frame) for ws in list(sockets)))
+        dead = {ws for ws, ok in zip(list(sockets), results) if not ok}
         sockets -= dead
 
 
@@ -121,6 +174,8 @@ def build_app(cfg: Config) -> web.Application:
     app.router.add_get("/snapshot", snapshot_handler)
     app.router.add_get("/shapes", shapes_handler)
     app.router.add_get("/config", config_handler)
+    app.router.add_get("/calibration", get_calibration_handler)
+    app.router.add_post("/calibration", post_calibration_handler)
 
     app.on_startup.append(_start_background_tasks)
     app.on_cleanup.append(_cleanup_background_tasks)

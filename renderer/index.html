@@ -14,10 +14,36 @@
     background: rgba(0,0,0,0.5); padding: 4px 8px; border-radius: 3px;
     pointer-events: none;
   }
+  #calibration-panel {
+    position: fixed; top: 8px; right: 8px; z-index: 10; width: 260px;
+    font: 11px/1.5 ui-monospace, monospace; color: #cde;
+    background: rgba(10,14,22,0.9); border: 1px solid #345; border-radius: 4px;
+    padding: 8px; display: none;
+  }
+  #calibration-panel.active { display: block; }
+  #calibration-panel h3 { margin: 0 0 6px; font-size: 12px; color: #9cf; }
+  #calibration-panel .point-row { display: flex; gap: 4px; margin-bottom: 4px; align-items: center; }
+  #calibration-panel .point-row span { width: 14px; color: #789; }
+  #calibration-panel input { width: 70px; background: #112; color: #cde; border: 1px solid #345; font: inherit; padding: 2px; }
+  #calibration-panel button { font: inherit; background: #234; color: #cde; border: 1px solid #456; border-radius: 3px; padding: 4px 8px; margin-top: 4px; margin-right: 4px; cursor: pointer; }
+  #calibration-panel button:hover { background: #345; }
+  #calibration-panel .hint { color: #678; margin-top: 6px; }
+  #cal-message { margin-top: 6px; min-height: 14px; }
+  #cal-message.error { color: #ff6b6b; }
+  #cal-message.ok { color: #39ff6a; }
 </style>
 </head>
 <body>
 <div id="status">connecting...</div>
+<div id="calibration-panel">
+  <h3>Calibration mode (press C to exit)</h3>
+  <div id="calibration-points"></div>
+  <button id="cal-add">+ point</button>
+  <button id="cal-reset">reset</button>
+  <button id="cal-save">save calibration</button>
+  <div id="cal-message"></div>
+  <div class="hint">Drag crosshairs to registration marks on the model, enter their known lat/lon, then save. Press V to toggle the verification overlay.</div>
+</div>
 <canvas id="canvas"></canvas>
 <script>
 "use strict";
@@ -51,7 +77,9 @@ const statusEl = document.getElementById("status");
 
 let cfg = null;
 let shapes = null;
-let corridorLayer = null; // offscreen canvas, drawn once
+let calibration = null; // saved homography record from GET /calibration, or null
+let corridorLayerDim = null;    // offscreen canvas, normal dim base layer
+let corridorLayerBright = null; // offscreen canvas, verification-overlay brightness
 let projector = null;
 
 // vehicleKey -> { prev: {lat,lon,ts}, curr: {lat,lon,ts}, currReceivedAt: number,
@@ -62,11 +90,22 @@ function resize() {
   canvas.width = window.innerWidth;
   canvas.height = window.innerHeight;
   if (cfg) {
-    projector = makeProjector(cfg.bounding_box, canvas.width, canvas.height);
-    drawCorridorLayer();
+    projector = selectProjector();
+    corridorLayerDim = drawCorridorLayer("rgba(70,95,135,0.35)", 1);
+    corridorLayerBright = drawCorridorLayer("rgba(140,190,255,0.9)", 1.6);
   }
 }
 window.addEventListener("resize", resize);
+
+// A saved calibration (Phase 5) takes over from the flat-screen linear fit
+// (Phase 4) the moment one exists -- the renderer's drawing code doesn't
+// change either way, only which object satisfies project(lat, lon), per
+// the brief's "structure the coordinate transform so a more sophisticated
+// mapping could replace [it] later without touching the renderer's drawing
+// code."
+function selectProjector() {
+  return calibration ? makeHomographyProjector(calibration) : makeProjector(cfg.bounding_box, canvas.width, canvas.height);
+}
 
 // Aspect-correct fit of the bounding box into the canvas: a naive
 // lon/lat -> x/y stretch would visibly distort corridor shapes since the box
@@ -89,13 +128,39 @@ function makeProjector(bbox, width, height) {
   };
 }
 
-function drawCorridorLayer() {
+// Same simple equirectangular-at-box-centre projection calibration.py uses
+// to build the homography, reproduced here since the browser has no pyproj.
+// Must match calibration.py's to_local_metric exactly -- see DECISIONS.md.
+const DEG_TO_M = 111320.0;
+function toLocalMetric(lat, lon, centerLat, centerLon) {
+  const x = (lon - centerLon) * Math.cos(centerLat * Math.PI / 180) * DEG_TO_M;
+  const y = (lat - centerLat) * DEG_TO_M;
+  return [x, y];
+}
+
+function applyHomography(h, x, y) {
+  const wx = h[0][0] * x + h[0][1] * y + h[0][2];
+  const wy = h[1][0] * x + h[1][1] * y + h[1][2];
+  const w  = h[2][0] * x + h[2][1] * y + h[2][2];
+  return [wx / w, wy / w];
+}
+
+function makeHomographyProjector(calib) {
+  return {
+    project(lat, lon) {
+      const [x, y] = toLocalMetric(lat, lon, calib.center_lat, calib.center_lon);
+      return applyHomography(calib.homography, x, y);
+    },
+  };
+}
+
+function drawCorridorLayer(strokeStyle, lineWidth) {
   const off = document.createElement("canvas");
   off.width = canvas.width;
   off.height = canvas.height;
   const octx = off.getContext("2d");
-  octx.strokeStyle = "rgba(70,95,135,0.35)";
-  octx.lineWidth = 1;
+  octx.strokeStyle = strokeStyle;
+  octx.lineWidth = lineWidth;
   octx.lineJoin = "round";
   for (const shapeId in shapes) {
     const pts = shapes[shapeId];
@@ -106,7 +171,7 @@ function drawCorridorLayer() {
     }
     octx.stroke();
   }
-  corridorLayer = off;
+  return off;
 }
 
 function applyFrame(frameVehicles) {
@@ -149,11 +214,13 @@ function currentRenderPosition(entry, nowMs) {
 
 function render() {
   requestAnimationFrame(render);
-  if (!projector || !corridorLayer) return;
+  if (!projector || !corridorLayerDim) return;
 
   ctx.fillStyle = "#000";
   ctx.fillRect(0, 0, canvas.width, canvas.height);
-  ctx.drawImage(corridorLayer, 0, 0);
+  ctx.drawImage(verificationMode ? corridorLayerBright : corridorLayerDim, 0, 0);
+
+  if (calibrateMode) drawCalibrationCrosshairs();
 
   const nowMs = performance.now();
   const staleMs = (cfg.stale_after_seconds || 90) * 1000;
@@ -211,7 +278,9 @@ function render() {
 
   for (const key of toDelete) vehicles.delete(key);
 
-  statusEl.textContent = `pulse-cbd  |  ${vehicles.size} vehicles  |  ${wsStatus}`;
+  const modeFlags = [calibrateMode ? "CALIBRATING" : null, verificationMode ? "VERIFY" : null].filter(Boolean);
+  statusEl.textContent = `pulse-cbd  |  ${vehicles.size} vehicles  |  ${wsStatus}` +
+    (modeFlags.length ? `  |  ${modeFlags.join(" ")}` : "");
 }
 
 function withAlpha(hex, alpha) {
@@ -220,6 +289,156 @@ function withAlpha(hex, alpha) {
   const b = parseInt(hex.slice(5, 7), 16);
   return `rgba(${r},${g},${b},${Math.max(0, Math.min(1, alpha))})`;
 }
+
+// --- Calibration mode (Phase 5) -------------------------------------------
+// Draggable crosshairs recording (pixel_x, pixel_y) paired with a
+// hand-entered (lat, lon) for each physical registration mark, per the
+// brief. "Save calibration" POSTs the correspondences to the server, which
+// computes the homography and persists it; the renderer then switches to
+// using it via selectProjector().
+
+let calibrateMode = false;
+let verificationMode = false;
+let calibrationPoints = []; // {lat, lon, pixel_x, pixel_y}, lat/lon nullable until entered
+let draggingPointIndex = null;
+
+function defaultCalibrationPoints() {
+  const m = 0.1;
+  // Right-side default x is pulled in past the calibration panel's width
+  // (see #calibration-panel CSS) so a fresh crosshair doesn't spawn hidden
+  // underneath it.
+  const rightX = Math.min(canvas.width * (1 - m), canvas.width - 300);
+  return [
+    { lat: null, lon: null, pixel_x: canvas.width * m, pixel_y: canvas.height * m },
+    { lat: null, lon: null, pixel_x: rightX, pixel_y: canvas.height * m },
+    { lat: null, lon: null, pixel_x: canvas.width * m, pixel_y: canvas.height * (1 - m) },
+    { lat: null, lon: null, pixel_x: rightX, pixel_y: canvas.height * (1 - m) },
+  ];
+}
+
+function enterCalibrateMode() {
+  calibrateMode = true;
+  document.getElementById("calibration-panel").classList.add("active");
+  if (calibration && calibration.points && calibration.points.length) {
+    calibrationPoints = calibration.points.map((p) => ({ lat: p.lat, lon: p.lon, pixel_x: p.pixel_x, pixel_y: p.pixel_y }));
+  } else if (calibrationPoints.length === 0) {
+    calibrationPoints = defaultCalibrationPoints();
+  }
+  renderCalibrationPanel();
+}
+
+function exitCalibrateMode() {
+  calibrateMode = false;
+  document.getElementById("calibration-panel").classList.remove("active");
+}
+
+function renderCalibrationPanel() {
+  const container = document.getElementById("calibration-points");
+  container.innerHTML = "";
+  calibrationPoints.forEach((p, i) => {
+    const row = document.createElement("div");
+    row.className = "point-row";
+    const label = document.createElement("span");
+    label.textContent = String(i + 1);
+    const latInput = document.createElement("input");
+    latInput.type = "number"; latInput.step = "0.00001"; latInput.placeholder = "lat";
+    latInput.value = p.lat ?? "";
+    latInput.oninput = () => { p.lat = latInput.value === "" ? null : parseFloat(latInput.value); };
+    const lonInput = document.createElement("input");
+    lonInput.type = "number"; lonInput.step = "0.00001"; lonInput.placeholder = "lon";
+    lonInput.value = p.lon ?? "";
+    lonInput.oninput = () => { p.lon = lonInput.value === "" ? null : parseFloat(lonInput.value); };
+    row.appendChild(label);
+    row.appendChild(latInput);
+    row.appendChild(lonInput);
+    container.appendChild(row);
+  });
+}
+
+function drawCalibrationCrosshairs() {
+  calibrationPoints.forEach((p, i) => {
+    const x = p.pixel_x, y = p.pixel_y;
+    ctx.strokeStyle = i === draggingPointIndex ? "#ff2d9c" : "#5cf7ff";
+    ctx.lineWidth = 2;
+    ctx.beginPath();
+    ctx.moveTo(x - 14, y); ctx.lineTo(x + 14, y);
+    ctx.moveTo(x, y - 14); ctx.lineTo(x, y + 14);
+    ctx.stroke();
+    ctx.beginPath();
+    ctx.arc(x, y, 14, 0, Math.PI * 2);
+    ctx.stroke();
+    ctx.fillStyle = "#5cf7ff";
+    ctx.font = "11px ui-monospace, monospace";
+    ctx.fillText(String(i + 1), x + 18, y - 10);
+  });
+}
+
+function hitTestCalibrationPoint(x, y) {
+  for (let i = calibrationPoints.length - 1; i >= 0; i--) {
+    const p = calibrationPoints[i];
+    if (Math.hypot(p.pixel_x - x, p.pixel_y - y) <= 16) return i;
+  }
+  return null;
+}
+
+canvas.addEventListener("mousedown", (ev) => {
+  if (!calibrateMode) return;
+  draggingPointIndex = hitTestCalibrationPoint(ev.offsetX, ev.offsetY);
+});
+canvas.addEventListener("mousemove", (ev) => {
+  if (!calibrateMode || draggingPointIndex === null) return;
+  calibrationPoints[draggingPointIndex].pixel_x = ev.offsetX;
+  calibrationPoints[draggingPointIndex].pixel_y = ev.offsetY;
+});
+window.addEventListener("mouseup", () => { draggingPointIndex = null; });
+
+document.getElementById("cal-add").addEventListener("click", () => {
+  calibrationPoints.push({ lat: null, lon: null, pixel_x: canvas.width / 2, pixel_y: canvas.height / 2 });
+  renderCalibrationPanel();
+});
+document.getElementById("cal-reset").addEventListener("click", () => {
+  calibrationPoints = defaultCalibrationPoints();
+  renderCalibrationPanel();
+});
+function showCalMessage(text, isError) {
+  const el = document.getElementById("cal-message");
+  el.textContent = text;
+  el.className = isError ? "error" : "ok";
+}
+
+document.getElementById("cal-save").addEventListener("click", async () => {
+  const valid = calibrationPoints.filter(
+    (p) => p.lat !== null && p.lon !== null && !Number.isNaN(p.lat) && !Number.isNaN(p.lon)
+  );
+  if (valid.length < 4) {
+    showCalMessage(`Need at least 4 points with lat/lon filled in (have ${valid.length}).`, true);
+    return;
+  }
+  const resp = await fetch("/calibration", {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({ points: valid, canvas_width: canvas.width, canvas_height: canvas.height }),
+  });
+  const body = await resp.json();
+  if (!resp.ok) {
+    showCalMessage(`Calibration failed: ${body.error || resp.status}`, true);
+    return;
+  }
+  calibration = body;
+  projector = selectProjector();
+  corridorLayerDim = drawCorridorLayer("rgba(70,95,135,0.35)", 1);
+  corridorLayerBright = drawCorridorLayer("rgba(140,190,255,0.9)", 1.6);
+  showCalMessage(`Calibration saved (${valid.length} points, ${body.computed_at}).`, false);
+});
+
+document.addEventListener("keydown", (ev) => {
+  if (ev.target.tagName === "INPUT") return; // don't hijack typing lat/lon
+  if (ev.key === "c" || ev.key === "C") {
+    if (calibrateMode) exitCalibrateMode(); else enterCalibrateMode();
+  } else if (ev.key === "v" || ev.key === "V") {
+    verificationMode = !verificationMode;
+  }
+});
 
 let wsStatus = "connecting...";
 
@@ -236,9 +455,12 @@ function connectWebSocket() {
 }
 
 async function boot() {
-  const [cfgResp, shapesResp] = await Promise.all([fetch("/config"), fetch("/shapes")]);
+  const [cfgResp, shapesResp, calResp] = await Promise.all([
+    fetch("/config"), fetch("/shapes"), fetch("/calibration"),
+  ]);
   cfg = await cfgResp.json();
   shapes = await shapesResp.json();
+  calibration = await calResp.json(); // null if none saved yet -- Phase 4's linear fit is used
   resize();
   connectWebSocket();
   requestAnimationFrame(render);

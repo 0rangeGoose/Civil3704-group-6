@@ -2,6 +2,52 @@
 
 Judgment calls made without stopping to ask, per the project brief. Newest first.
 
+## 2026-08-19 — Bug caught live: one stuck client could hang the broadcast loop for everyone
+
+Discovered while live-testing calibration: after the `alert()` freeze (previous entry), a
+brand new WebSocket connection stopped receiving any frames at all -- not just the
+frozen tab, every client, permanently, confirmed by opening a fresh test socket that
+received nothing. `_broadcast_loop` sent to each connected client sequentially with
+`await ws.send_str(frame)` and no timeout; the frozen tab's connection likely stalled at
+the transport level while its (blocked) JS wasn't draining incoming data, and since the
+loop awaits each send in turn before moving to the next client or looping back to
+`asyncio.sleep`, one stuck socket wedges the loop forever for every other client too.
+Fixed by sending to all clients concurrently (`asyncio.gather`) with a 2s
+`asyncio.wait_for` timeout per socket, dropping any that time out or error rather than
+blocking the rest.
+
+## 2026-08-19 — Bug caught live: blocking alert() in the calibration panel
+
+Live-testing the calibration flow (drag crosshairs, enter lat/lon, save) hit
+`alert("Calibration saved.")` on success, which froze the whole page -- browser
+JS dialogs block the event loop, including the WebSocket message handler, so
+the live vehicle feed would visibly stall every time someone saved a calibration.
+The exact failure mode called out for browser automation generally, but just as
+real for a person operating the actual projector setup. Replaced all three
+`alert()` calls in `renderer/index.html` with a small non-blocking status line
+inside the calibration panel (`#cal-message`) instead.
+
+## 2026-08-19 — Default crosshair positions were spawning behind the calibration panel
+
+Also caught live: the default top-right/bottom-right crosshairs (`defaultCalibrationPoints`)
+landed at 90% of canvas width, which sits directly under the calibration panel itself
+(`#calibration-panel`, ~260px wide, fixed top-right) -- draggable but invisible until
+moved. Right-side defaults now clamp to `canvas.width - 300` so they spawn clear of it.
+
+## 2026-08-19 — Calibration uses equirectangular-at-box-centre, not UTM 56S
+
+The brief offers either "UTM zone 56S or a simple equirectangular projection
+anchored at the box centre" for the metric plane the homography is computed in.
+Map matching (Phase 3) already uses pyproj's UTM 56S -- but the homography has to be
+*applied* every frame in the renderer, in plain JS, with no pyproj available. Rather
+than hand-porting UTM's Transverse Mercator series expansion into JavaScript (and
+risking it drifting out of sync with the Python side), `engine/publish/calibration.py`
+uses the simple equirectangular option instead: `x = (lon - center_lon) * cos(center_lat) * 111320`,
+`y = (lat - center_lat) * 111320`. Identical four-line formula in both Python and
+`renderer/index.html`, easy to keep in sync, and accurate enough over a ~5km box.
+`center_lat`/`center_lon` are stored in the calibration record itself so the exact
+anchor used is always reproducible.
+
 ## 2026-08-19 — Phase 4 renderer: no basemap image, straight-line interpolation, aiohttp
 
 Three scoping calls for the flat-screen renderer:
