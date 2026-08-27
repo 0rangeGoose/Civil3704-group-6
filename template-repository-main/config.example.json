@@ -1,0 +1,48 @@
+{
+    "project_name": "Transport AR Installation",
+    "group_name": "Team Name Here",
+    "transit_agency": "Your Transit Agency",
+    "description": "Augmented reality visualization of public transit data",
+    "gtfs": {
+        "data_path": "./data/gtfs",
+        "download_url": "https://your-transit-agency.com/gtfs.zip",
+        "update_frequency_hours": 24
+    },
+    "gtfs_realtime": {
+        "vehicle_positions_url": "https://your-transit-agency.com/gtfs-rt/vehicle-positions",
+        "trip_updates_url": "https://your-transit-agency.com/gtfs-rt/trip-updates",
+        "service_alerts_url": "https://your-transit-agency.com/gtfs-rt/service-alerts",
+        "update_interval_seconds": 30
+    },
+    "visualization": {
+        "ar_framework": "your-chosen-framework",
+        "render_mode": "realtime",
+        "max_vehicles_displayed": 50,
+        "display_radius_km": 5.0
+    },
+    "filters": {
+        "route_types": [
+            0,
+            1,
+            2,
+            3
+        ],
+        "route_ids": [],
+        "geographic_bounds": {
+            "min_latitude": 37.7,
+            "max_latitude": 37.8,
+            "min_longitude": -122.5,
+            "max_longitude": -122.4
+        }
+    },
+    "performance": {
+        "cache_enabled": true,
+        "cache_ttl_seconds": 300,
+        "max_cache_size_mb": 100
+    },
+    "logging": {
+        "level": "INFO",
+        "log_to_file": true,
+        "log_file_path": "./logs/ar-transit.log"
+    }
+}
