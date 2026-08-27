@@ -1,0 +1,220 @@
+<!doctype html>
+<html>
+<head>
+<meta charset="utf-8" />
+<title>Pulse CBD — Project Timeline</title>
+<style>
+  @page {
+    size: A4;
+    margin: 22mm 20mm 22mm 20mm;
+    @bottom-center {
+      content: "Pulse CBD — Project Timeline";
+      font-family: 'Helvetica Neue', Arial, sans-serif;
+      font-size: 8.5pt;
+      color: #8a8f98;
+    }
+    @bottom-right {
+      content: counter(page);
+      font-family: 'Helvetica Neue', Arial, sans-serif;
+      font-size: 8.5pt;
+      color: #8a8f98;
+    }
+  }
+
+  * { box-sizing: border-box; }
+  html, body {
+    margin: 0; padding: 0;
+    font-family: 'Helvetica Neue', Arial, sans-serif;
+    color: #1c2126;
+    font-size: 10.8pt;
+    line-height: 1.55;
+  }
+
+  .titleblock {
+    padding-bottom: 18mm;
+    margin-bottom: 10mm;
+    border-bottom: 2.5pt solid #1c2126;
+  }
+  .kicker {
+    font-size: 9.5pt;
+    letter-spacing: 0.14em;
+    text-transform: uppercase;
+    color: #4a7bd8;
+    font-weight: 700;
+    margin-bottom: 10px;
+  }
+  h1.title {
+    font-size: 27pt;
+    line-height: 1.15;
+    margin: 0 0 8px;
+    font-weight: 800;
+    letter-spacing: -0.01em;
+  }
+  .subtitle {
+    font-size: 13pt;
+    color: #4b525c;
+    font-weight: 400;
+    margin: 0 0 16px;
+  }
+  .meta-row {
+    display: flex;
+    gap: 32px;
+    font-size: 9.5pt;
+    color: #6b7280;
+    margin-top: 14px;
+  }
+  .meta-row div span.label {
+    display: block;
+    text-transform: uppercase;
+    letter-spacing: 0.08em;
+    font-size: 8pt;
+    color: #9aa1ab;
+    margin-bottom: 2px;
+  }
+
+  .summary {
+    background: #f4f7fc;
+    border-left: 3pt solid #4a7bd8;
+    padding: 12px 16px;
+    margin: 0 0 22px;
+    font-size: 10.3pt;
+    color: #333a44;
+  }
+
+  p { margin: 8px 0; text-align: left; }
+  strong { font-weight: 700; }
+
+  table { border-collapse: collapse; width: 100%; margin: 10px 0; font-size: 9.7pt; }
+  th, td { text-align: left; padding: 6px 10px; border-bottom: 0.75pt solid #e1e4e9; vertical-align: top; }
+  th { background: #f4f7fc; font-weight: 700; color: #333; }
+  tr:last-child td { border-bottom: none; }
+
+  table.timeline td:first-child { font-weight: 700; text-align: center; width: 32px; color: #4a7bd8; }
+  table.timeline td:nth-child(2) { font-weight: 700; width: 150px; }
+  .due {
+    display: inline-block;
+    margin-top: 5px;
+    font-size: 8.3pt;
+    font-weight: 700;
+    letter-spacing: 0.03em;
+    text-transform: uppercase;
+    color: #a84a2a;
+    background: #fbeee7;
+    padding: 2px 7px;
+    border-radius: 3px;
+  }
+  tr.milestone td { background: #f9fafc; }
+</style>
+</head>
+<body>
+
+<div class="titleblock">
+  <div class="kicker">Pulse CBD</div>
+  <h1 class="title">Project Timeline</h1>
+  <p class="subtitle">Thirteen-week build schedule, mapped against the project's six software phases and the remaining physical-installation milestones</p>
+  <div class="meta-row">
+    <div><span class="label">Prepared</span>2026-08-23</div>
+    <div><span class="label">Status</span>Software complete &amp; live-verified; physical installation pending</div>
+  </div>
+</div>
+
+<p>
+  Structured as thirteen weekly cycles, each combining a brief progress check-in with dedicated
+  project work time. Notably, the full software pipeline — all six build phases, Weeks 4&ndash;11
+  below — is already complete and live-verified against real Transport for NSW data well ahead of
+  the physical-installation milestones. That's a direct consequence of the project's modality
+  choice: the hardware dependency (a physical scale model and projector) is deliberately isolated
+  to a single, late, low-risk calibration step, rather than something the rest of the system has to
+  wait on.
+</p>
+
+<table class="timeline">
+  <tr><th>Wk</th><th>Project Stage</th><th>Workshop Focus</th></tr>
+  <tr>
+    <td>1</td><td>Project Initiation</td>
+    <td>Scoped the problem — making Sydney's live transit network legible and
+      ambient, not just queryable — and surveyed presentation modalities: a fixed
+      3D-printed/laser-cut CBD model, a Kinect-sensed sand table, and a sensed
+      LEGO grid.</td>
+  </tr>
+  <tr>
+    <td>2</td><td>Exploration &amp; Scoping</td>
+    <td>Registered for a Transport for NSW Open Data Hub API key; explored the
+      Complete GTFS static bundle and the GTFS-Realtime feeds across all 7 modes;
+      set the CBD bounding box and surfaced the first feed quirks.</td>
+  </tr>
+  <tr class="milestone">
+    <td>3</td><td>Proposal Development</td>
+    <td>Selected the fixed scale-model modality over the two sensed alternatives;
+      defined the six-phase build order and deliverables; prepared the project
+      proposal.
+      <span class="due">Proposal due</span></td>
+  </tr>
+  <tr>
+    <td>4</td><td>Foundation Building</td>
+    <td><em>Phase 1.</em> Built the static GTFS ingestion pipeline — spatial
+      filter, SQLite cache — and set up the git repository, config, and automated
+      test suite.</td>
+  </tr>
+  <tr>
+    <td>5</td><td>Data Processing</td>
+    <td><em>Phases 2&ndash;3.</em> Realtime polling across all 7 modes, protobuf
+      decoding (including TfNSW's custom carriage/occupancy extension), feed-quirk
+      handling, static/realtime entity resolution, map matching, and
+      schedule-adherence scoring.</td>
+  </tr>
+  <tr>
+    <td>6</td><td>Physical Setup</td>
+    <td><em>Phase 4.</em> Stood up the publish layer (WebSocket + HTTP) and the
+      Canvas renderer, verified live on a flat screen as a stand-in for the
+      eventual projector — no physical model exists yet, so this validated the
+      full pipeline end to end regardless.</td>
+  </tr>
+  <tr class="milestone">
+    <td>7</td><td>Mid-Project Checkpoint</td>
+    <td>Live demonstration of vehicles moving on real Sydney Trains, Metro, bus,
+      ferry and light rail data, coloured by live schedule adherence.
+      <span class="due">Mid-project demo + report due</span></td>
+  </tr>
+  <tr>
+    <td>8</td><td>Hardware Integration</td>
+    <td>No depth or stereo sensing to integrate, by design — instead built the
+      calibration tool itself: a draggable-crosshair registration UI and
+      least-squares homography computation, ready for whenever the physical model
+      and projector exist.</td>
+  </tr>
+  <tr>
+    <td>9</td><td>Spatial Mapping</td>
+    <td><em>Phase 5 continued.</em> Calibration persisted to disk, automatic
+      switching between the flat-screen projection and a calibrated homography
+      with no renderer code changes, and a verification overlay — tested against
+      synthetic registration points pending real hardware.</td>
+  </tr>
+  <tr>
+    <td>10</td><td>User Experience</td>
+    <td><em>Phase 6.</em> Pulsing interchange nodes on the model view, and a
+      separate wall-panel/tablet stats dashboard (adherence, alerts, interchange
+      activity) — deliberately kept off the model surface itself.</td>
+  </tr>
+  <tr>
+    <td>11</td><td>Refinement &amp; Optimisation</td>
+    <td>Live testing surfaced and fixed two real bugs: a blocking dialog that
+      froze the renderer, and a WebSocket broadcast loop with no per-client
+      timeout that a single stalled connection could hang for every viewer.</td>
+  </tr>
+  <tr>
+    <td>12</td><td>Final Integration</td>
+    <td>Full regression pass (68 automated tests), README and decision log
+      finalised. Physical model fabrication and the real calibration session are
+      the remaining, hardware-dependent steps.</td>
+  </tr>
+  <tr class="milestone">
+    <td>13</td><td>Project Showcase</td>
+    <td>Live demonstration against the real Transport for NSW feeds, projected
+      onto the completed physical model.
+      <span class="due">Final deliverable + report due</span></td>
+  </tr>
+</table>
+
+</body>
+</html>
