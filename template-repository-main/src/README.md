@@ -1,113 +1,76 @@
 # Source Code Directory
 
-This directory contains your AR installation implementation.
-
-## Getting Started
-
-1. Implement your main entry point (e.g., `main.py`, `index.js`, `main.go`)
-2. Organize your code into logical modules
-3. Document your architecture in `../docs/ARCHITECTURE.md`
-
-## Recommended Structure
+## Layout
 
 ```
 src/
-├── main.py                 # Entry point
-├── data_fetcher/          # GTFS/GTFS-R data fetching
-│   ├── __init__.py
-│   ├── gtfs_loader.py     # Static GTFS loading
-│   └── gtfs_realtime.py   # Real-time feed consumer
-├── visualization/         # AR visualization logic
-│   ├── __init__.py
-│   ├── renderer.py        # Main rendering engine
-│   └── ar_components.py   # AR-specific components
-├── utils/                 # Helper functions
-│   ├── __init__.py
-│   ├── config.py          # Configuration loader
-│   └── logger.py          # Logging setup
-└── tests/                 # Unit tests
-    └── __init__.py
+├── main.py                        # Entry point (CLI: --mode serve|headless)
+├── file.env                       # Local env vars (TFNSW_API_KEY) - gitignored, don't commit real keys
+└── pipeline/                      # Headless data engine (see docs/ARCHITECTURE.md)
+    ├── config.py                  # CBD bbox, feed URLs, polling intervals, thresholds
+    ├── ingestion/
+    │   ├── static_gtfs.py         # Static GTFS: load, bbox-filter, SQLite cache
+    │   └── realtime_gtfs.py       # GTFS-Realtime: concurrent multi-feed polling
+    ├── normalise.py                # Join positions + delays + static route/shape; drop ghost trails
+    ├── analytics.py                # Map matching (snap to shape), adherence scoring, rolling aggregates
+    ├── publish.py                  # In-memory snapshot; HTTP GET /snapshot + WebSocket /ws
+    └── run.py                      # Orchestration: run_headless() / run_with_server()
 ```
 
-## Key Components to Implement
+## Setup
 
-### 1. Data Fetcher
+1. Install dependencies:
+   ```
+   pip install -r requirements.txt
+   ```
+2. Add your TfNSW Open Data Hub API key to `.env` (repo root) or `src/file.env`:
+   ```
+   TFNSW_API_KEY=your-key-here
+   ```
+3. Download static GTFS data into `data/gtfs/` (needs at least `routes.txt`,
+   `stops.txt`, `trips.txt`; add `shapes.txt` too if you want map matching).
+   Get it from the [TfNSW Open Data Hub](https://opendata.transport.nsw.gov.au/).
 
-- Load static GTFS data (routes, stops, schedules)
-- Connect to GTFS-Realtime feed
-- Parse and validate transit data
-- Cache data appropriately
+## Running
 
-### 2. Data Processor
-
-- Transform GTFS data into useful formats
-- Calculate positions and timings
-- Handle real-time updates
-- Manage state
-
-### 3. AR Visualization
-
-- Render transit information in AR
-- Handle user interactions
-- Update display in real-time
-- Manage AR markers/anchors
-
-### 4. Configuration
-
-- Load settings from `config.json` and `.env`
-- Validate required parameters
-- Provide sensible defaults
-
-## Example Entry Points
-
-### Python
-
-```python
-# main.py
-from data_fetcher import GTFSLoader, GTFSRealtime
-from visualization import ARRenderer
-from utils import load_config
-
-def main():
-    config = load_config()
-    gtfs = GTFSLoader(config['gtfs_url'])
-    realtime = GTFSRealtime(config['gtfs_realtime_url'])
-    renderer = ARRenderer()
-    
-    # Your AR installation logic here
-    renderer.start()
-
-if __name__ == "__main__":
-    main()
+```
+python src/main.py                    # serve mode (default): background ingestion +
+                                       # live snapshot on http://localhost:8080
+python src/main.py --mode headless    # no server - just polls and logs each cycle
+python src/main.py --mode headless --max-cycles 3   # bounded run, useful for a quick check
 ```
 
-### JavaScript/Node.js
+In `serve` mode, the projection renderer / dashboard consumes:
+- `GET  http://localhost:8080/snapshot` - current state as JSON, poll on demand
+- `WS   ws://localhost:8080/ws` - the same snapshot pushed ~2x/second
+- `GET  http://localhost:8080/healthz` - liveness check
 
-```javascript
-// index.js
-const { GTFSLoader } = require('./data_fetcher');
-const { ARRenderer } = require('./visualization');
-const config = require('../config.json');
+## Testing the pipeline without any hardware
 
-async function main() {
-    const gtfs = new GTFSLoader(config.gtfs_url);
-    const renderer = new ARRenderer();
-    
-    await gtfs.load();
-    renderer.start();
-}
+The pipeline is intentionally decoupled from the renderer - `pipeline/run.py`'s
+`run_headless()` mode needs no projector/model, only a valid API key (network
+access to TfNSW). For fully offline tests (no key, no network), see
+`tests/test_pipeline.py`, which feeds synthetic GTFS-Realtime messages through
+`normalise()` / `analytics.py` / `publish.py` directly:
 
-main().catch(console.error);
+```
+pytest tests/ -v
 ```
 
-## Testing
+## Known gaps / next steps
 
-Add tests in the `tests/` directory. Run with:
-
-```bash
-make test
-```
+- Only `buses` is enabled in `pipeline/config.py`'s `ACTIVE_MODES` for now.
+  The other modes' URLs are filled in but some (sydneytrains, metro,
+  lightrail vehicle positions/trip updates - moved to a `/v2/` endpoint in
+  May 2025) are marked `UNVERIFIED` and need confirming against a logged-in
+  TfNSW Open Data Hub session before being added to `ACTIVE_MODES`.
+- The TfNSW custom protobuf extension (occupancy / accessibility beyond
+  standard GTFS-RT) isn't decoded yet - `VehicleRecord` has no occupancy
+  field. Needs TfNSW's extension `.proto` definitions.
+- Population/demand data (Travel Zone Projections) isn't wired in - static
+  GTFS + realtime only, so far.
+- No history/trend storage yet (current design is in-memory, current-state only).
 
 ## Documentation
 
-Document your implementation decisions, API endpoints, and any special considerations in the main documentation directory.
+Architecture decisions and data flow live in `../docs/ARCHITECTURE.md`.

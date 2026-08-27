@@ -23,11 +23,12 @@ pytest-cov>=4.1.0
 black>=23.7.0
 flake8>=6.1.0
 
-# Web Framework (if building web-based AR)
-# Uncomment if needed:
-# flask>=2.3.0
-# fastapi>=0.100.0
-# uvicorn>=0.23.0
+# Web Framework
+# Used by src/pipeline/publish.py to serve the live vehicle snapshot
+# (HTTP GET /snapshot + WebSocket /ws) to the projection renderer.
+fastapi>=0.110.0
+uvicorn>=0.23.0
+# flask>=2.3.0  # uncomment if you'd rather build the dashboard on Flask instead
 
 # Visualization (examples)
 # Uncomment based on your needs:
