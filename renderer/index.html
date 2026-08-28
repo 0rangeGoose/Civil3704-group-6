@@ -4,33 +4,53 @@
 <meta charset="utf-8" />
 <title>Pulse CBD</title>
 <style>
-  /* Fullscreen black background -- anything projected as black reads as
-     unlit model surface once this moves onto the physical model (Phase 5). */
-  html, body { margin: 0; padding: 0; background: #000; overflow: hidden; height: 100%; }
+  /* Themeable via [data-theme] on <html> -- the canvas fill itself is driven
+     from the matching CANVAS_THEME entry in JS (see below), since it's drawn
+     per-frame rather than styled with CSS. Dark is the original "unlit model
+     surface" default; light overrides it for on-screen viewing. */
+  :root {
+    --canvas-bg: #000;
+    --status-text: #556; --status-bg: rgba(0,0,0,0.5);
+    --panel-bg: rgba(10,14,22,0.9); --panel-border: #345; --panel-text: #cde;
+    --panel-heading: #9cf; --panel-muted: #789; --panel-hint: #678;
+    --input-bg: #112; --input-text: #cde; --input-border: #345;
+    --button-bg: #234; --button-text: #cde; --button-border: #456; --button-hover-bg: #345;
+    --error-color: #ff6b6b; --ok-color: #39ff6a;
+  }
+  :root[data-theme="light"] {
+    --canvas-bg: #f4f6f8;
+    --status-text: #4b5563; --status-bg: rgba(255,255,255,0.75);
+    --panel-bg: rgba(255,255,255,0.95); --panel-border: #c7ccd4; --panel-text: #1f2328;
+    --panel-heading: #0969da; --panel-muted: #59636e; --panel-hint: #6e7781;
+    --input-bg: #ffffff; --input-text: #1f2328; --input-border: #c7ccd4;
+    --button-bg: #eaeef2; --button-text: #1f2328; --button-border: #c7ccd4; --button-hover-bg: #d9dee3;
+    --error-color: #cf222e; --ok-color: #1a7f37;
+  }
+  html, body { margin: 0; padding: 0; background: var(--canvas-bg); overflow: hidden; height: 100%; }
   canvas { display: block; }
   #status {
     position: fixed; top: 8px; left: 8px; z-index: 10;
-    font: 11px/1.4 ui-monospace, monospace; color: #556;
-    background: rgba(0,0,0,0.5); padding: 4px 8px; border-radius: 3px;
+    font: 11px/1.4 ui-monospace, monospace; color: var(--status-text);
+    background: var(--status-bg); padding: 4px 8px; border-radius: 3px;
     pointer-events: none;
   }
   #calibration-panel {
     position: fixed; top: 8px; right: 8px; z-index: 10; width: 260px;
-    font: 11px/1.5 ui-monospace, monospace; color: #cde;
-    background: rgba(10,14,22,0.9); border: 1px solid #345; border-radius: 4px;
+    font: 11px/1.5 ui-monospace, monospace; color: var(--panel-text);
+    background: var(--panel-bg); border: 1px solid var(--panel-border); border-radius: 4px;
     padding: 8px; display: none;
   }
   #calibration-panel.active { display: block; }
-  #calibration-panel h3 { margin: 0 0 6px; font-size: 12px; color: #9cf; }
+  #calibration-panel h3 { margin: 0 0 6px; font-size: 12px; color: var(--panel-heading); }
   #calibration-panel .point-row { display: flex; gap: 4px; margin-bottom: 4px; align-items: center; }
-  #calibration-panel .point-row span { width: 14px; color: #789; }
-  #calibration-panel input { width: 70px; background: #112; color: #cde; border: 1px solid #345; font: inherit; padding: 2px; }
-  #calibration-panel button { font: inherit; background: #234; color: #cde; border: 1px solid #456; border-radius: 3px; padding: 4px 8px; margin-top: 4px; margin-right: 4px; cursor: pointer; }
-  #calibration-panel button:hover { background: #345; }
-  #calibration-panel .hint { color: #678; margin-top: 6px; }
+  #calibration-panel .point-row span { width: 14px; color: var(--panel-muted); }
+  #calibration-panel input { width: 70px; background: var(--input-bg); color: var(--input-text); border: 1px solid var(--input-border); font: inherit; padding: 2px; }
+  #calibration-panel button { font: inherit; background: var(--button-bg); color: var(--button-text); border: 1px solid var(--button-border); border-radius: 3px; padding: 4px 8px; margin-top: 4px; margin-right: 4px; cursor: pointer; }
+  #calibration-panel button:hover { background: var(--button-hover-bg); }
+  #calibration-panel .hint { color: var(--panel-hint); margin-top: 6px; }
   #cal-message { margin-top: 6px; min-height: 14px; }
-  #cal-message.error { color: #ff6b6b; }
-  #cal-message.ok { color: #39ff6a; }
+  #cal-message.error { color: var(--error-color); }
+  #cal-message.ok { color: var(--ok-color); }
 </style>
 </head>
 <body>
@@ -48,18 +68,21 @@
 <script>
 "use strict";
 
-// Colour encodes adherence state. Chosen for luminance separation (not just
-// hue) since projected colour on a matte model reads poorly at low
-// brightness -- brief's suggested starting palette, tuned so on_time reads
-// distinctly brighter than late, which reads brighter than very_late.
+// Colour encodes adherence state, tuned per theme so on_time still reads
+// distinctly from late, which reads distinctly from very_late. The dark-mode
+// palette is the brief's original -- bright on black, for projection onto a
+// matte model. Those same hex values wash out on a light background, so
+// light mode uses darker, more saturated variants for contrast instead.
 const ADHERENCE_COLOR = {
-  on_time:   { core: "#39ff6a", glow: "rgba(57,255,106,0.55)" },
-  late:      { core: "#ffb020", glow: "rgba(255,176,32,0.55)" },
-  very_late: { core: "#c81c2e", glow: "rgba(200,28,46,0.55)" },
-  cancelled: { core: "#c81c2e", glow: "rgba(200,28,46,0.55)" },
-  unknown:   { core: "#93a3b5", glow: "rgba(147,163,181,0.45)" },
+  dark: {
+    on_time: "#39ff6a", late: "#ffb020", very_late: "#c81c2e",
+    cancelled: "#c81c2e", unknown: "#93a3b5",
+  },
+  light: {
+    on_time: "#1a7f37", late: "#9a6700", very_late: "#cf222e",
+    cancelled: "#cf222e", unknown: "#57606a",
+  },
 };
-const DEFAULT_COLOR = ADHERENCE_COLOR.unknown;
 
 // Size/glow radius encodes mode, so heavy rail reads differently from a bus.
 const MODE_RADIUS = {
@@ -70,6 +93,31 @@ const MODE_RADIUS = {
 const DEFAULT_RADIUS = 4;
 
 const TAIL_WINDOW_MS = 30000; // "last 30 seconds of travel"
+
+// Canvas fill + corridor/interchange colours per theme -- kept in JS since
+// these are drawn per-frame rather than styled with CSS. Shared with
+// stats.html's control panel via the same localStorage key: toggling there
+// updates this page live (see the "storage" listener below) without needing
+// a reload, so a main-display tab and a stats tablet stay in sync.
+const THEME_KEY = "pulse-cbd-theme";
+const CANVAS_THEME = {
+  dark: { bg: "#000", corridorDim: "rgba(220,228,238,0.55)", corridorBright: "rgba(255,255,255,0.95)", interchange: "#bfe8ff" },
+  light: { bg: "#f4f6f8", corridorDim: "rgba(60,80,110,0.28)", corridorBright: "rgba(9,105,218,0.85)", interchange: "#0969da" },
+};
+let theme = "dark";
+
+function applyTheme(nextTheme) {
+  theme = nextTheme === "light" ? "light" : "dark";
+  document.documentElement.setAttribute("data-theme", theme);
+  if (shapes && projector) {
+    corridorLayerDim = drawCorridorLayer(CANVAS_THEME[theme].corridorDim, 1);
+    corridorLayerBright = drawCorridorLayer(CANVAS_THEME[theme].corridorBright, 1.6);
+  }
+}
+
+window.addEventListener("storage", (ev) => {
+  if (ev.key === THEME_KEY) applyTheme(ev.newValue || "dark");
+});
 
 const canvas = document.getElementById("canvas");
 const ctx = canvas.getContext("2d");
@@ -95,8 +143,8 @@ function resize() {
   canvas.height = window.innerHeight;
   if (cfg) {
     projector = selectProjector();
-    corridorLayerDim = drawCorridorLayer("rgba(70,95,135,0.35)", 1);
-    corridorLayerBright = drawCorridorLayer("rgba(140,190,255,0.9)", 1.6);
+    corridorLayerDim = drawCorridorLayer(CANVAS_THEME[theme].corridorDim, 1);
+    corridorLayerBright = drawCorridorLayer(CANVAS_THEME[theme].corridorBright, 1.6);
   }
 }
 window.addEventListener("resize", resize);
@@ -220,7 +268,7 @@ function render() {
   requestAnimationFrame(render);
   if (!projector || !corridorLayerDim) return;
 
-  ctx.fillStyle = "#000";
+  ctx.fillStyle = CANVAS_THEME[theme].bg;
   ctx.fillRect(0, 0, canvas.width, canvas.height);
   ctx.drawImage(verificationMode ? corridorLayerBright : corridorLayerDim, 0, 0);
 
@@ -245,7 +293,7 @@ function render() {
     }
     if (opacity <= 0.02) { toDelete.push(key); continue; }
 
-    const color = ADHERENCE_COLOR[entry.adherence] || DEFAULT_COLOR;
+    const color = ADHERENCE_COLOR[theme][entry.adherence] || ADHERENCE_COLOR[theme].unknown;
     const radius = MODE_RADIUS[entry.mode] || DEFAULT_RADIUS;
 
     // Comet tail: the last ~30s of actual history plus the live interpolated point.
@@ -254,7 +302,7 @@ function render() {
     if (tailPts.length > 1) {
       for (let i = 1; i < tailPts.length; i++) {
         const tailT = i / (tailPts.length - 1);
-        ctx.strokeStyle = withAlpha(color.core, tailT * 0.5 * opacity);
+        ctx.strokeStyle = withAlpha(color, tailT * 0.5 * opacity);
         ctx.lineWidth = Math.max(1, radius * 0.4);
         ctx.beginPath();
         ctx.moveTo(tailPts[i - 1][0], tailPts[i - 1][1]);
@@ -265,18 +313,8 @@ function render() {
 
     const [x, y] = projector.project(lat, lon);
 
-    // Soft glow, then a bright core -- points of light, not flat dots.
-    const glowR = radius * 3.2;
-    const grad = ctx.createRadialGradient(x, y, 0, x, y, glowR);
-    grad.addColorStop(0, withAlpha(color.core, 0.9 * opacity));
-    grad.addColorStop(0.35, withAlpha(color.core, 0.35 * opacity));
-    grad.addColorStop(1, withAlpha(color.core, 0));
-    ctx.fillStyle = grad;
-    ctx.beginPath();
-    ctx.arc(x, y, glowR, 0, Math.PI * 2);
-    ctx.fill();
-
-    ctx.fillStyle = withAlpha(color.core, opacity);
+    // Solid dot -- no glow gradient.
+    ctx.fillStyle = withAlpha(color, opacity);
     ctx.beginPath();
     ctx.arc(x, y, radius, 0, Math.PI * 2);
     ctx.fill();
@@ -289,7 +327,6 @@ function render() {
     (modeFlags.length ? `  |  ${modeFlags.join(" ")}` : "");
 }
 
-const INTERCHANGE_COLOR = "#bfe8ff"; // distinct from any adherence colour -- these are station nodes, not vehicles
 const INTERCHANGE_PULSE_PERIOD_MS = 2200;
 
 // "Pulse the interchange nodes with an intensity proportional to services
@@ -300,6 +337,7 @@ const INTERCHANGE_PULSE_PERIOD_MS = 2200;
 function drawInterchangePulses(nowMs) {
   if (!interchanges.length) return;
   const phase = 0.5 + 0.5 * Math.sin((nowMs / INTERCHANGE_PULSE_PERIOD_MS) * 2 * Math.PI);
+  const interchangeColor = CANVAS_THEME[theme].interchange;
   for (const ic of interchanges) {
     const [x, y] = projector.project(ic.lat, ic.lon);
     const activity = Math.min(1, Math.sqrt(ic.count) / 5); // sqrt so a handful of extra services doesn't dominate
@@ -308,9 +346,9 @@ function drawInterchangePulses(nowMs) {
     const coreAlpha = 0.15 + activity * 0.55 * (0.7 + 0.3 * phase);
 
     const grad = ctx.createRadialGradient(x, y, 0, x, y, radius);
-    grad.addColorStop(0, withAlpha(INTERCHANGE_COLOR, coreAlpha));
-    grad.addColorStop(0.5, withAlpha(INTERCHANGE_COLOR, coreAlpha * 0.35));
-    grad.addColorStop(1, withAlpha(INTERCHANGE_COLOR, 0));
+    grad.addColorStop(0, withAlpha(interchangeColor, coreAlpha));
+    grad.addColorStop(0.5, withAlpha(interchangeColor, coreAlpha * 0.35));
+    grad.addColorStop(1, withAlpha(interchangeColor, 0));
     ctx.fillStyle = grad;
     ctx.beginPath();
     ctx.arc(x, y, radius, 0, Math.PI * 2);
@@ -491,6 +529,7 @@ function connectWebSocket() {
 }
 
 async function boot() {
+  applyTheme(localStorage.getItem(THEME_KEY) || "dark");
   const [cfgResp, shapesResp, calResp] = await Promise.all([
     fetch("/config"), fetch("/shapes"), fetch("/calibration"),
   ]);
