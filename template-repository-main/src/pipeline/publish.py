@@ -14,6 +14,7 @@ import logging
 import threading
 import time
 from typing import Dict, List
+from pathlib import Path
 
 from . import config
 from .analytics import RouteAggregate
@@ -57,12 +58,11 @@ def build_app(store: SnapshotStore):
     (ingestion/normalisation/analytics) has zero web-framework dependency
     and stays testable without fastapi/uvicorn installed."""
     from fastapi import FastAPI, WebSocket, WebSocketDisconnect
+    from fastapi.staticfiles import StaticFiles
 
     app = FastAPI(title="Transit AR Pipeline Snapshot")
-
-    @app.get("/snapshot")
-    def get_snapshot():
-        return store.snapshot()
+    dashboard_dir = Path(__file__).resolve().parents[2] / "dashboard"
+    app.mount("/dashboard", StaticFiles(directory=dashboard_dir, html=True), name="dashboard")
 
     @app.get("/healthz")
     def healthz():

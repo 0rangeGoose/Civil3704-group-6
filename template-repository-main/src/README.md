@@ -40,6 +40,10 @@ python src/main.py --mode headless    # no server - just polls and logs each cyc
 python src/main.py --mode headless --max-cycles 3   # bounded run, useful for a quick check
 ```
 
+While the server is running, open `http://localhost:8080/dashboard` to view
+vehicle positions and route adherence. The dashboard polls `/snapshot` every
+five seconds and shows a clear connection error if the pipeline is unavailable.
+
 In `serve` mode, the projection renderer / dashboard consumes:
 - `GET  http://localhost:8080/snapshot` - current state as JSON, poll on demand
 - `WS   ws://localhost:8080/ws` - the same snapshot pushed ~2x/second

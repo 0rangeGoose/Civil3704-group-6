@@ -1,0 +1,48 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>Transit Operations</title>
+  <link rel="preconnect" href="https://fonts.googleapis.com">
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+  <link href="https://fonts.googleapis.com/css2?family=DM+Mono:wght@400;500&family=Space+Grotesk:wght@400;500;600;700&display=swap" rel="stylesheet">
+  <link rel="stylesheet" href="https://unpkg.com/leaflet@1.9.4/dist/leaflet.css">
+  <link rel="stylesheet" href="/dashboard/style.css">
+</head>
+<body>
+  <main class="shell">
+    <header class="topbar">
+      <div>
+        <p class="kicker">TRANSPORT INFORMATICS / LIVE FEED</p>
+        <h1>Transit operations</h1>
+      </div>
+      <div class="connection" id="connection"><span class="status-dot"></span><span id="connection-text">Connecting</span></div>
+    </header>
+
+    <section class="metrics" aria-label="Network summary">
+      <article class="metric"><span class="metric-label">Vehicles tracked</span><strong id="vehicle-count">--</strong></article>
+      <article class="metric"><span class="metric-label">Routes reporting</span><strong id="route-count">--</strong></article>
+      <article class="metric"><span class="metric-label">On time</span><strong id="on-time">--</strong></article>
+      <article class="metric"><span class="metric-label">Last update</span><strong class="metric-time" id="last-update">--</strong></article>
+    </section>
+
+    <section class="workspace">
+      <div class="map-panel">
+        <div class="panel-heading"><div><p class="kicker">GEOGRAPHIC VIEW</p><h2>Vehicle positions</h2></div><span class="feed-badge" id="feed-badge">Waiting for feed</span></div>
+        <div id="map" aria-label="Live vehicle map"></div>
+        <div class="map-legend"><span><i class="legend-dot on-time"></i>On time</span><span><i class="legend-dot late"></i>Late</span><span><i class="legend-dot very-late"></i>Very late</span><span><i class="legend-dot unknown"></i>Unknown</span></div>
+      </div>
+
+      <aside class="routes-panel">
+        <div class="panel-heading"><div><p class="kicker">PERFORMANCE</p><h2>Route adherence</h2></div></div>
+        <div class="table-wrap"><table><thead><tr><th>Route</th><th>Samples</th><th>On time</th><th>Late</th></tr></thead><tbody id="route-table"><tr><td colspan="4" class="muted">Waiting for data...</td></tr></tbody></table></div>
+      </aside>
+    </section>
+
+    <div class="notice" id="notice" role="status">Starting live feed...</div>
+  </main>
+  <script src="https://unpkg.com/leaflet@1.9.4/dist/leaflet.js"></script>
+  <script src="/dashboard/app.js"></script>
+</body>
+</html>
