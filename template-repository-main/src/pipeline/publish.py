@@ -54,6 +54,7 @@ class SnapshotStore:
         with self._lock:
             return {
                 "updated_at": self._updated_at,
+                "model_bounds": config.CBD_BBOX,
                 "vehicle_count": len(self._vehicles),
                 "vehicles": self._vehicles,
                 "route_adherence": self._route_adherence,

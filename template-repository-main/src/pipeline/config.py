@@ -16,14 +16,21 @@ from pathlib import Path
 REPO_ROOT = Path(__file__).resolve().parent.parent.parent
 
 # ---------------------------------------------------------------------------
-# Spatial scope: ~5km x 4km around the Sydney CBD.
-# Narrow/adjust this once the group locks in the exact model footprint.
+# Spatial scope: the physical scale model's surveyed footprint.
+# These are the model's NE and SW corner coordinates (from the projection
+# rig's model config), so the pipeline covers exactly what the projector
+# can paint - nothing off the edge of the model.
 # ---------------------------------------------------------------------------
+MODEL_CORNERS = {
+    "ne": {"lat": -33.83512300658737, "lon": 151.27599316594075},
+    "sw": {"lat": -33.894722633376766, "lon": 151.13296645445593},
+}
+
 CBD_BBOX = {
-    "min_lat": -33.895,
-    "max_lat": -33.855,
-    "min_lon": 151.185,
-    "max_lon": 151.225,
+    "min_lat": MODEL_CORNERS["sw"]["lat"],
+    "max_lat": MODEL_CORNERS["ne"]["lat"],
+    "min_lon": MODEL_CORNERS["sw"]["lon"],
+    "max_lon": MODEL_CORNERS["ne"]["lon"],
 }
 
 # ---------------------------------------------------------------------------

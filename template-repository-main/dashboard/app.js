@@ -1,6 +1,4 @@
-const CBD_CENTER = [-33.8708, 151.2073];
-
-const map = L.map("map", { zoomControl: false }).setView(CBD_CENTER, 13);
+const map = L.map("map", { zoomControl: false }).setView([-33.865, 151.204], 12);
 L.control.zoom({ position: "bottomright" }).addTo(map);
 L.tileLayer("https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png", {
   maxZoom: 19,
@@ -9,7 +7,25 @@ L.tileLayer("https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png", {
 
 const congestionLayer = L.layerGroup().addTo(map);
 const markers = new Map();
-let hasFittedMap = false;
+let modelFitted = false;
+
+// Frame the map on the physical scale-model footprint (sent in the snapshot
+// as model_bounds) and outline it, so the view matches what the projector
+// actually covers.
+function applyModelBounds(b) {
+  if (!b || modelFitted) return;
+  const bounds = L.latLngBounds([[b.min_lat, b.min_lon], [b.max_lat, b.max_lon]]);
+  map.fitBounds(bounds, { padding: [16, 16] });
+  map.setMaxBounds(bounds.pad(0.2));
+  L.rectangle(bounds, {
+    color: "#17211f",
+    weight: 2,
+    dashArray: "6 4",
+    fill: false,
+    interactive: false
+  }).addTo(map).bindTooltip("Scale model footprint", { sticky: true });
+  modelFitted = true;
+}
 
 function statusFor(vehicle) {
   if (vehicle.cancelled) return ["cancelled", "Cancelled"];
@@ -74,7 +90,6 @@ function updateCongestion(congestion) {
 
 function updateMarkers(vehicles) {
   const active = new Set();
-  const bounds = [];
   vehicles.forEach((vehicle) => {
     if (typeof vehicle.latitude !== "number" || typeof vehicle.longitude !== "number") return;
     active.add(vehicle.vehicle_id);
@@ -85,10 +100,8 @@ function updateMarkers(vehicles) {
     const popup = `<strong>${vehicle.route_short_name || vehicle.route_id || "Unassigned route"}</strong><br>${vehicle.mode} / ${label}<br>${vehicle.delay_seconds == null ? "Delay unavailable" : `${vehicle.delay_seconds}s delay`}<br>Congestion: ${congestionPct}`;
     if (markers.has(vehicle.vehicle_id)) markers.get(vehicle.vehicle_id).setLatLng([vehicle.latitude, vehicle.longitude]).setIcon(icon).setPopupContent(popup);
     else markers.set(vehicle.vehicle_id, L.marker([vehicle.latitude, vehicle.longitude], { icon }).addTo(map).bindPopup(popup));
-    bounds.push([vehicle.latitude, vehicle.longitude]);
   });
   markers.forEach((marker, id) => { if (!active.has(id)) { map.removeLayer(marker); markers.delete(id); } });
-  if (bounds.length && !hasFittedMap) { map.fitBounds(bounds, { padding: [30, 30], maxZoom: 14 }); hasFittedMap = true; }
 }
 
 function updateRoutes(routes) {
@@ -120,6 +133,7 @@ function updateDashboard(snapshot) {
     ? `Updated ${formatTime(snapshot.updated_at)} / ${vehicles.length} bus${vehicles.length === 1 ? "" : "es"} in the CBD / ${congestion.hotspot_count} hotspot${congestion.hotspot_count === 1 ? "" : "s"}`
     : "Feed connected, but no vehicle positions are available in the CBD box.";
 
+  applyModelBounds(snapshot.model_bounds);
   updateCongestion(congestion);
   updateMarkers(vehicles);
   updateRoutes(routes);
