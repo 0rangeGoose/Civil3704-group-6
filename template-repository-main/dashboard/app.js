@@ -39,11 +39,19 @@ function applyModelBounds(b) {
     interactive: false
   }).addTo(map).bindTooltip("Scale model footprint", { sticky: true });
 
-  map.fitBounds(bounds, { padding: [16, 16] });
+  // No padding: the map panel is CSS-locked to the same 2:1 aspect ratio as
+  // the model bounds (see #map in style.css), so fitting with zero padding
+  // makes the footprint fill the panel edge-to-edge on both axes.
+  map.fitBounds(bounds, { padding: [0, 0] });
   map.setMaxBounds(bounds);
   map.setMinZoom(map.getZoom());
   modelFitted = true;
 }
+
+// The #map panel's on-screen size isn't known until CSS/layout has run, so
+// re-fit once after the map is actually visible (e.g. on first load before
+// fonts/layout settle) to avoid a stale zoom from a 0-height container.
+window.addEventListener("load", () => map.invalidateSize());
 
 function statusFor(vehicle) {
   if (vehicle.cancelled) return ["cancelled", "Cancelled"];
