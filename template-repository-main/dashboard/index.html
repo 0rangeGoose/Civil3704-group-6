@@ -15,23 +15,31 @@
     <header class="topbar">
       <div>
         <p class="kicker">TRANSPORT INFORMATICS / LIVE FEED</p>
-        <h1>Transit operations</h1>
+        <h1>Sydney CBD congestion</h1>
       </div>
       <div class="connection" id="connection"><span class="status-dot"></span><span id="connection-text">Connecting</span></div>
     </header>
 
     <section class="metrics" aria-label="Network summary">
-      <article class="metric"><span class="metric-label">Vehicles tracked</span><strong id="vehicle-count">--</strong></article>
-      <article class="metric"><span class="metric-label">Routes reporting</span><strong id="route-count">--</strong></article>
+      <article class="metric"><span class="metric-label">Buses in CBD</span><strong id="vehicle-count">--</strong></article>
+      <article class="metric"><span class="metric-label">Congestion hotspots</span><strong id="hotspots">--</strong></article>
+      <article class="metric"><span class="metric-label">Avg congestion</span><strong id="avg-congestion">--</strong></article>
       <article class="metric"><span class="metric-label">On time</span><strong id="on-time">--</strong></article>
       <article class="metric"><span class="metric-label">Last update</span><strong class="metric-time" id="last-update">--</strong></article>
     </section>
 
     <section class="workspace">
       <div class="map-panel">
-        <div class="panel-heading"><div><p class="kicker">GEOGRAPHIC VIEW</p><h2>Vehicle positions</h2></div><span class="feed-badge" id="feed-badge">Waiting for feed</span></div>
-        <div id="map" aria-label="Live vehicle map"></div>
-        <div class="map-legend"><span><i class="legend-dot on-time"></i>On time</span><span><i class="legend-dot late"></i>Late</span><span><i class="legend-dot very-late"></i>Very late</span><span><i class="legend-dot unknown"></i>Unknown</span></div>
+        <div class="panel-heading"><div><p class="kicker">GEOGRAPHIC VIEW</p><h2>Congestion &amp; live buses</h2></div><span class="feed-badge" id="feed-badge">Waiting for feed</span></div>
+        <div id="map" aria-label="Live congestion and vehicle map"></div>
+        <div class="map-legend">
+          <span class="legend-group">Congestion block:</span>
+          <span><i class="legend-dot" style="background:#087f74"></i>Clear</span>
+          <span><i class="legend-dot" style="background:#e8a72c"></i>Moderate</span>
+          <span><i class="legend-dot" style="background:#cf5445"></i>Heavy</span>
+          <span class="legend-group">Bus:</span>
+          <span><i class="legend-dot on-time"></i>On time</span><span><i class="legend-dot late"></i>Late</span><span><i class="legend-dot very-late"></i>Very late</span><span><i class="legend-dot unknown"></i>Unknown</span>
+        </div>
       </div>
 
       <aside class="routes-panel">

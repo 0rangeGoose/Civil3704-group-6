@@ -1,10 +1,13 @@
-const map = L.map("map", { zoomControl: false }).setView([-33.87, 151.21], 12);
+const CBD_CENTER = [-33.8708, 151.2073];
+
+const map = L.map("map", { zoomControl: false }).setView(CBD_CENTER, 13);
 L.control.zoom({ position: "bottomright" }).addTo(map);
 L.tileLayer("https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png", {
   maxZoom: 19,
   attribution: "&copy; OpenStreetMap contributors"
 }).addTo(map);
 
+const congestionLayer = L.layerGroup().addTo(map);
 const markers = new Map();
 let hasFittedMap = false;
 
@@ -14,6 +17,15 @@ function statusFor(vehicle) {
   if (vehicle.delay_seconds <= 60) return ["on-time", "On time"];
   if (vehicle.delay_seconds <= 300) return ["late", "Late"];
   return ["very-late", "Very late"];
+}
+
+// Congestion score (0-1) -> colour ramp: clear teal -> amber -> red.
+function congestionColor(score) {
+  if (score >= 0.6) return "#cf5445";
+  if (score >= 0.4) return "#e8722c";
+  if (score >= 0.25) return "#e8a72c";
+  if (score >= 0.12) return "#b6c34a";
+  return "#087f74";
 }
 
 function setConnection(state, message) {
@@ -27,6 +39,26 @@ function formatTime(seconds) {
   return new Date(seconds * 1000).toLocaleTimeString([], { hour: "2-digit", minute: "2-digit", second: "2-digit" });
 }
 
+function updateCongestion(congestion) {
+  congestionLayer.clearLayers();
+  const cells = (congestion && congestion.cells) || [];
+  cells.forEach((cell) => {
+    if (typeof cell.lat !== "number" || typeof cell.lon !== "number") return;
+    L.circleMarker([cell.lat, cell.lon], {
+      radius: 10 + Math.min(20, cell.vehicle_count * 2),
+      color: congestionColor(cell.score),
+      weight: 1,
+      fillColor: congestionColor(cell.score),
+      fillOpacity: 0.35
+    })
+      .bindPopup(
+        `<strong>Congestion ${(cell.score * 100).toFixed(0)}%</strong><br>` +
+        `${cell.vehicle_count} bus${cell.vehicle_count === 1 ? "" : "es"} in this block`
+      )
+      .addTo(congestionLayer);
+  });
+}
+
 function updateMarkers(vehicles) {
   const active = new Set();
   const bounds = [];
@@ -36,7 +68,8 @@ function updateMarkers(vehicles) {
     const [status, label] = statusFor(vehicle);
     const color = { "on-time": "#087f74", late: "#e8a72c", "very-late": "#cf5445", unknown: "#2874a6", cancelled: "#63716d" }[status];
     const icon = L.divIcon({ className: "vehicle-icon", html: `<div class="vehicle-marker" style="background:${color}"></div>`, iconSize: [16, 16], iconAnchor: [8, 8] });
-    const popup = `<strong>${vehicle.route_short_name || vehicle.route_id || "Unassigned route"}</strong><br>${vehicle.mode} / ${label}<br>${vehicle.delay_seconds == null ? "Delay unavailable" : `${vehicle.delay_seconds}s delay`}`;
+    const congestionPct = vehicle.congestion_score == null ? "n/a" : `${Math.round(vehicle.congestion_score * 100)}%`;
+    const popup = `<strong>${vehicle.route_short_name || vehicle.route_id || "Unassigned route"}</strong><br>${vehicle.mode} / ${label}<br>${vehicle.delay_seconds == null ? "Delay unavailable" : `${vehicle.delay_seconds}s delay`}<br>Congestion: ${congestionPct}`;
     if (markers.has(vehicle.vehicle_id)) markers.get(vehicle.vehicle_id).setLatLng([vehicle.latitude, vehicle.longitude]).setIcon(icon).setPopupContent(popup);
     else markers.set(vehicle.vehicle_id, L.marker([vehicle.latitude, vehicle.longitude], { icon }).addTo(map).bindPopup(popup));
     bounds.push([vehicle.latitude, vehicle.longitude]);
@@ -55,15 +88,26 @@ function updateRoutes(routes) {
 function updateDashboard(snapshot) {
   const vehicles = snapshot.vehicles || [];
   const routes = snapshot.route_adherence || {};
+  const congestion = snapshot.congestion || { cells: [], hotspot_count: 0 };
   const samples = Object.values(routes);
   const totalSamples = samples.reduce((sum, route) => sum + route.sample_count, 0);
   const onTimeSamples = samples.reduce((sum, route) => sum + route.on_time_pct * route.sample_count / 100, 0);
+  const scored = vehicles.filter((v) => typeof v.congestion_score === "number");
+  const avgCongestion = scored.length
+    ? Math.round(scored.reduce((sum, v) => sum + v.congestion_score, 0) / scored.length * 100)
+    : null;
+
   document.getElementById("vehicle-count").textContent = snapshot.vehicle_count ?? vehicles.length;
-  document.getElementById("route-count").textContent = Object.keys(routes).length;
+  document.getElementById("hotspots").textContent = congestion.hotspot_count ?? 0;
+  document.getElementById("avg-congestion").textContent = avgCongestion == null ? "--" : `${avgCongestion}%`;
   document.getElementById("on-time").textContent = totalSamples ? `${Math.round(onTimeSamples / totalSamples * 100)}%` : "--";
   document.getElementById("last-update").textContent = formatTime(snapshot.updated_at);
   document.getElementById("feed-badge").textContent = vehicles.length ? "Live positions" : "No vehicles";
-  document.getElementById("notice").textContent = vehicles.length ? `Updated ${formatTime(snapshot.updated_at)} / ${vehicles.length} position${vehicles.length === 1 ? "" : "s"}` : "Feed connected, but no vehicle positions are available.";
+  document.getElementById("notice").textContent = vehicles.length
+    ? `Updated ${formatTime(snapshot.updated_at)} / ${vehicles.length} bus${vehicles.length === 1 ? "" : "es"} in the CBD / ${congestion.hotspot_count} hotspot${congestion.hotspot_count === 1 ? "" : "s"}`
+    : "Feed connected, but no vehicle positions are available in the CBD box.";
+
+  updateCongestion(congestion);
   updateMarkers(vehicles);
   updateRoutes(routes);
 }

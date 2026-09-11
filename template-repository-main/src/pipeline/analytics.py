@@ -67,6 +67,89 @@ def snap_to_shape(
     return best_point[0], best_point[1], math.sqrt(best_dist_sq)
 
 
+def vehicle_congestion_score(
+    speed_mps: Optional[float], delay_seconds: Optional[int]
+) -> Optional[float]:
+    """A [0, 1] congestion proxy for one bus.
+
+    Combines two signals:
+      - "moving slowly": how far below free-flow speed the bus is
+      - "behind schedule": how large its delay is (delays cascade in congestion)
+
+    Returns None when neither signal is available (no speed and no delay).
+    """
+    slowness = None
+    if speed_mps is not None and speed_mps >= 0:
+        slowness = max(0.0, min(1.0, (config.FREE_FLOW_SPEED_MPS - speed_mps) / config.FREE_FLOW_SPEED_MPS))
+
+    delay_term = None
+    if delay_seconds is not None:
+        delay_term = max(0.0, min(1.0, delay_seconds / config.CONGESTION_DELAY_CAP_SECONDS))
+
+    if slowness is None and delay_term is None:
+        return None
+    if slowness is None:
+        return round(delay_term, 3)
+    if delay_term is None:
+        return round(slowness, 3)
+
+    score = (
+        config.CONGESTION_SPEED_WEIGHT * slowness
+        + config.CONGESTION_DELAY_WEIGHT * delay_term
+    )
+    return round(score, 3)
+
+
+def score_vehicles(records: List[VehicleRecord]) -> List[VehicleRecord]:
+    """Set `congestion_score` on each record in place, and return the list."""
+    for record in records:
+        record.congestion_score = vehicle_congestion_score(record.speed, record.delay_seconds)
+    return records
+
+
+def _cell_key(lat: float, lon: float, cell_metres: float) -> Tuple[int, int]:
+    lat_step = cell_metres / 111_320.0
+    lon_step = cell_metres / (111_320.0 * max(0.1, math.cos(math.radians(lat))))
+    return (int(math.floor(lat / lat_step)), int(math.floor(lon / lon_step)))
+
+
+def congestion_grid(
+    records: List[VehicleRecord],
+    cell_metres: float = config.CONGESTION_GRID_CELL_METRES,
+    hotspot_threshold: float = config.CONGESTION_HOTSPOT_THRESHOLD,
+) -> dict:
+    """Aggregate per-vehicle congestion scores onto a grid over the area.
+
+    Returns {"cells": [{lat, lon, score, vehicle_count}, ...],
+             "hotspot_count": int, "cell_metres": float}
+    where lat/lon are the mean position of the buses in that cell.
+    """
+    buckets: Dict[Tuple[int, int], list] = defaultdict(list)
+    for record in records:
+        if record.congestion_score is None:
+            continue
+        buckets[_cell_key(record.latitude, record.longitude, cell_metres)].append(record)
+
+    cells = []
+    hotspots = 0
+    for members in buckets.values():
+        scores = [m.congestion_score for m in members]
+        mean_score = round(sum(scores) / len(scores), 3)
+        cells.append(
+            {
+                "lat": round(sum(m.latitude for m in members) / len(members), 6),
+                "lon": round(sum(m.longitude for m in members) / len(members), 6),
+                "score": mean_score,
+                "vehicle_count": len(members),
+            }
+        )
+        if mean_score >= hotspot_threshold and len(members) >= config.CONGESTION_HOTSPOT_MIN_VEHICLES:
+            hotspots += 1
+
+    cells.sort(key=lambda c: c["score"], reverse=True)
+    return {"cells": cells, "hotspot_count": hotspots, "cell_metres": cell_metres}
+
+
 def classify_adherence(delay_seconds: Optional[int], cancelled: bool) -> str:
     """on_time / late / very_late / cancelled / unknown"""
     if cancelled:

@@ -18,7 +18,7 @@ import time
 from typing import Optional
 
 from . import config
-from .analytics import RollingAggregator
+from .analytics import RollingAggregator, congestion_grid, score_vehicles
 from .ingestion import realtime_gtfs, static_gtfs
 from .normalise import normalise
 from .publish import SnapshotStore, run_server
@@ -40,11 +40,15 @@ def run_headless(api_key: str, max_cycles: Optional[int] = None) -> None:
         while max_cycles is None or cycle < max_cycles:
             start = time.time()
             raw = realtime_gtfs.poll_all(api_key)
-            records = normalise(raw, static)
+            records = score_vehicles(normalise(raw, static))
             aggregator.update(records)
+            grid = congestion_grid(records)
             cycle += 1
 
-            logger.info(f"Cycle {cycle}: {len(records)} vehicles tracked")
+            logger.info(
+                f"Cycle {cycle}: {len(records)} vehicles in CBD, "
+                f"{grid['hotspot_count']} congestion hotspot(s)"
+            )
             for route_id, agg in aggregator.snapshot().items():
                 logger.info(
                     f"  route {route_id}: on_time={agg.on_time_pct}% "
@@ -67,10 +71,14 @@ def run_with_server(api_key: str) -> None:
     store = SnapshotStore()
 
     def on_update(raw):
-        records = normalise(raw, static)
+        records = score_vehicles(normalise(raw, static))
         aggregator.update(records)
-        store.update(records, aggregator.snapshot())
-        logger.info(f"Snapshot updated: {len(records)} vehicles tracked")
+        grid = congestion_grid(records)
+        store.update(records, aggregator.snapshot(), grid)
+        logger.info(
+            f"Snapshot updated: {len(records)} vehicles in CBD, "
+            f"{grid['hotspot_count']} congestion hotspot(s)"
+        )
 
     ingest_thread = threading.Thread(
         target=realtime_gtfs.poll_loop,

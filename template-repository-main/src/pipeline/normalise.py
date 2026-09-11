@@ -40,6 +40,16 @@ class VehicleRecord:
     timestamp: int
     delay_seconds: Optional[int]
     cancelled: bool
+    # Filled in by the analytics layer (analytics.score_vehicles); left None
+    # by normalisation so this stage stays purely about cleaning/joining.
+    congestion_score: Optional[float] = None
+
+
+def _in_bbox(lat: float, lon: float, bbox: dict) -> bool:
+    return (
+        bbox["min_lat"] <= lat <= bbox["max_lat"]
+        and bbox["min_lon"] <= lon <= bbox["max_lon"]
+    )
 
 
 def _vehicle_key(vehicle) -> str:
@@ -86,8 +96,18 @@ def _extract_trip_delays(trip_update_feeds: Dict[str, gtfs_realtime_pb2.FeedMess
     return delays
 
 
-def normalise(raw: RawFeeds, static: StaticGTFS, now: Optional[float] = None) -> List[VehicleRecord]:
-    """Combine vehicle positions + trip updates + static GTFS into clean records."""
+def normalise(
+    raw: RawFeeds,
+    static: StaticGTFS,
+    now: Optional[float] = None,
+    bbox: Optional[dict] = config.CBD_BBOX,
+) -> List[VehicleRecord]:
+    """Combine vehicle positions + trip updates + static GTFS into clean records.
+
+    If `bbox` is given (defaults to the CBD box), vehicles outside it are
+    dropped so the output matches the scale-model footprint. Pass bbox=None
+    to keep the whole network.
+    """
     now = now if now is not None else time.time()
     trip_delays = _extract_trip_delays(raw.trip_updates)
 
@@ -98,6 +118,9 @@ def normalise(raw: RawFeeds, static: StaticGTFS, now: Optional[float] = None) ->
                 continue
             v = entity.vehicle
             if not v.HasField("position"):
+                continue
+
+            if bbox is not None and not _in_bbox(v.position.latitude, v.position.longitude, bbox):
                 continue
 
             timestamp = v.timestamp if v.HasField("timestamp") else int(now)

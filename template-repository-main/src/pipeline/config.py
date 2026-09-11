@@ -114,6 +114,23 @@ ADHERENCE_THRESHOLDS = {
 ROLLING_WINDOW_SIZE = 50
 
 # ---------------------------------------------------------------------------
+# Congestion scoring (prototype heuristic)
+#
+# Per-vehicle congestion score in [0, 1], combining how slowly the bus is
+# moving with how far behind schedule it is. Aggregated onto a grid over the
+# CBD so the projector / dashboard can paint "where congestion is worst".
+# This is a first-pass proxy, not a validated model - tune the constants
+# against observed data.
+# ---------------------------------------------------------------------------
+FREE_FLOW_SPEED_MPS = 8.3            # ~30 km/h: CBD bus free-flow reference
+CONGESTION_DELAY_CAP_SECONDS = 600   # delay at which the delay term saturates
+CONGESTION_SPEED_WEIGHT = 0.6        # weight on the "moving slowly" term
+CONGESTION_DELAY_WEIGHT = 0.4        # weight on the "behind schedule" term
+CONGESTION_GRID_CELL_METRES = 300    # ~1 city block
+CONGESTION_HOTSPOT_THRESHOLD = 0.6   # cell score at/above this = a hotspot
+CONGESTION_HOTSPOT_MIN_VEHICLES = 2  # ...and at least this many buses in the cell
+
+# ---------------------------------------------------------------------------
 # Publish layer
 # ---------------------------------------------------------------------------
 SNAPSHOT_HOST = "0.0.0.0"

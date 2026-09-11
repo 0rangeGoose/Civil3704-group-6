@@ -11,7 +11,14 @@ import time
 import pytest
 from google.transit import gtfs_realtime_pb2
 
-from pipeline.analytics import RollingAggregator, classify_adherence, snap_to_shape
+from pipeline.analytics import (
+    RollingAggregator,
+    classify_adherence,
+    congestion_grid,
+    score_vehicles,
+    snap_to_shape,
+    vehicle_congestion_score,
+)
 from pipeline.ingestion.realtime_gtfs import RawFeeds
 from pipeline.ingestion.static_gtfs import StaticGTFS, TripInfo
 from pipeline.normalise import normalise
@@ -144,6 +151,64 @@ def test_snap_to_shape_projects_onto_nearest_segment(static_gtfs):
 
 def test_snap_to_shape_returns_none_for_degenerate_shape():
     assert snap_to_shape(-33.87, 151.21, [(-33.87, 151.21)]) is None
+
+
+def test_normalise_drops_vehicles_outside_the_cbd_bbox(static_gtfs):
+    now = int(time.time())
+    raw = RawFeeds(
+        vehicle_positions={
+            "buses": _vehicle_positions_feed(
+                [
+                    ("cbd_bus", "trip_A", -33.87, 151.21, now),      # inside the CBD box
+                    ("far_bus", "trip_B", -33.70, 151.05, now),      # western suburbs, outside
+                ]
+            )
+        },
+        trip_updates={},
+    )
+
+    records = normalise(raw, static_gtfs, now=now)
+
+    assert {r.vehicle_id for r in records} == {"cbd_bus"}
+
+
+@pytest.mark.parametrize(
+    "speed_mps, delay_seconds, expected",
+    [
+        (8.3, 0, 0.0),        # free-flow, on time -> no congestion
+        (0.0, 0, 0.6),        # stationary, on time -> full speed term only
+        (None, 600, 1.0),     # no speed, 10 min late -> delay term saturates
+        (None, None, None),   # nothing to go on
+    ],
+)
+def test_vehicle_congestion_score(speed_mps, delay_seconds, expected):
+    result = vehicle_congestion_score(speed_mps, delay_seconds)
+    if expected is None:
+        assert result is None
+    else:
+        assert result == pytest.approx(expected, abs=0.05)
+
+
+def test_congestion_grid_buckets_and_flags_hotspots(static_gtfs):
+    now = int(time.time())
+    raw = RawFeeds(
+        vehicle_positions={
+            "buses": _vehicle_positions_feed(
+                [
+                    ("slow1", "trip_A", -33.8710, 151.2060, now),
+                    ("slow2", "trip_A", -33.8711, 151.2061, now),
+                ]
+            )
+        },
+        trip_updates={"buses": _trip_updates_feed([("trip_A", 600)])},
+    )
+    records = score_vehicles(normalise(raw, static_gtfs, now=now))
+
+    grid = congestion_grid(records)
+
+    assert grid["cells"], "expected at least one populated grid cell"
+    assert grid["cells"][0]["vehicle_count"] == 2
+    assert grid["hotspot_count"] >= 1
 
 
 def test_snapshot_store_reflects_latest_update(static_gtfs):
