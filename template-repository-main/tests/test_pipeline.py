@@ -207,8 +207,14 @@ def test_congestion_grid_buckets_and_flags_hotspots(static_gtfs):
     grid = congestion_grid(records)
 
     assert grid["cells"], "expected at least one populated grid cell"
-    assert grid["cells"][0]["vehicle_count"] == 2
+    top = grid["cells"][0]
+    assert top["vehicle_count"] == 2  # both buses fell in the same cell
     assert grid["hotspot_count"] >= 1
+    # each cell exposes an explicit footprint so the map can show what it covers
+    assert set(top["bounds"]) == {"min_lat", "max_lat", "min_lon", "max_lon"}
+    assert top["cell_id"].startswith("r")
+    assert "trip_A" not in top["routes"]  # routes are names/ids, populated
+    assert top["routes"] == ["M10"]
 
 
 def test_snapshot_store_reflects_latest_update(static_gtfs):

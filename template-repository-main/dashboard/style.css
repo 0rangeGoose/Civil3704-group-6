@@ -40,6 +40,9 @@ h2 { font-size: 19px; font-weight: 600; }
 .legend-dot { display: inline-block; width: 9px; height: 9px; border-radius: 50%; }
 .on-time { background: var(--teal); }.late { background: var(--yellow); }.very-late { background: var(--red); }.unknown { background: var(--blue); }
 .vehicle-marker { width: 16px; height: 16px; border: 3px solid white; border-radius: 50%; box-shadow: 0 2px 8px rgba(23, 33, 31, .3); }
+.cell-label { background: transparent; border: 0; box-shadow: none; padding: 0; color: #17211f; font: 600 11px "DM Mono", monospace; text-shadow: 0 0 3px #fff, 0 0 3px #fff, 0 0 3px #fff; }
+.cell-label::before { display: none; }
+.leaflet-popup-content .pill { display: inline-block; background: var(--red); color: #fff; font: 500 9px "DM Mono", monospace; text-transform: uppercase; padding: 2px 6px; border-radius: 3px; }
 .table-wrap { overflow-x: auto; }
 table { width: 100%; border-collapse: collapse; font-size: 13px; }
 th { color: var(--muted); font: 500 10px "DM Mono", monospace; text-transform: uppercase; text-align: left; }

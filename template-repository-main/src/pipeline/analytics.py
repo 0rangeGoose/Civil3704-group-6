@@ -107,10 +107,30 @@ def score_vehicles(records: List[VehicleRecord]) -> List[VehicleRecord]:
     return records
 
 
-def _cell_key(lat: float, lon: float, cell_metres: float) -> Tuple[int, int]:
+# Reference latitude for the grid's longitude spacing, so every cell is the
+# same real-world size and a (row, col) key maps back to a fixed rectangle.
+_GRID_REF_LAT = (config.CBD_BBOX["min_lat"] + config.CBD_BBOX["max_lat"]) / 2
+
+
+def _grid_steps(cell_metres: float) -> Tuple[float, float]:
     lat_step = cell_metres / 111_320.0
-    lon_step = cell_metres / (111_320.0 * max(0.1, math.cos(math.radians(lat))))
+    lon_step = cell_metres / (111_320.0 * math.cos(math.radians(_GRID_REF_LAT)))
+    return lat_step, lon_step
+
+
+def _cell_key(lat: float, lon: float, cell_metres: float) -> Tuple[int, int]:
+    lat_step, lon_step = _grid_steps(cell_metres)
     return (int(math.floor(lat / lat_step)), int(math.floor(lon / lon_step)))
+
+
+def _cell_bounds(row: int, col: int, cell_metres: float) -> dict:
+    lat_step, lon_step = _grid_steps(cell_metres)
+    return {
+        "min_lat": round(row * lat_step, 6),
+        "max_lat": round((row + 1) * lat_step, 6),
+        "min_lon": round(col * lon_step, 6),
+        "max_lon": round((col + 1) * lon_step, 6),
+    }
 
 
 def congestion_grid(
@@ -118,11 +138,16 @@ def congestion_grid(
     cell_metres: float = config.CONGESTION_GRID_CELL_METRES,
     hotspot_threshold: float = config.CONGESTION_HOTSPOT_THRESHOLD,
 ) -> dict:
-    """Aggregate per-vehicle congestion scores onto a grid over the area.
+    """Aggregate per-vehicle congestion scores onto a fixed grid over the area.
 
-    Returns {"cells": [{lat, lon, score, vehicle_count}, ...],
+    Each returned cell is a real ~`cell_metres` square with a stable id and
+    explicit bounds, plus what it currently holds (bus count and the route
+    codes present), so it's clear on the map exactly which patch of the CBD
+    a reading covers.
+
+    Returns {"cells": [{cell_id, bounds, center, score, vehicle_count,
+                        routes, hotspot}, ...],
              "hotspot_count": int, "cell_metres": float}
-    where lat/lon are the mean position of the buses in that cell.
     """
     buckets: Dict[Tuple[int, int], list] = defaultdict(list)
     for record in records:
@@ -132,19 +157,32 @@ def congestion_grid(
 
     cells = []
     hotspots = 0
-    for members in buckets.values():
+    for (row, col), members in buckets.items():
         scores = [m.congestion_score for m in members]
         mean_score = round(sum(scores) / len(scores), 3)
+        bounds = _cell_bounds(row, col, cell_metres)
+        routes = sorted({(m.route_short_name or m.route_id or "?") for m in members})
+        is_hotspot = (
+            mean_score >= hotspot_threshold
+            and len(members) >= config.CONGESTION_HOTSPOT_MIN_VEHICLES
+        )
+        if is_hotspot:
+            hotspots += 1
+
         cells.append(
             {
-                "lat": round(sum(m.latitude for m in members) / len(members), 6),
-                "lon": round(sum(m.longitude for m in members) / len(members), 6),
+                "cell_id": f"r{row}c{col}",
+                "bounds": bounds,
+                "center": {
+                    "lat": round((bounds["min_lat"] + bounds["max_lat"]) / 2, 6),
+                    "lon": round((bounds["min_lon"] + bounds["max_lon"]) / 2, 6),
+                },
                 "score": mean_score,
                 "vehicle_count": len(members),
+                "routes": routes,
+                "hotspot": is_hotspot,
             }
         )
-        if mean_score >= hotspot_threshold and len(members) >= config.CONGESTION_HOTSPOT_MIN_VEHICLES:
-            hotspots += 1
 
     cells.sort(key=lambda c: c["score"], reverse=True)
     return {"cells": cells, "hotspot_count": hotspots, "cell_metres": cell_metres}

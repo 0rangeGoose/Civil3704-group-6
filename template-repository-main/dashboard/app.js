@@ -43,19 +43,32 @@ function updateCongestion(congestion) {
   congestionLayer.clearLayers();
   const cells = (congestion && congestion.cells) || [];
   cells.forEach((cell) => {
-    if (typeof cell.lat !== "number" || typeof cell.lon !== "number") return;
-    L.circleMarker([cell.lat, cell.lon], {
-      radius: 10 + Math.min(20, cell.vehicle_count * 2),
-      color: congestionColor(cell.score),
-      weight: 1,
-      fillColor: congestionColor(cell.score),
-      fillOpacity: 0.35
-    })
-      .bindPopup(
-        `<strong>Congestion ${(cell.score * 100).toFixed(0)}%</strong><br>` +
-        `${cell.vehicle_count} bus${cell.vehicle_count === 1 ? "" : "es"} in this block`
-      )
-      .addTo(congestionLayer);
+    const b = cell.bounds;
+    if (!b) return;
+    const color = congestionColor(cell.score);
+    const rect = L.rectangle(
+      [[b.min_lat, b.min_lon], [b.max_lat, b.max_lon]],
+      {
+        color,
+        weight: cell.hotspot ? 2.5 : 1,
+        dashArray: cell.hotspot ? null : "3 4",
+        fillColor: color,
+        fillOpacity: 0.15 + Math.min(0.4, cell.score * 0.4)
+      }
+    );
+    rect.bindTooltip(`${Math.round(cell.score * 100)}%`, {
+      permanent: true,
+      direction: "center",
+      className: "cell-label"
+    });
+    rect.bindPopup(
+      `<strong>Block ${cell.cell_id}</strong>${cell.hotspot ? ' <span class="pill">hotspot</span>' : ""}<br>` +
+      `Congestion: ${(cell.score * 100).toFixed(0)}%<br>` +
+      `Holding: ${cell.vehicle_count} bus${cell.vehicle_count === 1 ? "" : "es"}<br>` +
+      `Routes: ${cell.routes && cell.routes.length ? cell.routes.join(", ") : "n/a"}<br>` +
+      `~${congestion.cell_metres || 300} m square`
+    );
+    rect.addTo(congestionLayer);
   });
 }
 
