@@ -10,13 +10,27 @@ const markers = new Map();
 let modelFitted = false;
 
 // Frame the map on the physical scale-model footprint (sent in the snapshot
-// as model_bounds) and outline it, so the view matches what the projector
-// actually covers.
+// as model_bounds), mask out everything beyond it, and lock panning/zooming
+// so only the model's actual coverage area is ever visible.
 function applyModelBounds(b) {
   if (!b || modelFitted) return;
   const bounds = L.latLngBounds([[b.min_lat, b.min_lon], [b.max_lat, b.max_lon]]);
-  map.fitBounds(bounds, { padding: [16, 16] });
-  map.setMaxBounds(bounds.pad(0.2));
+
+  // Dim/hide everything outside the model footprint: one giant rectangle
+  // covering the whole map, with the model bounds cut out as a hole.
+  const world = [[-89, -180], [-89, 180], [89, 180], [89, -180]];
+  const hole = [
+    [b.min_lat, b.min_lon], [b.min_lat, b.max_lon],
+    [b.max_lat, b.max_lon], [b.max_lat, b.min_lon]
+  ];
+  L.polygon([world, hole], {
+    stroke: false,
+    fill: true,
+    fillColor: "#0b0f0e",
+    fillOpacity: 0.55,
+    interactive: false
+  }).addTo(map);
+
   L.rectangle(bounds, {
     color: "#17211f",
     weight: 2,
@@ -24,6 +38,10 @@ function applyModelBounds(b) {
     fill: false,
     interactive: false
   }).addTo(map).bindTooltip("Scale model footprint", { sticky: true });
+
+  map.fitBounds(bounds, { padding: [16, 16] });
+  map.setMaxBounds(bounds);
+  map.setMinZoom(map.getZoom());
   modelFitted = true;
 }
 
