@@ -8,13 +8,25 @@ L.tileLayer("https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png", {
 const congestionLayer = L.layerGroup().addTo(map);
 const markers = new Map();
 let modelFitted = false;
+let modelBounds = null;
+
+// The zoom level that makes `modelBounds` exactly fill the map panel at its
+// CURRENT on-screen size. Recomputed (not cached) so it stays correct if the
+// panel's pixel size changes - a stale value was letting the "-" zoom
+// control zoom out past the footprint.
+function lockZoomToModel() {
+  if (!modelBounds) return;
+  const fitZoom = map.getBoundsZoom(modelBounds, false);
+  map.setMinZoom(fitZoom);
+  if (map.getZoom() < fitZoom) map.setZoom(fitZoom);
+}
 
 // Frame the map on the physical scale-model footprint (sent in the snapshot
 // as model_bounds), mask out everything beyond it, and lock panning/zooming
 // so only the model's actual coverage area is ever visible.
 function applyModelBounds(b) {
   if (!b || modelFitted) return;
-  const bounds = L.latLngBounds([[b.min_lat, b.min_lon], [b.max_lat, b.max_lon]]);
+  modelBounds = L.latLngBounds([[b.min_lat, b.min_lon], [b.max_lat, b.max_lon]]);
 
   // Dim/hide everything outside the model footprint: one giant rectangle
   // covering the whole map, with the model bounds cut out as a hole.
@@ -31,7 +43,7 @@ function applyModelBounds(b) {
     interactive: false
   }).addTo(map);
 
-  L.rectangle(bounds, {
+  L.rectangle(modelBounds, {
     color: "#17211f",
     weight: 2,
     dashArray: "6 4",
@@ -39,19 +51,20 @@ function applyModelBounds(b) {
     interactive: false
   }).addTo(map).bindTooltip("Scale model footprint", { sticky: true });
 
+  map.setMaxBounds(modelBounds);
+  lockZoomToModel();
   // No padding: the map panel is CSS-locked to the same 2:1 aspect ratio as
   // the model bounds (see #map in style.css), so fitting with zero padding
   // makes the footprint fill the panel edge-to-edge on both axes.
-  map.fitBounds(bounds, { padding: [0, 0] });
-  map.setMaxBounds(bounds);
-  map.setMinZoom(map.getZoom());
+  map.fitBounds(modelBounds, { padding: [0, 0] });
   modelFitted = true;
 }
 
-// The #map panel's on-screen size isn't known until CSS/layout has run, so
-// re-fit once after the map is actually visible (e.g. on first load before
-// fonts/layout settle) to avoid a stale zoom from a 0-height container.
-window.addEventListener("load", () => map.invalidateSize());
+// The #map panel's on-screen size can shift after the first fit (fonts
+// loading, window resize) - re-lock the zoom floor whenever that happens so
+// "-" can never reveal anything past the model footprint.
+window.addEventListener("load", lockZoomToModel);
+window.addEventListener("resize", lockZoomToModel);
 
 function statusFor(vehicle) {
   if (vehicle.cancelled) return ["cancelled", "Cancelled"];
