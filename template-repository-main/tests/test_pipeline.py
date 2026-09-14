@@ -15,6 +15,7 @@ from pipeline.analytics import (
     RollingAggregator,
     classify_adherence,
     congestion_grid,
+    route_bunching_scores,
     score_vehicles,
     snap_to_shape,
     vehicle_congestion_score,
@@ -175,10 +176,10 @@ def test_normalise_drops_vehicles_outside_the_cbd_bbox(static_gtfs):
 @pytest.mark.parametrize(
     "speed_mps, delay_seconds, expected",
     [
-        (8.3, 0, 0.0),        # free-flow, on time -> no congestion
-        (0.0, 0, 0.6),        # stationary, on time -> full speed term only
-        (None, 600, 1.0),     # no speed, 10 min late -> delay term saturates
-        (None, None, None),   # nothing to go on
+        (8.3, 0, 0.0),          # free-flow, on time -> no congestion
+        (0.0, 0, 0.571),        # stationary, on time -> full speed term, re-weighted (no bunching)
+        (None, 600, 1.0),       # no speed, 10 min late -> delay term saturates
+        (None, None, None),     # nothing to go on
     ],
 )
 def test_vehicle_congestion_score(speed_mps, delay_seconds, expected):
@@ -187,6 +188,73 @@ def test_vehicle_congestion_score(speed_mps, delay_seconds, expected):
         assert result is None
     else:
         assert result == pytest.approx(expected, abs=0.05)
+
+
+def test_vehicle_congestion_score_uses_bunching_alone_when_others_missing():
+    assert vehicle_congestion_score(None, None, 1.0) == pytest.approx(1.0)
+    assert vehicle_congestion_score(None, None, 0.0) == pytest.approx(0.0)
+
+
+def test_vehicle_congestion_score_blends_all_three_signals():
+    # free-flow speed (0 contribution) + on time (0 contribution) + fully
+    # bunched (1) -> only the bunching weight (0.3 of 1.0 total) contributes
+    score = vehicle_congestion_score(8.3, 0, 1.0)
+    assert score == pytest.approx(0.3, abs=0.01)
+
+
+def test_route_bunching_scores_flags_close_buses_on_same_shape(static_gtfs):
+    now = int(time.time())
+    raw = RawFeeds(
+        vehicle_positions={
+            "buses": _vehicle_positions_feed(
+                [
+                    ("close1", "trip_A", -33.8700, 151.2005, now),
+                    ("close2", "trip_A", -33.8700, 151.2006, now),  # ~9m along the shape
+                ]
+            )
+        },
+        trip_updates={},
+    )
+    records = normalise(raw, static_gtfs, now=now)
+
+    bunching = route_bunching_scores(records, static_gtfs)
+
+    assert bunching.get("close1", 0.0) > 0.9
+    assert bunching.get("close2", 0.0) > 0.9
+
+
+def test_route_bunching_scores_ignores_far_apart_buses(static_gtfs):
+    now = int(time.time())
+    raw = RawFeeds(
+        vehicle_positions={
+            "buses": _vehicle_positions_feed(
+                [
+                    ("far1", "trip_A", -33.8700, 151.2000, now),
+                    ("far2", "trip_A", -33.8700, 151.2100, now),  # ~925m along the shape
+                ]
+            )
+        },
+        trip_updates={},
+    )
+    records = normalise(raw, static_gtfs, now=now)
+
+    bunching = route_bunching_scores(records, static_gtfs)
+
+    assert bunching.get("far1", 0.0) < 0.2
+    assert bunching.get("far2", 0.0) < 0.2
+
+
+def test_route_bunching_scores_ignores_lone_bus_on_a_shape(static_gtfs):
+    now = int(time.time())
+    raw = RawFeeds(
+        vehicle_positions={
+            "buses": _vehicle_positions_feed([("solo", "trip_A", -33.87, 151.21, now)])
+        },
+        trip_updates={},
+    )
+    records = normalise(raw, static_gtfs, now=now)
+
+    assert route_bunching_scores(records, static_gtfs) == {}
 
 
 def test_congestion_grid_buckets_and_flags_hotspots(static_gtfs):
@@ -202,7 +270,7 @@ def test_congestion_grid_buckets_and_flags_hotspots(static_gtfs):
         },
         trip_updates={"buses": _trip_updates_feed([("trip_A", 600)])},
     )
-    records = score_vehicles(normalise(raw, static_gtfs, now=now))
+    records = score_vehicles(normalise(raw, static_gtfs, now=now), static_gtfs)
 
     grid = congestion_grid(records)
 

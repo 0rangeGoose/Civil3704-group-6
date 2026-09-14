@@ -40,7 +40,7 @@ def run_headless(api_key: str, max_cycles: Optional[int] = None) -> None:
         while max_cycles is None or cycle < max_cycles:
             start = time.time()
             raw = realtime_gtfs.poll_all(api_key)
-            records = score_vehicles(normalise(raw, static))
+            records = score_vehicles(normalise(raw, static), static)
             aggregator.update(records)
             grid = congestion_grid(records)
             cycle += 1
@@ -71,7 +71,7 @@ def run_with_server(api_key: str) -> None:
     store = SnapshotStore()
 
     def on_update(raw):
-        records = score_vehicles(normalise(raw, static))
+        records = score_vehicles(normalise(raw, static), static)
         aggregator.update(records)
         grid = congestion_grid(records)
         store.update(records, aggregator.snapshot(), grid)

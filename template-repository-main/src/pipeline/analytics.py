@@ -14,6 +14,7 @@ from dataclasses import dataclass
 from typing import Dict, List, Optional, Tuple
 
 from . import config
+from .ingestion.static_gtfs import StaticGTFS
 from .normalise import VehicleRecord
 
 EARTH_RADIUS_M = 6_371_000
@@ -26,13 +27,16 @@ def _to_local_xy(lat: float, lon: float, origin_lat: float) -> Tuple[float, floa
     return x, y
 
 
-def snap_to_shape(
+def _project_onto_shape(
     lat: float, lon: float, shape_points: List[Tuple[float, float]]
-) -> Optional[Tuple[float, float, float]]:
-    """Project (lat, lon) onto the nearest segment of a route shape.
+) -> Optional[Tuple[float, float, float, float]]:
+    """Project (lat, lon) onto the nearest segment of a shape.
 
-    Returns (snapped_lat, snapped_lon, distance_metres), or None if the
-    shape has fewer than two points to form a segment.
+    Returns (snapped_lat, snapped_lon, distance_from_point_metres,
+    progress_along_shape_metres), or None if the shape has fewer than two
+    points to form a segment. `progress` is the cumulative distance from the
+    start of the shape to the snapped point - what lets two vehicles on the
+    same shape be ordered and have a gap measured between them.
     """
     if len(shape_points) < 2:
         return None
@@ -42,12 +46,15 @@ def snap_to_shape(
 
     best_dist_sq = math.inf
     best_point: Optional[Tuple[float, float]] = None
+    best_progress = 0.0
+    cumulative = 0.0
 
     for (lat1, lon1), (lat2, lon2) in zip(shape_points, shape_points[1:]):
         x1, y1 = _to_local_xy(lat1, lon1, origin_lat)
         x2, y2 = _to_local_xy(lat2, lon2, origin_lat)
 
         dx, dy = x2 - x1, y2 - y1
+        seg_len = math.hypot(dx, dy)
         seg_len_sq = dx * dx + dy * dy
         if seg_len_sq == 0:
             t = 0.0
@@ -61,49 +68,134 @@ def snap_to_shape(
             # Convert the projected point back to lat/lon via linear
             # interpolation - accurate enough given the local projection.
             best_point = (lat1 + t * (lat2 - lat1), lon1 + t * (lon2 - lon1))
+            best_progress = cumulative + t * seg_len
+
+        cumulative += seg_len
 
     if best_point is None:
         return None
-    return best_point[0], best_point[1], math.sqrt(best_dist_sq)
+    return best_point[0], best_point[1], math.sqrt(best_dist_sq), best_progress
+
+
+def snap_to_shape(
+    lat: float, lon: float, shape_points: List[Tuple[float, float]]
+) -> Optional[Tuple[float, float, float]]:
+    """Project (lat, lon) onto the nearest segment of a route shape.
+
+    Returns (snapped_lat, snapped_lon, distance_metres), or None if the
+    shape has fewer than two points to form a segment.
+    """
+    projection = _project_onto_shape(lat, lon, shape_points)
+    if projection is None:
+        return None
+    snapped_lat, snapped_lon, distance_metres, _progress_metres = projection
+    return snapped_lat, snapped_lon, distance_metres
+
+
+def route_bunching_scores(
+    records: List[VehicleRecord],
+    static: StaticGTFS,
+    far_metres: Optional[float] = None,
+    close_metres: Optional[float] = None,
+) -> Dict[str, float]:
+    """Bus bunching: how close each vehicle is to its nearest same-shape
+    neighbour, measured along the route (not straight-line) - the classic
+    congestion signature transit agencies watch for.
+
+    Vehicles are grouped by shape_id (which already encodes direction in
+    GTFS, so inbound/outbound buses on the same route aren't compared to
+    each other), projected onto that shape to get their progress along it,
+    then scored by the gap to their nearest neighbour in that ordering.
+
+    Returns {vehicle_id: score in [0, 1]} only for vehicles this could be
+    computed for - a lone bus on its shape, or a shape with no static data,
+    is simply left out (no false "not bunched" signal from an empty gap).
+    """
+    far_metres = config.BUNCHING_FAR_METRES if far_metres is None else far_metres
+    close_metres = config.BUNCHING_CLOSE_METRES if close_metres is None else close_metres
+    span = max(1.0, far_metres - close_metres)
+
+    by_shape: Dict[str, list] = defaultdict(list)
+    for record in records:
+        if record.shape_id:
+            by_shape[record.shape_id].append(record)
+
+    scores: Dict[str, float] = {}
+    for shape_id, shape_records in by_shape.items():
+        if len(shape_records) < 2:
+            continue
+        shape_points = static.shapes.get(shape_id)
+        if not shape_points:
+            continue
+
+        positioned = []
+        for record in shape_records:
+            projection = _project_onto_shape(record.latitude, record.longitude, shape_points)
+            if projection is not None:
+                positioned.append((projection[3], record))
+
+        if len(positioned) < 2:
+            continue
+
+        positioned.sort(key=lambda p: p[0])
+        progresses = [p[0] for p in positioned]
+
+        for i, (progress, record) in enumerate(positioned):
+            gaps = []
+            if i > 0:
+                gaps.append(progress - progresses[i - 1])
+            if i < len(positioned) - 1:
+                gaps.append(progresses[i + 1] - progress)
+            nearest_gap = min(gaps)
+            bunching = max(0.0, min(1.0, (far_metres - nearest_gap) / span))
+            scores[record.vehicle_id] = round(bunching, 3)
+
+    return scores
 
 
 def vehicle_congestion_score(
-    speed_mps: Optional[float], delay_seconds: Optional[int]
+    speed_mps: Optional[float],
+    delay_seconds: Optional[int],
+    bunching_score: Optional[float] = None,
 ) -> Optional[float]:
-    """A [0, 1] congestion proxy for one bus.
-
-    Combines two signals:
+    """A [0, 1] congestion proxy for one bus, blending up to three signals:
       - "moving slowly": how far below free-flow speed the bus is
       - "behind schedule": how large its delay is (delays cascade in congestion)
+      - "bunched": how close it is to its nearest same-shape neighbour
 
-    Returns None when neither signal is available (no speed and no delay).
+    Any signal that isn't available is simply left out, and the remaining
+    ones are re-weighted proportionally - e.g. with only delay available,
+    the score is just the delay term. Returns None if none are available.
     """
-    slowness = None
+    components: List[Tuple[float, float]] = []  # (value, weight)
+
     if speed_mps is not None and speed_mps >= 0:
         slowness = max(0.0, min(1.0, (config.FREE_FLOW_SPEED_MPS - speed_mps) / config.FREE_FLOW_SPEED_MPS))
+        components.append((slowness, config.CONGESTION_SPEED_WEIGHT))
 
-    delay_term = None
     if delay_seconds is not None:
         delay_term = max(0.0, min(1.0, delay_seconds / config.CONGESTION_DELAY_CAP_SECONDS))
+        components.append((delay_term, config.CONGESTION_DELAY_WEIGHT))
 
-    if slowness is None and delay_term is None:
+    if bunching_score is not None:
+        components.append((bunching_score, config.CONGESTION_BUNCHING_WEIGHT))
+
+    if not components:
         return None
-    if slowness is None:
-        return round(delay_term, 3)
-    if delay_term is None:
-        return round(slowness, 3)
 
-    score = (
-        config.CONGESTION_SPEED_WEIGHT * slowness
-        + config.CONGESTION_DELAY_WEIGHT * delay_term
-    )
+    total_weight = sum(weight for _, weight in components)
+    score = sum(value * weight for value, weight in components) / total_weight
     return round(score, 3)
 
 
-def score_vehicles(records: List[VehicleRecord]) -> List[VehicleRecord]:
-    """Set `congestion_score` on each record in place, and return the list."""
+def score_vehicles(records: List[VehicleRecord], static: StaticGTFS) -> List[VehicleRecord]:
+    """Set `congestion_score` (and `bunching_score`) on each record in place."""
+    bunching = route_bunching_scores(records, static)
     for record in records:
-        record.congestion_score = vehicle_congestion_score(record.speed, record.delay_seconds)
+        record.bunching_score = bunching.get(record.vehicle_id)
+        record.congestion_score = vehicle_congestion_score(
+            record.speed, record.delay_seconds, record.bunching_score
+        )
     return records
 
 

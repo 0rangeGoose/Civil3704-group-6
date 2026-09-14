@@ -136,7 +136,8 @@ function updateMarkers(vehicles) {
     const color = { "on-time": "#087f74", late: "#e8a72c", "very-late": "#cf5445", unknown: "#2874a6", cancelled: "#63716d" }[status];
     const icon = L.divIcon({ className: "vehicle-icon", html: `<div class="vehicle-marker" style="background:${color}"></div>`, iconSize: [16, 16], iconAnchor: [8, 8] });
     const congestionPct = vehicle.congestion_score == null ? "n/a" : `${Math.round(vehicle.congestion_score * 100)}%`;
-    const popup = `<strong>${vehicle.route_short_name || vehicle.route_id || "Unassigned route"}</strong><br>${vehicle.mode} / ${label}<br>${vehicle.delay_seconds == null ? "Delay unavailable" : `${vehicle.delay_seconds}s delay`}<br>Congestion: ${congestionPct}`;
+    const bunchingNote = vehicle.bunching_score == null ? "" : ` (bunching ${Math.round(vehicle.bunching_score * 100)}%)`;
+    const popup = `<strong>${vehicle.route_short_name || vehicle.route_id || "Unassigned route"}</strong><br>${vehicle.mode} / ${label}<br>${vehicle.delay_seconds == null ? "Delay unavailable" : `${vehicle.delay_seconds}s delay`}<br>Congestion: ${congestionPct}${bunchingNote}`;
     if (markers.has(vehicle.vehicle_id)) markers.get(vehicle.vehicle_id).setLatLng([vehicle.latitude, vehicle.longitude]).setIcon(icon).setPopupContent(popup);
     else markers.set(vehicle.vehicle_id, L.marker([vehicle.latitude, vehicle.longitude], { icon }).addTo(map).bindPopup(popup));
   });

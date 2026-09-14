@@ -43,6 +43,7 @@ class VehicleRecord:
     # Filled in by the analytics layer (analytics.score_vehicles); left None
     # by normalisation so this stage stays purely about cleaning/joining.
     congestion_score: Optional[float] = None
+    bunching_score: Optional[float] = None
 
 
 def _in_bbox(lat: float, lon: float, bbox: dict) -> bool:
