@@ -1,0 +1,199 @@
+// Shared map rendering logic for both the full dashboard (app.js) and the
+// bare map-only view for the projector (map.js) - one Leaflet setup, one
+// congestion/vehicle renderer, so a fix here (e.g. the zoom-lock fix) only
+// ever has to be made in one place. Both pages provide their own <div
+// id="map"> and poll /snapshot on their own schedule/UI; this module owns
+// everything about drawing onto the map itself.
+
+export const map = L.map("map", { zoomControl: false }).setView([-33.865, 151.204], 12);
+L.control.zoom({ position: "bottomright" }).addTo(map);
+L.tileLayer("https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png", {
+  maxZoom: 19,
+  attribution: "&copy; OpenStreetMap contributors"
+}).addTo(map);
+
+const congestionLayer = L.layerGroup().addTo(map);
+const markers = new Map();
+let modelFitted = false;
+let modelBounds = null;
+let lastCongestion = { cells: [], hotspot_count: 0, priority_count: 0, cell_metres: 150 };
+
+// Layer toggle: which value drives block colour/label. All three modes
+// share the same colour ramp and popup (which always shows every value) -
+// only what's used to paint the rectangle changes, so switching layers
+// never hides information, just changes what's foregrounded.
+export const LAYER_MODES = {
+  congestion: { label: "Congestion", valueOf: (cell) => cell.score },
+  demand: { label: "Demand", valueOf: (cell) => cell.demand_score },
+  priority: { label: "Priority", valueOf: (cell) => cell.priority_score }
+};
+let activeLayer = "congestion";
+
+export function getActiveLayer() {
+  return activeLayer;
+}
+
+export function setActiveLayer(name) {
+  if (!LAYER_MODES[name]) return;
+  activeLayer = name;
+  // Only present on the full dashboard - harmless no-op on the map-only page.
+  const label = document.getElementById("block-legend-label");
+  if (label) label.textContent = `${LAYER_MODES[name].label} block:`;
+  updateCongestion(lastCongestion);
+}
+
+// The zoom level that makes `modelBounds` exactly fill the map panel at its
+// CURRENT on-screen size. Recomputed (not cached) so it stays correct if the
+// panel's pixel size changes - a stale value was letting the "-" zoom
+// control zoom out past the footprint.
+function lockZoomToModel() {
+  if (!modelBounds) return;
+  const fitZoom = map.getBoundsZoom(modelBounds, false);
+  map.setMinZoom(fitZoom);
+  if (map.getZoom() < fitZoom) map.setZoom(fitZoom);
+}
+window.addEventListener("load", lockZoomToModel);
+window.addEventListener("resize", lockZoomToModel);
+
+// Frame the map on the physical scale-model footprint (sent in the snapshot
+// as model_bounds), mask out everything beyond it, and lock panning/zooming
+// so only the model's actual coverage area is ever visible.
+export function applyModelBounds(b) {
+  if (!b || modelFitted) return;
+  modelBounds = L.latLngBounds([[b.min_lat, b.min_lon], [b.max_lat, b.max_lon]]);
+
+  // Dim/hide everything outside the model footprint: one giant rectangle
+  // covering the whole map, with the model bounds cut out as a hole.
+  const world = [[-89, -180], [-89, 180], [89, 180], [89, -180]];
+  const hole = [
+    [b.min_lat, b.min_lon], [b.min_lat, b.max_lon],
+    [b.max_lat, b.max_lon], [b.max_lat, b.min_lon]
+  ];
+  L.polygon([world, hole], {
+    stroke: false,
+    fill: true,
+    fillColor: "#0b0f0e",
+    fillOpacity: 0.55,
+    interactive: false
+  }).addTo(map);
+
+  L.rectangle(modelBounds, {
+    color: "#17211f",
+    weight: 2,
+    dashArray: "6 4",
+    fill: false,
+    interactive: false
+  }).addTo(map).bindTooltip("Scale model footprint", { sticky: true });
+
+  map.setMaxBounds(modelBounds);
+  lockZoomToModel();
+  // No padding: the map panel is CSS-locked to the model's own aspect
+  // ratio (2:1, matching the physical scale model), so fitting with zero
+  // padding makes the footprint fill the panel edge-to-edge on both axes.
+  map.fitBounds(modelBounds, { padding: [0, 0] });
+  modelFitted = true;
+}
+
+export function statusFor(vehicle) {
+  if (vehicle.cancelled) return ["cancelled", "Cancelled"];
+  if (vehicle.delay_seconds == null) return ["unknown", "Unknown delay"];
+  if (vehicle.delay_seconds <= 60) return ["on-time", "On time"];
+  if (vehicle.delay_seconds <= 300) return ["late", "Late"];
+  return ["very-late", "Very late"];
+}
+
+// Congestion score (0-1) -> colour ramp: clear teal -> amber -> red.
+export function congestionColor(value) {
+  if (value >= 0.6) return "#cf5445";
+  if (value >= 0.4) return "#e8722c";
+  if (value >= 0.25) return "#e8a72c";
+  if (value >= 0.12) return "#b6c34a";
+  return "#087f74";
+}
+
+export function formatTime(seconds) {
+  if (!seconds) return "No update";
+  return new Date(seconds * 1000).toLocaleTimeString([], { hour: "2-digit", minute: "2-digit", second: "2-digit" });
+}
+
+export function updateCongestion(congestion) {
+  lastCongestion = congestion;
+  congestionLayer.clearLayers();
+  const cells = (congestion && congestion.cells) || [];
+  const mode = LAYER_MODES[activeLayer];
+
+  cells.forEach((cell) => {
+    const b = cell.bounds;
+    if (!b) return;
+    const value = mode.valueOf(cell);
+    const hasValue = typeof value === "number";
+    // A cell with no value for the active layer (e.g. Demand/Priority
+    // before data/demand/ has been populated) is drawn as a neutral,
+    // faint, dotted outline - clearly "nothing to show", not a fake 0%.
+    const color = hasValue ? congestionColor(value) : "#9aa39d";
+
+    // Priority (high congestion AND high demand) gets its own solid purple
+    // outline in every layer, on top of the usual fill/hotspot styling -
+    // it's a distinct question ("does this matter for capacity planning?"),
+    // not just a more-severe reading on whichever layer is showing.
+    const rect = L.rectangle(
+      [[b.min_lat, b.min_lon], [b.max_lat, b.max_lon]],
+      {
+        color: cell.priority ? "#5b3fd6" : color,
+        weight: cell.priority ? 3 : (hasValue && cell.hotspot ? 2.5 : 1),
+        dashArray: hasValue ? (cell.priority || cell.hotspot ? null : "3 4") : "1 3",
+        fillColor: color,
+        fillOpacity: hasValue ? 0.15 + Math.min(0.4, value * 0.4) : 0.04
+      }
+    );
+    rect.bindTooltip(hasValue ? `${Math.round(value * 100)}%` : "no data", {
+      permanent: true,
+      direction: "center",
+      className: "cell-label"
+    });
+    const demandLine = cell.demand_score == null
+      ? "Demand: no data loaded"
+      : `Demand: ${(cell.demand_score * 100).toFixed(0)}%${cell.priority ? ' <span class="pill" style="background:#5b3fd6">priority</span>' : ""}`;
+    rect.bindPopup(
+      `<strong>Block ${cell.cell_id}</strong>${cell.hotspot ? ' <span class="pill">hotspot</span>' : ""}<br>` +
+      `Congestion: ${(cell.score * 100).toFixed(0)}%<br>` +
+      `${demandLine}<br>` +
+      `Holding: ${cell.vehicle_count} bus${cell.vehicle_count === 1 ? "" : "es"}<br>` +
+      `Routes: ${cell.routes && cell.routes.length ? cell.routes.join(", ") : "n/a"}<br>` +
+      `~${congestion.cell_metres || 300} m square`
+    );
+    rect.addTo(congestionLayer);
+  });
+}
+
+export function updateMarkers(vehicles) {
+  const active = new Set();
+  vehicles.forEach((vehicle) => {
+    if (typeof vehicle.latitude !== "number" || typeof vehicle.longitude !== "number") return;
+    active.add(vehicle.vehicle_id);
+    const [status, label] = statusFor(vehicle);
+    const color = { "on-time": "#087f74", late: "#e8a72c", "very-late": "#cf5445", unknown: "#2874a6", cancelled: "#63716d" }[status];
+    const icon = L.divIcon({ className: "vehicle-icon", html: `<div class="vehicle-marker" style="background:${color}"></div>`, iconSize: [16, 16], iconAnchor: [8, 8] });
+    const congestionPct = vehicle.congestion_score == null ? "n/a" : `${Math.round(vehicle.congestion_score * 100)}%`;
+    const bunchingNote = vehicle.bunching_score == null ? "" : ` (bunching ${Math.round(vehicle.bunching_score * 100)}%)`;
+    const popup = `<strong>${vehicle.route_short_name || vehicle.route_id || "Unassigned route"}</strong><br>${vehicle.mode} / ${label}<br>${vehicle.delay_seconds == null ? "Delay unavailable" : `${vehicle.delay_seconds}s delay`}<br>Congestion: ${congestionPct}${bunchingNote}`;
+    if (markers.has(vehicle.vehicle_id)) markers.get(vehicle.vehicle_id).setLatLng([vehicle.latitude, vehicle.longitude]).setIcon(icon).setPopupContent(popup);
+    else markers.set(vehicle.vehicle_id, L.marker([vehicle.latitude, vehicle.longitude], { icon }).addTo(map).bindPopup(popup));
+  });
+  markers.forEach((marker, id) => { if (!active.has(id)) { map.removeLayer(marker); markers.delete(id); } });
+}
+
+// Does the three map-only updates (bounds/blocks/vehicles) both pages need
+// on every poll. The full dashboard additionally updates its own metric
+// tiles/table from the same snapshot; this doesn't touch any of that.
+export function renderSnapshot(snapshot) {
+  applyModelBounds(snapshot.model_bounds);
+  updateCongestion(snapshot.congestion || lastCongestion);
+  updateMarkers(snapshot.vehicles || []);
+}
+
+export async function fetchSnapshot() {
+  const response = await fetch("/snapshot", { cache: "no-store" });
+  if (!response.ok) throw new Error(`HTTP ${response.status}`);
+  return response.json();
+}

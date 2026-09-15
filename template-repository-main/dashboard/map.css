@@ -1,0 +1,21 @@
+/* Full-bleed override for the projector's map-only view. Builds on
+   style.css (shared with the full dashboard) for the map/vehicle/cell/pill
+   styling - this file only handles making the map fill the whole page. */
+html, body { height: 100%; }
+body { margin: 0; background: #0b0f0e; }
+#map { aspect-ratio: unset; width: 100vw; height: 100vh; max-height: none; }
+
+.layer-hint {
+  position: fixed;
+  left: 14px;
+  bottom: 14px;
+  z-index: 1000;
+  background: rgba(11, 15, 14, .72);
+  color: #f3f5f0;
+  font: 500 12px "DM Mono", monospace, monospace;
+  padding: 8px 12px;
+  border-radius: 5px;
+  pointer-events: none;
+}
+.layer-hint .keys { color: #9aa39d; margin-left: 10px; }
+.layer-hint .stale { color: #e8a72c; margin-left: 10px; }

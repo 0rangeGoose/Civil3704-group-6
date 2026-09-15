@@ -40,9 +40,19 @@ python src/main.py --mode headless    # no server - just polls and logs each cyc
 python src/main.py --mode headless --max-cycles 3   # bounded run, useful for a quick check
 ```
 
-While the server is running, open `http://localhost:8080/dashboard` to view
-vehicle positions and route adherence. The dashboard polls `/snapshot` every
-five seconds and shows a clear connection error if the pipeline is unavailable.
+While the server is running, open `http://localhost:8080/dashboard` for the
+full dashboard (vehicle positions, congestion/demand/priority layer toggle,
+route adherence) - both poll `/snapshot` every five seconds and show a clear
+connection error if the pipeline is unavailable.
+
+For the projector: `http://localhost:8080/dashboard/map.html` is the map
+alone, no header/metrics/table. Layer switching there is keyboard-only (no
+visible buttons, so nothing sits on top of the projected image) - press
+`1` for Congestion, `2` for Demand, `3` for Priority.
+
+The map-drawing logic (model bounds, congestion blocks, vehicle markers) is
+shared between both pages via `dashboard/map-core.js`, so a fix there only
+has to be made once.
 
 In `serve` mode, the projection renderer / dashboard consumes:
 - `GET  http://localhost:8080/snapshot` - current state as JSON, poll on demand
@@ -71,8 +81,10 @@ pytest tests/ -v
 - The TfNSW custom protobuf extension (occupancy / accessibility beyond
   standard GTFS-RT) isn't decoded yet - `VehicleRecord` has no occupancy
   field. Needs TfNSW's extension `.proto` definitions.
-- Population/demand data (Travel Zone Projections) isn't wired in - static
-  GTFS + realtime only, so far.
+- Population/demand data is wired in (`pipeline/ingestion/demand.py`) but
+  optional - it needs `data/demand/travel_zones_2021.geojson` and
+  `data/demand/tzp24_employment.csv` from the TfNSW Open Data Hub (free
+  login) to activate; without them, Demand/Priority just show "no data".
 - No history/trend storage yet (current design is in-memory, current-state only).
 
 ## Documentation
