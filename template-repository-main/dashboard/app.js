@@ -101,12 +101,16 @@ function updateCongestion(congestion) {
     const b = cell.bounds;
     if (!b) return;
     const color = congestionColor(cell.score);
+    // Priority (high congestion AND high demand) gets its own solid purple
+    // outline, on top of the usual congestion fill/hotspot styling - it's a
+    // distinct question ("does this matter for capacity planning?"), not
+    // just a more-severe congestion reading.
     const rect = L.rectangle(
       [[b.min_lat, b.min_lon], [b.max_lat, b.max_lon]],
       {
-        color,
-        weight: cell.hotspot ? 2.5 : 1,
-        dashArray: cell.hotspot ? null : "3 4",
+        color: cell.priority ? "#5b3fd6" : color,
+        weight: cell.priority ? 3 : (cell.hotspot ? 2.5 : 1),
+        dashArray: cell.priority || cell.hotspot ? null : "3 4",
         fillColor: color,
         fillOpacity: 0.15 + Math.min(0.4, cell.score * 0.4)
       }
@@ -116,9 +120,13 @@ function updateCongestion(congestion) {
       direction: "center",
       className: "cell-label"
     });
+    const demandLine = cell.demand_score == null
+      ? "Demand: no data loaded"
+      : `Demand: ${(cell.demand_score * 100).toFixed(0)}%${cell.priority ? ' <span class="pill" style="background:#5b3fd6">priority</span>' : ""}`;
     rect.bindPopup(
       `<strong>Block ${cell.cell_id}</strong>${cell.hotspot ? ' <span class="pill">hotspot</span>' : ""}<br>` +
       `Congestion: ${(cell.score * 100).toFixed(0)}%<br>` +
+      `${demandLine}<br>` +
       `Holding: ${cell.vehicle_count} bus${cell.vehicle_count === 1 ? "" : "es"}<br>` +
       `Routes: ${cell.routes && cell.routes.length ? cell.routes.join(", ") : "n/a"}<br>` +
       `~${congestion.cell_metres || 300} m square`
@@ -154,7 +162,8 @@ function updateRoutes(routes) {
 function updateDashboard(snapshot) {
   const vehicles = snapshot.vehicles || [];
   const routes = snapshot.route_adherence || {};
-  const congestion = snapshot.congestion || { cells: [], hotspot_count: 0 };
+  const congestion = snapshot.congestion || { cells: [], hotspot_count: 0, priority_count: 0 };
+  const hasDemandData = congestion.cells.some((cell) => cell.demand_score != null);
   const samples = Object.values(routes);
   const totalSamples = samples.reduce((sum, route) => sum + route.sample_count, 0);
   const onTimeSamples = samples.reduce((sum, route) => sum + route.on_time_pct * route.sample_count / 100, 0);
@@ -165,6 +174,7 @@ function updateDashboard(snapshot) {
 
   document.getElementById("vehicle-count").textContent = snapshot.vehicle_count ?? vehicles.length;
   document.getElementById("hotspots").textContent = congestion.hotspot_count ?? 0;
+  document.getElementById("priority-zones").textContent = hasDemandData ? (congestion.priority_count ?? 0) : "no data";
   document.getElementById("avg-congestion").textContent = avgCongestion == null ? "--" : `${avgCongestion}%`;
   document.getElementById("on-time").textContent = totalSamples ? `${Math.round(onTimeSamples / totalSamples * 100)}%` : "--";
   document.getElementById("last-update").textContent = formatTime(snapshot.updated_at);

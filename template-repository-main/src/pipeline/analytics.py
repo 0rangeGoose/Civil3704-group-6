@@ -14,6 +14,7 @@ from dataclasses import dataclass
 from typing import Dict, List, Optional, Tuple
 
 from . import config
+from .ingestion.demand import DemandZones
 from .ingestion.static_gtfs import StaticGTFS
 from .normalise import VehicleRecord
 
@@ -229,6 +230,8 @@ def congestion_grid(
     records: List[VehicleRecord],
     cell_metres: float = config.CONGESTION_GRID_CELL_METRES,
     hotspot_threshold: float = config.CONGESTION_HOTSPOT_THRESHOLD,
+    demand: Optional[DemandZones] = None,
+    priority_threshold: float = config.PRIORITY_THRESHOLD,
 ) -> dict:
     """Aggregate per-vehicle congestion scores onto a fixed grid over the area.
 
@@ -237,9 +240,17 @@ def congestion_grid(
     codes present), so it's clear on the map exactly which patch of the CBD
     a reading covers.
 
+    If `demand` (see pipeline.ingestion.demand) is supplied, each cell also
+    gets demand_score (job density where the cell sits, from TZP24) and
+    priority_score = congestion x demand - the supply-meets-demand signal
+    the proposal is actually about, not just raw congestion. Both are None
+    per cell (and priority_count is 0) when demand isn't supplied, e.g.
+    because data/demand/ hasn't been populated yet.
+
     Returns {"cells": [{cell_id, bounds, center, score, vehicle_count,
-                        routes, hotspot}, ...],
-             "hotspot_count": int, "cell_metres": float}
+                        routes, hotspot, demand_score, priority_score,
+                        priority}, ...],
+             "hotspot_count": int, "priority_count": int, "cell_metres": float}
     """
     buckets: Dict[Tuple[int, int], list] = defaultdict(list)
     for record in records:
@@ -249,10 +260,15 @@ def congestion_grid(
 
     cells = []
     hotspots = 0
+    priority_zones = 0
     for (row, col), members in buckets.items():
         scores = [m.congestion_score for m in members]
         mean_score = round(sum(scores) / len(scores), 3)
         bounds = _cell_bounds(row, col, cell_metres)
+        center = {
+            "lat": round((bounds["min_lat"] + bounds["max_lat"]) / 2, 6),
+            "lon": round((bounds["min_lon"] + bounds["max_lon"]) / 2, 6),
+        }
         routes = sorted({(m.route_short_name or m.route_id or "?") for m in members})
         is_hotspot = (
             mean_score >= hotspot_threshold
@@ -261,23 +277,34 @@ def congestion_grid(
         if is_hotspot:
             hotspots += 1
 
+        demand_score = demand.demand_score(center["lat"], center["lon"]) if demand else None
+        priority_score = round(mean_score * demand_score, 3) if demand_score is not None else None
+        is_priority = priority_score is not None and priority_score >= priority_threshold
+        if is_priority:
+            priority_zones += 1
+
         cells.append(
             {
                 "cell_id": f"r{row}c{col}",
                 "bounds": bounds,
-                "center": {
-                    "lat": round((bounds["min_lat"] + bounds["max_lat"]) / 2, 6),
-                    "lon": round((bounds["min_lon"] + bounds["max_lon"]) / 2, 6),
-                },
+                "center": center,
                 "score": mean_score,
                 "vehicle_count": len(members),
                 "routes": routes,
                 "hotspot": is_hotspot,
+                "demand_score": demand_score,
+                "priority_score": priority_score,
+                "priority": is_priority,
             }
         )
 
     cells.sort(key=lambda c: c["score"], reverse=True)
-    return {"cells": cells, "hotspot_count": hotspots, "cell_metres": cell_metres}
+    return {
+        "cells": cells,
+        "hotspot_count": hotspots,
+        "priority_count": priority_zones,
+        "cell_metres": cell_metres,
+    }
 
 
 def classify_adherence(delay_seconds: Optional[int], cancelled: bool) -> str:

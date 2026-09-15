@@ -19,6 +19,7 @@ from typing import Optional
 
 from . import config
 from .analytics import RollingAggregator, congestion_grid, score_vehicles
+from .ingestion import demand as demand_ingestion
 from .ingestion import realtime_gtfs, static_gtfs
 from .normalise import normalise
 from .publish import SnapshotStore, run_server
@@ -33,6 +34,7 @@ def run_headless(api_key: str, max_cycles: Optional[int] = None) -> None:
     check); leave it None to poll forever until Ctrl+C.
     """
     static = static_gtfs.load_static_gtfs(api_key)
+    demand = demand_ingestion.load_demand_zones()
     aggregator = RollingAggregator()
 
     cycle = 0
@@ -42,12 +44,13 @@ def run_headless(api_key: str, max_cycles: Optional[int] = None) -> None:
             raw = realtime_gtfs.poll_all(api_key)
             records = score_vehicles(normalise(raw, static), static)
             aggregator.update(records)
-            grid = congestion_grid(records)
+            grid = congestion_grid(records, demand=demand)
             cycle += 1
 
             logger.info(
                 f"Cycle {cycle}: {len(records)} vehicles in CBD, "
-                f"{grid['hotspot_count']} congestion hotspot(s)"
+                f"{grid['hotspot_count']} congestion hotspot(s), "
+                f"{grid['priority_count']} priority zone(s)"
             )
             for route_id, agg in aggregator.snapshot().items():
                 logger.info(
@@ -67,17 +70,19 @@ def run_headless(api_key: str, max_cycles: Optional[int] = None) -> None:
 def run_with_server(api_key: str) -> None:
     """Run ingestion in a background thread; serve the live snapshot on the main thread."""
     static = static_gtfs.load_static_gtfs(api_key)
+    demand = demand_ingestion.load_demand_zones()
     aggregator = RollingAggregator()
     store = SnapshotStore()
 
     def on_update(raw):
         records = score_vehicles(normalise(raw, static), static)
         aggregator.update(records)
-        grid = congestion_grid(records)
+        grid = congestion_grid(records, demand=demand)
         store.update(records, aggregator.snapshot(), grid)
         logger.info(
             f"Snapshot updated: {len(records)} vehicles in CBD, "
-            f"{grid['hotspot_count']} congestion hotspot(s)"
+            f"{grid['hotspot_count']} congestion hotspot(s), "
+            f"{grid['priority_count']} priority zone(s)"
         )
 
     ingest_thread = threading.Thread(
