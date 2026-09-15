@@ -83,6 +83,29 @@ function congestionColor(score) {
   return "#087f74";
 }
 
+// Layer toggle: which value drives block colour/label. All three modes
+// share the same colour ramp and popup (which always shows every value) -
+// only what's used to paint the rectangle changes, so switching layers
+// never hides information, just changes what's foregrounded.
+const LAYER_MODES = {
+  congestion: { label: "Congestion", valueOf: (cell) => cell.score },
+  demand: { label: "Demand", valueOf: (cell) => cell.demand_score },
+  priority: { label: "Priority", valueOf: (cell) => cell.priority_score }
+};
+let activeLayer = "congestion";
+let lastCongestion = { cells: [], hotspot_count: 0, priority_count: 0, cell_metres: 150 };
+
+document.querySelectorAll(".layer-btn").forEach((btn) => {
+  btn.addEventListener("click", () => {
+    if (btn.disabled) return;
+    document.querySelectorAll(".layer-btn").forEach((b) => b.classList.remove("active"));
+    btn.classList.add("active");
+    activeLayer = btn.dataset.layer;
+    document.getElementById("block-legend-label").textContent = `${LAYER_MODES[activeLayer].label} block:`;
+    updateCongestion(lastCongestion); // redraw with the new mode immediately, don't wait for the next poll
+  });
+});
+
 function setConnection(state, message) {
   const connection = document.getElementById("connection");
   connection.className = `connection ${state}`;
@@ -95,27 +118,36 @@ function formatTime(seconds) {
 }
 
 function updateCongestion(congestion) {
+  lastCongestion = congestion;
   congestionLayer.clearLayers();
   const cells = (congestion && congestion.cells) || [];
+  const mode = LAYER_MODES[activeLayer];
+
   cells.forEach((cell) => {
     const b = cell.bounds;
     if (!b) return;
-    const color = congestionColor(cell.score);
+    const value = mode.valueOf(cell);
+    const hasValue = typeof value === "number";
+    // A cell with no value for the active layer (e.g. Demand/Priority
+    // before data/demand/ has been populated) is drawn as a neutral,
+    // faint, dotted outline - clearly "nothing to show", not a fake 0%.
+    const color = hasValue ? congestionColor(value) : "#9aa39d";
+
     // Priority (high congestion AND high demand) gets its own solid purple
-    // outline, on top of the usual congestion fill/hotspot styling - it's a
-    // distinct question ("does this matter for capacity planning?"), not
-    // just a more-severe congestion reading.
+    // outline in every layer, on top of the usual fill/hotspot styling -
+    // it's a distinct question ("does this matter for capacity planning?"),
+    // not just a more-severe reading on whichever layer is showing.
     const rect = L.rectangle(
       [[b.min_lat, b.min_lon], [b.max_lat, b.max_lon]],
       {
         color: cell.priority ? "#5b3fd6" : color,
-        weight: cell.priority ? 3 : (cell.hotspot ? 2.5 : 1),
-        dashArray: cell.priority || cell.hotspot ? null : "3 4",
+        weight: cell.priority ? 3 : (hasValue && cell.hotspot ? 2.5 : 1),
+        dashArray: hasValue ? (cell.priority || cell.hotspot ? null : "3 4") : "1 3",
         fillColor: color,
-        fillOpacity: 0.15 + Math.min(0.4, cell.score * 0.4)
+        fillOpacity: hasValue ? 0.15 + Math.min(0.4, value * 0.4) : 0.04
       }
     );
-    rect.bindTooltip(`${Math.round(cell.score * 100)}%`, {
+    rect.bindTooltip(hasValue ? `${Math.round(value * 100)}%` : "no data", {
       permanent: true,
       direction: "center",
       className: "cell-label"
@@ -175,6 +207,10 @@ function updateDashboard(snapshot) {
   document.getElementById("vehicle-count").textContent = snapshot.vehicle_count ?? vehicles.length;
   document.getElementById("hotspots").textContent = congestion.hotspot_count ?? 0;
   document.getElementById("priority-zones").textContent = hasDemandData ? (congestion.priority_count ?? 0) : "no data";
+  document.querySelectorAll('.layer-btn[data-layer="demand"], .layer-btn[data-layer="priority"]').forEach((btn) => {
+    btn.disabled = !hasDemandData;
+    btn.title = hasDemandData ? "" : "No demand data loaded - see data/demand/ in the README";
+  });
   document.getElementById("avg-congestion").textContent = avgCongestion == null ? "--" : `${avgCongestion}%`;
   document.getElementById("on-time").textContent = totalSamples ? `${Math.round(onTimeSamples / totalSamples * 100)}%` : "--";
   document.getElementById("last-update").textContent = formatTime(snapshot.updated_at);
