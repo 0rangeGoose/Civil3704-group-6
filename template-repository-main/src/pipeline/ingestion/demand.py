@@ -37,6 +37,7 @@ import csv
 import datetime
 import json
 import logging
+import re
 from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Dict, List, Optional, Sequence, Tuple
@@ -60,6 +61,13 @@ EMPLOYMENT_CANDIDATES = [
     "jobs",
 ]
 YEAR_CANDIDATES = ["year", "tzp_year", "projection_year"]
+
+# TZP24's actual export is WIDE: one row per zone, one column per projection
+# year (EMP_2021, EMP_2022, ..., EMP_2066 - annual to 2031, then 5-yearly).
+# Matched separately from EMPLOYMENT_CANDIDATES/YEAR_CANDIDATES, which cover
+# the LONG-format alternative (one row per zone *per year*, single value
+# column) some exports use instead.
+EMP_YEAR_COLUMN_PATTERN = re.compile(r"^emp(?:loyment)?[_\s]?(\d{4})$", re.IGNORECASE)
 
 
 @dataclass
@@ -104,6 +112,27 @@ def _find_column(fieldnames: Sequence[str], candidates: List[str], label: str) -
         f"Tried: {candidates}. If this is the real TZP24/TZ21 file, add its "
         f"actual column name to the candidates list in pipeline/ingestion/demand.py."
     )
+
+
+def _find_year_columns(fieldnames: Sequence[str]) -> Dict[int, str]:
+    """Wide-format files have one column per year, e.g. EMP_2024. Returns
+    {year: column_name} for every such column found (empty dict if none)."""
+    years: Dict[int, str] = {}
+    for name in fieldnames:
+        match = EMP_YEAR_COLUMN_PATTERN.match(name.strip())
+        if match:
+            years[int(match.group(1))] = name
+    return years
+
+
+def _pick_nearest_year(available_years, reference_year: Optional[int]) -> Optional[int]:
+    """Pick whichever of `available_years` (ints) is closest to `reference_year`
+    (default: this calendar year) - used when no explicit year is requested,
+    so rows/columns for every projected year don't get silently combined."""
+    if not available_years:
+        return None
+    reference = reference_year if reference_year is not None else datetime.date.today().year
+    return min(available_years, key=lambda y: abs(y - reference))
 
 
 def _ring_bbox(ring: List[Tuple[float, float]]) -> Tuple[float, float, float, float]:
@@ -180,47 +209,72 @@ def load_demand_zones(
         geojson = json.load(f)
 
     employment_by_zone: Dict[str, float] = {}
-    with open(employment_path, "r", encoding="utf-8", newline="") as f:
+    # utf-8-sig: TfNSW's CSV export starts with a UTF-8 BOM, which a plain
+    # "utf-8" decode leaves stuck to the first column name (only worked
+    # before by luck, since the BOM sat in front of a substring match).
+    with open(employment_path, "r", encoding="utf-8-sig", newline="") as f:
         reader = csv.DictReader(f)
         fieldnames = reader.fieldnames or []
         zone_col = _find_column(fieldnames, ZONE_ID_CANDIDATES, "zone id")
-        employment_col = _find_column(fieldnames, EMPLOYMENT_CANDIDATES, "employment")
-        try:
-            year_col = _find_column(fieldnames, YEAR_CANDIDATES, "year")
-        except ValueError:
-            year_col = None
-            if year is not None:
-                logger.warning("No year column found in employment CSV; using all rows")
-
         rows = list(reader)
+        year_columns = _find_year_columns(fieldnames)
 
-        # TZP24 has one row per zone per PROJECTION YEAR (annually out to
-        # 2031, then every 5 years) - and, within a year, possibly several
-        # rows per zone broken down by industry (which should be summed).
-        # Without picking a single year first, summing every row for a zone
-        # would add its employment across ~20 different years, wildly
-        # inflating the total. If no year was requested, auto-pick whichever
-        # year present in the file is closest to "now" instead.
-        selected_year = year
-        if year_col and selected_year is None:
-            years_present = {row.get(year_col) for row in rows if row.get(year_col)}
-            reference_year = reference_year if reference_year is not None else datetime.date.today().year
+        if year_columns:
+            # Wide format (TZP24's actual export): one row per zone, one
+            # column per projection year - EMP_2021 .. EMP_2066.
+            requested_year = int(year) if year is not None else None
+            selected_year = requested_year or _pick_nearest_year(set(year_columns), reference_year)
+            if selected_year not in year_columns:
+                raise ValueError(
+                    f"Employment year {selected_year} not in this file. "
+                    f"Available years: {sorted(year_columns)}"
+                )
+            if requested_year is None:
+                logger.info(f"No year specified for demand data; using {selected_year} (closest to today)")
+            employment_col = year_columns[selected_year]
+
+            for row in rows:
+                try:
+                    value = float(row[employment_col])
+                except (TypeError, ValueError):
+                    continue
+                zone_id = row[zone_col]
+                employment_by_zone[zone_id] = employment_by_zone.get(zone_id, 0.0) + value
+        else:
+            # Long format fallback: one row per zone per YEAR (and possibly
+            # per industry within a year, which should be summed) with a
+            # single employment column. Without picking one year first,
+            # summing every row for a zone would add employment across every
+            # projected year in the file, wildly inflating the total.
+            employment_col = _find_column(fieldnames, EMPLOYMENT_CANDIDATES, "employment")
             try:
-                selected_year = min(years_present, key=lambda y: abs(int(y) - reference_year))
+                year_col = _find_column(fieldnames, YEAR_CANDIDATES, "year")
             except ValueError:
-                selected_year = None  # year column values weren't numeric; fall back to using all rows
-            if selected_year is not None:
-                logger.info(f"No year specified for demand data; using {selected_year} (closest to {reference_year})")
+                year_col = None
+                if year is not None:
+                    logger.warning("No year column found in employment CSV; using all rows")
 
-        for row in rows:
-            if year_col and selected_year is not None and row.get(year_col) != str(selected_year):
-                continue
-            try:
-                value = float(row[employment_col])
-            except (TypeError, ValueError):
-                continue
-            zone_id = row[zone_col]
-            employment_by_zone[zone_id] = employment_by_zone.get(zone_id, 0.0) + value
+            selected_year = year
+            if year_col and selected_year is None:
+                years_present = {row.get(year_col) for row in rows if row.get(year_col)}
+                try:
+                    selected_year = _pick_nearest_year(
+                        {int(y) for y in years_present}, reference_year
+                    )
+                except ValueError:
+                    selected_year = None  # year values weren't numeric; fall back to using all rows
+                if selected_year is not None:
+                    logger.info(f"No year specified for demand data; using {selected_year} (closest to today)")
+
+            for row in rows:
+                if year_col and selected_year is not None and row.get(year_col) != str(selected_year):
+                    continue
+                try:
+                    value = float(row[employment_col])
+                except (TypeError, ValueError):
+                    continue
+                zone_id = row[zone_col]
+                employment_by_zone[zone_id] = employment_by_zone.get(zone_id, 0.0) + value
 
     zones: List[DemandZone] = []
     for feature in geojson.get("features", []):
