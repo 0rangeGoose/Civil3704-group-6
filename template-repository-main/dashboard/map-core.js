@@ -5,7 +5,11 @@
 // id="map"> and poll /snapshot on their own schedule/UI; this module owns
 // everything about drawing onto the map itself.
 
-export const map = L.map("map", { zoomControl: false }).setView([-33.865, 151.204], 12);
+// preferCanvas: the demand grid alone is ~3,400 rectangles - canvas draws
+// shapes as pixels on one element instead of one DOM node per shape, which
+// matters a lot at that count (SVG, Leaflet's default, was visibly
+// stuttering/freezing the tab when that layer got switched on).
+export const map = L.map("map", { zoomControl: false, preferCanvas: true }).setView([-33.865, 151.204], 12);
 L.control.zoom({ position: "bottomright" }).addTo(map);
 L.tileLayer("https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png", {
   maxZoom: 19,
@@ -64,6 +68,12 @@ export async function loadDemandGrid() {
       const value = cell.demand_score;
       const hasValue = typeof value === "number";
       const color = hasValue ? congestionColor(value) : "#9aa39d";
+      // No permanent tooltip here (unlike the sparse congestion/priority
+      // cells): at ~3,400 cells, a permanent label on every single one is
+      // both unreadable (solid text) and the actual cause of a real
+      // freeze - Leaflet has to create and continuously reposition one DOM
+      // element per label the instant this layer is shown. Colour alone
+      // carries the value; click a block for the exact number.
       L.rectangle([[b.min_lat, b.min_lon], [b.max_lat, b.max_lon]], {
         color,
         weight: 1,
@@ -71,11 +81,6 @@ export async function loadDemandGrid() {
         fillColor: color,
         fillOpacity: hasValue ? 0.15 + Math.min(0.4, value * 0.4) : 0.04
       })
-        .bindTooltip(hasValue ? `${Math.round(value * 100)}%` : "no data", {
-          permanent: true,
-          direction: "center",
-          className: "cell-label"
-        })
         .bindPopup(
           `<strong>Block ${cell.cell_id}</strong><br>` +
           `Demand: ${hasValue ? `${Math.round(value * 100)}%` : "no data"}<br>` +
