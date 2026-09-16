@@ -16,16 +16,21 @@ L.tileLayer("https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png", {
   attribution: "&copy; OpenStreetMap contributors"
 }).addTo(map);
 
-// Congestion/Priority: rebuilt every ~5s poll from wherever buses currently
-// are (a few hundred cells at most) - cheap to redraw constantly.
-const congestionLayer = L.layerGroup().addTo(map);
-// Demand: the comprehensive, bus-independent grid (thousands of cells,
-// covering genuine coverage gaps with no service at all) - built ONCE from
-// /demand_grid on load and never redrawn, since demand data doesn't change
-// during a run. Kept in a separate layer group so switching to "Demand"
-// swaps which layer is attached to the map, rather than trying to draw two
-// different grids of cells over each other.
+// Three independent layers, any combination can be on at once:
+//   congestion - live fill+label on wherever a bus currently is, rebuilt
+//                every ~5s poll (a few hundred cells at most)
+//   demand     - the comprehensive, bus-independent wash (thousands of
+//                cells, covering genuine coverage gaps too) - built ONCE
+//                from /demand_grid and never redrawn, since demand data
+//                doesn't change during a run
+//   priority   - outline-only markers (no fill of their own) stamped over
+//                whichever *congestion* cells currently qualify; rebuilt
+//                alongside congestion since priority requires a live bus
+// Demand is added first/stays visually underneath so the live congestion
+// cells and priority outlines read as being "on top of" the wash.
 const demandLayer = L.layerGroup();
+const congestionLayer = L.layerGroup().addTo(map); // on by default
+const priorityLayer = L.layerGroup(); // off by default, matches layerVisible below
 let demandGridLoaded = false;
 
 const markers = new Map();
@@ -33,19 +38,27 @@ let modelFitted = false;
 let modelBounds = null;
 let lastCongestion = { cells: [], hotspot_count: 0, priority_count: 0, cell_metres: 150 };
 
-// Layer toggle: which value drives block colour/label. Congestion/Priority
-// use congestionLayer (redrawn every poll from live bus data); Demand uses
-// the separate, static demandLayer. All three share the same colour ramp
-// so switching between them reads consistently.
-export const LAYER_MODES = {
-  congestion: { label: "Congestion", valueOf: (cell) => cell.score },
-  demand: { label: "Demand", valueOf: (cell) => cell.demand_score },
-  priority: { label: "Priority", valueOf: (cell) => cell.priority_score }
-};
-let activeLayer = "congestion";
+const LAYER_GROUPS = { congestion: congestionLayer, demand: demandLayer, priority: priorityLayer };
+const layerVisible = { congestion: true, demand: false, priority: false };
 
-export function getActiveLayer() {
-  return activeLayer;
+export function isLayerVisible(name) {
+  return !!layerVisible[name];
+}
+
+// Flip a layer on/off; returns the new state. Demand fading in/out just
+// shows/hides the pre-built static layer; congestion/priority are already
+// kept current every poll regardless of visibility, so toggling them is
+// just an add/removeLayer.
+export function toggleLayer(name) {
+  const group = LAYER_GROUPS[name];
+  if (!group) return false;
+  layerVisible[name] = !layerVisible[name];
+  if (layerVisible[name]) {
+    if (!map.hasLayer(group)) map.addLayer(group);
+  } else {
+    map.removeLayer(group);
+  }
+  return layerVisible[name];
 }
 
 export function hasDemandData() {
@@ -90,27 +103,15 @@ export async function loadDemandGrid() {
         .addTo(demandLayer);
     });
     demandGridLoaded = cells.length > 0;
+    // In case the Demand toggle was already flipped on before this finished
+    // loading (unlikely given how fast the fetch is, but cheap to guard).
+    if (demandGridLoaded && layerVisible.demand && !map.hasLayer(demandLayer)) {
+      map.addLayer(demandLayer);
+    }
     return demandGridLoaded;
   } catch (error) {
     console.warn("Could not load /demand_grid:", error.message);
     return false;
-  }
-}
-
-export function setActiveLayer(name) {
-  if (!LAYER_MODES[name]) return;
-  activeLayer = name;
-  // Only present on the full dashboard - harmless no-op on the map-only page.
-  const label = document.getElementById("block-legend-label");
-  if (label) label.textContent = `${LAYER_MODES[name].label} block:`;
-
-  if (activeLayer === "demand") {
-    map.removeLayer(congestionLayer);
-    if (!map.hasLayer(demandLayer)) map.addLayer(demandLayer);
-  } else {
-    map.removeLayer(demandLayer);
-    if (!map.hasLayer(congestionLayer)) map.addLayer(congestionLayer);
-    updateCongestion(lastCongestion); // repaint for the congestion/priority colouring
   }
 }
 
@@ -191,29 +192,22 @@ export function formatTime(seconds) {
 export function updateCongestion(congestion) {
   lastCongestion = congestion;
   congestionLayer.clearLayers();
+  priorityLayer.clearLayers();
   const cells = (congestion && congestion.cells) || [];
-  const mode = LAYER_MODES[activeLayer];
 
   cells.forEach((cell) => {
     const b = cell.bounds;
     if (!b) return;
-    const value = mode.valueOf(cell);
+    const value = cell.score;
     const hasValue = typeof value === "number";
-    // A cell with no value for the active layer (e.g. Demand/Priority
-    // before data/demand/ has been populated) is drawn as a neutral,
-    // faint, dotted outline - clearly "nothing to show", not a fake 0%.
     const color = hasValue ? congestionColor(value) : "#9aa39d";
 
-    // Priority (high congestion AND high demand) gets its own solid purple
-    // outline in every layer, on top of the usual fill/hotspot styling -
-    // it's a distinct question ("does this matter for capacity planning?"),
-    // not just a more-severe reading on whichever layer is showing.
     const rect = L.rectangle(
       [[b.min_lat, b.min_lon], [b.max_lat, b.max_lon]],
       {
-        color: cell.priority ? "#5b3fd6" : color,
-        weight: cell.priority ? 3 : (hasValue && cell.hotspot ? 2.5 : 1),
-        dashArray: hasValue ? (cell.priority || cell.hotspot ? null : "3 4") : "1 3",
+        color,
+        weight: hasValue && cell.hotspot ? 2.5 : 1,
+        dashArray: hasValue && cell.hotspot ? null : "3 4",
         fillColor: color,
         fillOpacity: hasValue ? 0.15 + Math.min(0.4, value * 0.4) : 0.04
       }
@@ -235,6 +229,18 @@ export function updateCongestion(congestion) {
       `~${congestion.cell_metres || 300} m square`
     );
     rect.addTo(congestionLayer);
+
+    // Priority (high congestion AND high demand) is a separate, independently
+    // toggleable outline-only layer - not baked into the congestion fill -
+    // so it can be shown/hidden regardless of whether Congestion itself is on.
+    if (cell.priority) {
+      L.rectangle([[b.min_lat, b.min_lon], [b.max_lat, b.max_lon]], {
+        color: "#5b3fd6",
+        weight: 3,
+        fill: false,
+        interactive: false
+      }).addTo(priorityLayer);
+    }
   });
 }
 

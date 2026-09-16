@@ -1,25 +1,30 @@
 // Bare map-only view for the projector - no header/metrics/table, just the
 // map. Layer switching is keyboard-only (no visible buttons to keep the
-// projected output clean): 1 = Congestion, 2 = Demand, 3 = Priority.
-import { LAYER_MODES, getActiveLayer, setActiveLayer, renderSnapshot, fetchSnapshot, loadDemandGrid, hasDemandData } from "./map-core.js";
+// projected output clean): 1/2/3 each independently TOGGLE Congestion/
+// Demand/Priority on or off - any combination can be showing at once.
+import { isLayerVisible, toggleLayer, renderSnapshot, fetchSnapshot, loadDemandGrid, hasDemandData } from "./map-core.js";
 
-const KEY_TO_LAYER = { "1": "congestion", "2": "demand", "3": "priority" };
+const LAYERS = [
+  { key: "1", name: "congestion", label: "Congestion" },
+  { key: "2", name: "demand", label: "Demand" },
+  { key: "3", name: "priority", label: "Priority" }
+];
+const KEY_TO_LAYER = Object.fromEntries(LAYERS.map((l) => [l.key, l.name]));
 
 function updateHint(note) {
   const hint = document.getElementById("layer-hint");
-  const mode = LAYER_MODES[getActiveLayer()];
-  const unavailable = mode !== LAYER_MODES.congestion && !hasDemandData() ? " (no demand data loaded)" : "";
-  hint.innerHTML =
-    `${mode.label}${unavailable}` +
-    `<span class="keys">[1] Congestion&nbsp;&nbsp;[2] Demand&nbsp;&nbsp;[3] Priority</span>` +
-    (note ? `<span class="stale">${note}</span>` : "");
+  const states = LAYERS.map(
+    (l) => `[${isLayerVisible(l.name) ? "■" : "□"}${l.key}] ${l.label}`
+  ).join("&nbsp;&nbsp;");
+  const unavailable = hasDemandData() ? "" : " (no demand data loaded)";
+  hint.innerHTML = `${states}<span class="keys">${unavailable}</span>` + (note ? `<span class="stale">${note}</span>` : "");
 }
 
 window.addEventListener("keydown", (event) => {
   const layer = KEY_TO_LAYER[event.key];
   if (!layer) return;
   if (layer !== "congestion" && !hasDemandData()) return; // nothing to show, ignore the key
-  setActiveLayer(layer);
+  toggleLayer(layer);
   updateHint();
 });
 

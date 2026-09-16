@@ -1,18 +1,19 @@
-import { formatTime, renderSnapshot, setActiveLayer, fetchSnapshot, loadDemandGrid, hasDemandData } from "./map-core.js";
+import { formatTime, renderSnapshot, toggleLayer, isLayerVisible, fetchSnapshot, loadDemandGrid, hasDemandData } from "./map-core.js";
+
+// Each button is an independent on/off switch now (not a single active
+// mode) - reflect their starting state, then just flip on click.
+document.querySelectorAll(".layer-btn").forEach((btn) => {
+  btn.classList.toggle("active", isLayerVisible(btn.dataset.layer));
+  btn.addEventListener("click", () => {
+    if (btn.disabled) return;
+    btn.classList.toggle("active", toggleLayer(btn.dataset.layer));
+  });
+});
 
 loadDemandGrid().then((loaded) => {
   document.querySelectorAll('.layer-btn[data-layer="demand"], .layer-btn[data-layer="priority"]').forEach((btn) => {
     btn.disabled = !loaded;
     btn.title = loaded ? "" : "No demand data loaded - see data/demand/ in the README";
-  });
-});
-
-document.querySelectorAll(".layer-btn").forEach((btn) => {
-  btn.addEventListener("click", () => {
-    if (btn.disabled) return;
-    document.querySelectorAll(".layer-btn").forEach((b) => b.classList.remove("active"));
-    btn.classList.add("active");
-    setActiveLayer(btn.dataset.layer); // redraws immediately, doesn't wait for the next poll
   });
 });
 
