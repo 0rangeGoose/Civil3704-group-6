@@ -12,16 +12,27 @@ L.tileLayer("https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png", {
   attribution: "&copy; OpenStreetMap contributors"
 }).addTo(map);
 
+// Congestion/Priority: rebuilt every ~5s poll from wherever buses currently
+// are (a few hundred cells at most) - cheap to redraw constantly.
 const congestionLayer = L.layerGroup().addTo(map);
+// Demand: the comprehensive, bus-independent grid (thousands of cells,
+// covering genuine coverage gaps with no service at all) - built ONCE from
+// /demand_grid on load and never redrawn, since demand data doesn't change
+// during a run. Kept in a separate layer group so switching to "Demand"
+// swaps which layer is attached to the map, rather than trying to draw two
+// different grids of cells over each other.
+const demandLayer = L.layerGroup();
+let demandGridLoaded = false;
+
 const markers = new Map();
 let modelFitted = false;
 let modelBounds = null;
 let lastCongestion = { cells: [], hotspot_count: 0, priority_count: 0, cell_metres: 150 };
 
-// Layer toggle: which value drives block colour/label. All three modes
-// share the same colour ramp and popup (which always shows every value) -
-// only what's used to paint the rectangle changes, so switching layers
-// never hides information, just changes what's foregrounded.
+// Layer toggle: which value drives block colour/label. Congestion/Priority
+// use congestionLayer (redrawn every poll from live bus data); Demand uses
+// the separate, static demandLayer. All three share the same colour ramp
+// so switching between them reads consistently.
 export const LAYER_MODES = {
   congestion: { label: "Congestion", valueOf: (cell) => cell.score },
   demand: { label: "Demand", valueOf: (cell) => cell.demand_score },
@@ -33,13 +44,69 @@ export function getActiveLayer() {
   return activeLayer;
 }
 
+export function hasDemandData() {
+  return demandGridLoaded;
+}
+
+// Fetch and draw the comprehensive demand grid once. Safe to call more than
+// once (e.g. from both app.js and map.js, or on a retry) - only does the
+// work the first time it actually succeeds.
+export async function loadDemandGrid() {
+  if (demandGridLoaded) return true;
+  try {
+    const response = await fetch("/demand_grid", { cache: "no-store" });
+    if (!response.ok) throw new Error(`HTTP ${response.status}`);
+    const grid = await response.json();
+    const cells = grid.cells || [];
+    cells.forEach((cell) => {
+      const b = cell.bounds;
+      if (!b) return;
+      const value = cell.demand_score;
+      const hasValue = typeof value === "number";
+      const color = hasValue ? congestionColor(value) : "#9aa39d";
+      L.rectangle([[b.min_lat, b.min_lon], [b.max_lat, b.max_lon]], {
+        color,
+        weight: 1,
+        dashArray: "3 4",
+        fillColor: color,
+        fillOpacity: hasValue ? 0.15 + Math.min(0.4, value * 0.4) : 0.04
+      })
+        .bindTooltip(hasValue ? `${Math.round(value * 100)}%` : "no data", {
+          permanent: true,
+          direction: "center",
+          className: "cell-label"
+        })
+        .bindPopup(
+          `<strong>Block ${cell.cell_id}</strong><br>` +
+          `Demand: ${hasValue ? `${Math.round(value * 100)}%` : "no data"}<br>` +
+          `~${grid.cell_metres || 150} m square<br>` +
+          `<span class="muted">Independent of current bus positions - includes coverage gaps.</span>`
+        )
+        .addTo(demandLayer);
+    });
+    demandGridLoaded = cells.length > 0;
+    return demandGridLoaded;
+  } catch (error) {
+    console.warn("Could not load /demand_grid:", error.message);
+    return false;
+  }
+}
+
 export function setActiveLayer(name) {
   if (!LAYER_MODES[name]) return;
   activeLayer = name;
   // Only present on the full dashboard - harmless no-op on the map-only page.
   const label = document.getElementById("block-legend-label");
   if (label) label.textContent = `${LAYER_MODES[name].label} block:`;
-  updateCongestion(lastCongestion);
+
+  if (activeLayer === "demand") {
+    map.removeLayer(congestionLayer);
+    if (!map.hasLayer(demandLayer)) map.addLayer(demandLayer);
+  } else {
+    map.removeLayer(demandLayer);
+    if (!map.hasLayer(congestionLayer)) map.addLayer(congestionLayer);
+    updateCongestion(lastCongestion); // repaint for the congestion/priority colouring
+  }
 }
 
 // The zoom level that makes `modelBounds` exactly fill the map panel at its

@@ -13,7 +13,7 @@ from collections import defaultdict, deque
 from dataclasses import dataclass
 from typing import Dict, List, Optional, Tuple
 
-from . import config
+from . import config, gridmath
 from .ingestion.demand import DemandZones
 from .ingestion.static_gtfs import StaticGTFS
 from .normalise import VehicleRecord
@@ -200,30 +200,10 @@ def score_vehicles(records: List[VehicleRecord], static: StaticGTFS) -> List[Veh
     return records
 
 
-# Reference latitude for the grid's longitude spacing, so every cell is the
-# same real-world size and a (row, col) key maps back to a fixed rectangle.
-_GRID_REF_LAT = (config.CBD_BBOX["min_lat"] + config.CBD_BBOX["max_lat"]) / 2
-
-
-def _grid_steps(cell_metres: float) -> Tuple[float, float]:
-    lat_step = cell_metres / 111_320.0
-    lon_step = cell_metres / (111_320.0 * math.cos(math.radians(_GRID_REF_LAT)))
-    return lat_step, lon_step
-
-
-def _cell_key(lat: float, lon: float, cell_metres: float) -> Tuple[int, int]:
-    lat_step, lon_step = _grid_steps(cell_metres)
-    return (int(math.floor(lat / lat_step)), int(math.floor(lon / lon_step)))
-
-
-def _cell_bounds(row: int, col: int, cell_metres: float) -> dict:
-    lat_step, lon_step = _grid_steps(cell_metres)
-    return {
-        "min_lat": round(row * lat_step, 6),
-        "max_lat": round((row + 1) * lat_step, 6),
-        "min_lon": round(col * lon_step, 6),
-        "max_lon": round((col + 1) * lon_step, 6),
-    }
+# Grid cell math (steps/key/bounds) lives in pipeline.gridmath, shared with
+# ingestion.demand's comprehensive demand grid so the two align on the map.
+_cell_key = gridmath.cell_key
+_cell_bounds = gridmath.cell_bounds
 
 
 def congestion_grid(

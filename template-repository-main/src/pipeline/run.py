@@ -74,6 +74,13 @@ def run_with_server(api_key: str) -> None:
     aggregator = RollingAggregator()
     store = SnapshotStore()
 
+    if demand is not None:
+        # Comprehensive, bus-independent - computed once here, not per poll
+        # cycle like congestion (demand data doesn't change during a run).
+        demand_cells = demand.build_grid(config.CONGESTION_GRID_CELL_METRES)
+        store.set_demand_grid(demand_cells, config.CONGESTION_GRID_CELL_METRES)
+        logger.info(f"Demand grid built: {len(demand_cells)} cells (independent of bus positions)")
+
     def on_update(raw):
         records = score_vehicles(normalise(raw, static), static)
         aggregator.update(records)

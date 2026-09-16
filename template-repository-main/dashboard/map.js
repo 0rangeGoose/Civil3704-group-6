@@ -1,15 +1,14 @@
 // Bare map-only view for the projector - no header/metrics/table, just the
 // map. Layer switching is keyboard-only (no visible buttons to keep the
 // projected output clean): 1 = Congestion, 2 = Demand, 3 = Priority.
-import { LAYER_MODES, getActiveLayer, setActiveLayer, renderSnapshot, fetchSnapshot } from "./map-core.js";
+import { LAYER_MODES, getActiveLayer, setActiveLayer, renderSnapshot, fetchSnapshot, loadDemandGrid, hasDemandData } from "./map-core.js";
 
 const KEY_TO_LAYER = { "1": "congestion", "2": "demand", "3": "priority" };
-let hasDemandData = false;
 
 function updateHint(note) {
   const hint = document.getElementById("layer-hint");
   const mode = LAYER_MODES[getActiveLayer()];
-  const unavailable = mode !== LAYER_MODES.congestion && !hasDemandData ? " (no demand data loaded)" : "";
+  const unavailable = mode !== LAYER_MODES.congestion && !hasDemandData() ? " (no demand data loaded)" : "";
   hint.innerHTML =
     `${mode.label}${unavailable}` +
     `<span class="keys">[1] Congestion&nbsp;&nbsp;[2] Demand&nbsp;&nbsp;[3] Priority</span>` +
@@ -19,7 +18,7 @@ function updateHint(note) {
 window.addEventListener("keydown", (event) => {
   const layer = KEY_TO_LAYER[event.key];
   if (!layer) return;
-  if (layer !== "congestion" && !hasDemandData) return; // nothing to show, ignore the key
+  if (layer !== "congestion" && !hasDemandData()) return; // nothing to show, ignore the key
   setActiveLayer(layer);
   updateHint();
 });
@@ -27,7 +26,6 @@ window.addEventListener("keydown", (event) => {
 async function refresh() {
   try {
     const snapshot = await fetchSnapshot();
-    hasDemandData = (snapshot.congestion?.cells || []).some((cell) => cell.demand_score != null);
     renderSnapshot(snapshot);
     updateHint();
   } catch (error) {
@@ -36,5 +34,6 @@ async function refresh() {
 }
 
 updateHint();
+loadDemandGrid().then(() => updateHint());
 refresh();
 setInterval(refresh, 5000);

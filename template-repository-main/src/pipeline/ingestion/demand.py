@@ -37,12 +37,13 @@ import csv
 import datetime
 import json
 import logging
+import math
 import re
 from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Dict, List, Optional, Sequence, Tuple
 
-from .. import config
+from .. import config, gridmath
 
 logger = logging.getLogger(__name__)
 
@@ -96,6 +97,58 @@ class DemandZones:
             if _point_in_rings(lat, lon, zone.rings):
                 return round(zone.employment / self.max_employment, 3)
         return None
+
+    def build_grid(self, cell_metres: float) -> List[dict]:
+        """Rasterize every loaded zone onto the fixed lat/lon grid shared
+        with analytics.congestion_grid (via pipeline.gridmath) - independent
+        of any vehicle/bus data, so demand can be shown even where no bus is
+        currently running (a genuine service-coverage gap, not a blank spot).
+
+        This is a one-time computation, not something to redo every poll
+        cycle like congestion: demand data doesn't change during a run, and
+        rasterizing every zone is meaningfully more work than bucketing a
+        few hundred live bus positions.
+
+        Returns a list of {cell_id, bounds, center, demand_score} dicts.
+        """
+        if not self.zones or self.max_employment <= 0:
+            return []
+
+        lat_step, lon_step = gridmath.grid_steps(cell_metres)
+        seen: Dict[Tuple[int, int], float] = {}
+
+        for zone in self.zones:
+            min_lat, max_lat, min_lon, max_lon = zone.bbox
+            row_start = int(math.floor(min_lat / lat_step))
+            row_end = int(math.floor(max_lat / lat_step))
+            col_start = int(math.floor(min_lon / lon_step))
+            col_end = int(math.floor(max_lon / lon_step))
+
+            for row in range(row_start, row_end + 1):
+                for col in range(col_start, col_end + 1):
+                    if (row, col) in seen:
+                        continue  # already claimed by an earlier (denser) zone
+                    bounds = gridmath.cell_bounds(row, col, cell_metres)
+                    center_lat = (bounds["min_lat"] + bounds["max_lat"]) / 2
+                    center_lon = (bounds["min_lon"] + bounds["max_lon"]) / 2
+                    if _point_in_rings(center_lat, center_lon, zone.rings):
+                        seen[(row, col)] = round(zone.employment / self.max_employment, 3)
+
+        cells = []
+        for (row, col), score in seen.items():
+            bounds = gridmath.cell_bounds(row, col, cell_metres)
+            cells.append(
+                {
+                    "cell_id": f"r{row}c{col}",
+                    "bounds": bounds,
+                    "center": {
+                        "lat": round((bounds["min_lat"] + bounds["max_lat"]) / 2, 6),
+                        "lon": round((bounds["min_lon"] + bounds["max_lon"]) / 2, 6),
+                    },
+                    "demand_score": score,
+                }
+            )
+        return cells
 
 
 def _find_column(fieldnames: Sequence[str], candidates: List[str], label: str) -> str:

@@ -36,7 +36,19 @@ class SnapshotStore:
         self._vehicles: List[dict] = []
         self._route_adherence: Dict[str, dict] = {}
         self._congestion: dict = {"cells": [], "hotspot_count": 0}
+        self._demand_grid: dict = {"cells": [], "cell_metres": config.CONGESTION_GRID_CELL_METRES}
         self._updated_at: float = 0.0
+
+    def set_demand_grid(self, cells: List[dict], cell_metres: float) -> None:
+        """The comprehensive, bus-independent demand layer (see
+        ingestion.demand.DemandZones.build_grid) - set once at startup, not
+        part of the repeating snapshot since it never changes during a run."""
+        with self._lock:
+            self._demand_grid = {"cells": cells, "cell_metres": cell_metres}
+
+    def demand_grid(self) -> dict:
+        with self._lock:
+            return self._demand_grid
 
     def update(
         self,
@@ -82,6 +94,13 @@ def build_app(store: SnapshotStore):
     def get_snapshot():
         """Current state of every tracked vehicle + congestion grid. Polled by the dashboard/renderer."""
         return store.snapshot()
+
+    @app.get("/demand_grid")
+    def get_demand_grid():
+        """The full demand layer (job density per block), independent of any
+        bus position - fetched once by the frontend on load, not part of the
+        repeating /snapshot poll, since it's static for the life of a run."""
+        return store.demand_grid()
 
     @app.get("/healthz")
     def healthz():
