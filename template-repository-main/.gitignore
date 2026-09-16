@@ -77,6 +77,13 @@ data/cache/*
 *.csv
 *.geojson
 
+# Raw TfNSW TZP24/TZ21 downloads kept locally for reference - the two files
+# the pipeline actually reads are already copied into data/demand/ (which
+# the *.csv/*.geojson rules above cover). This folder's original download
+# names don't match those patterns (e.g. "..._geojson.json" ends in .json,
+# not .geojson) and include a 108MB file over GitHub's 100MB hard limit.
+New folder/
+
 # Keep directory structure but ignore contents
 !data/gtfs/.gitkeep
 !data/cache/.gitkeep
