@@ -18,7 +18,7 @@ import time
 from typing import Optional
 
 from . import config
-from .analytics import RollingAggregator, congestion_grid, score_vehicles
+from .analytics import RollingAggregator, congestion_grid, route_line_scores, score_vehicles
 from .ingestion import demand as demand_ingestion
 from .ingestion import realtime_gtfs, static_gtfs
 from .normalise import normalise
@@ -81,15 +81,38 @@ def run_with_server(api_key: str) -> None:
         store.set_demand_grid(demand_cells, config.CONGESTION_GRID_CELL_METRES)
         logger.info(f"Demand grid built: {len(demand_cells)} cells (independent of bus positions)")
 
+    seen_shape_ids = set()
+
     def on_update(raw):
         records = score_vehicles(normalise(raw, static), static)
         aggregator.update(records)
         grid = congestion_grid(records, demand=demand)
-        store.update(records, aggregator.snapshot(), grid)
+        route_lines = route_line_scores(records)
+
+        # Geometry only needs sending once per shape - accumulate any newly
+        # -seen ones into the store's growing cache (served at /route_shapes,
+        # separate from this repeating snapshot).
+        new_shapes = {}
+        for shape_id, info in route_lines.items():
+            if shape_id in seen_shape_ids:
+                continue
+            seen_shape_ids.add(shape_id)
+            points = static.shapes.get(shape_id)
+            if points:
+                new_shapes[shape_id] = {
+                    "points": [[lat, lon] for lat, lon in points],
+                    "route_id": info["route_id"],
+                    "route_short_name": info["route_short_name"],
+                }
+        if new_shapes:
+            store.add_route_shapes(new_shapes)
+
+        store.update(records, aggregator.snapshot(), grid, route_lines)
         logger.info(
             f"Snapshot updated: {len(records)} vehicles in CBD, "
             f"{grid['hotspot_count']} congestion hotspot(s), "
-            f"{grid['priority_count']} priority zone(s)"
+            f"{grid['priority_count']} priority zone(s), "
+            f"{len(route_lines)} route line(s)"
         )
 
     ingest_thread = threading.Thread(

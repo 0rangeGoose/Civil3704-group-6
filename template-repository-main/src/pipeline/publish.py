@@ -37,6 +37,8 @@ class SnapshotStore:
         self._route_adherence: Dict[str, dict] = {}
         self._congestion: dict = {"cells": [], "hotspot_count": 0}
         self._demand_grid: dict = {"cells": [], "cell_metres": config.CONGESTION_GRID_CELL_METRES}
+        self._route_lines: Dict[str, dict] = {}
+        self._route_shapes: Dict[str, dict] = {}
         self._updated_at: float = 0.0
 
     def set_demand_grid(self, cells: List[dict], cell_metres: float) -> None:
@@ -50,16 +52,32 @@ class SnapshotStore:
         with self._lock:
             return self._demand_grid
 
+    def add_route_shapes(self, shapes: Dict[str, dict]) -> None:
+        """Accumulate route-line geometry (shape_id -> {points, route_id,
+        route_short_name}) as new shapes are seen among live buses. A small,
+        ever-growing cache - bounded by however many distinct bus route
+        shapes actually run through the model - served separately from
+        /snapshot (GET /route_shapes) since geometry doesn't change once a
+        shape has been seen, so there's no need to resend it every poll."""
+        with self._lock:
+            self._route_shapes.update(shapes)
+
+    def route_shapes(self) -> dict:
+        with self._lock:
+            return dict(self._route_shapes)
+
     def update(
         self,
         vehicles: List[VehicleRecord],
         aggregates: Dict[str, RouteAggregate],
         congestion: Optional[dict] = None,
+        route_lines: Optional[Dict[str, dict]] = None,
     ) -> None:
         with self._lock:
             self._vehicles = [dataclasses.asdict(v) for v in vehicles]
             self._route_adherence = {k: dataclasses.asdict(v) for k, v in aggregates.items()}
             self._congestion = congestion or {"cells": [], "hotspot_count": 0}
+            self._route_lines = route_lines or {}
             self._updated_at = time.time()
 
     def snapshot(self) -> dict:
@@ -71,6 +89,7 @@ class SnapshotStore:
                 "vehicles": self._vehicles,
                 "route_adherence": self._route_adherence,
                 "congestion": self._congestion,
+                "route_lines": self._route_lines,
             }
 
 
@@ -101,6 +120,15 @@ def build_app(store: SnapshotStore):
         bus position - fetched once by the frontend on load, not part of the
         repeating /snapshot poll, since it's static for the life of a run."""
         return store.demand_grid()
+
+    @app.get("/route_shapes")
+    def get_route_shapes():
+        """Geometry for every bus route shape seen so far, keyed by shape_id.
+        Accumulates over time as new routes are seen (bus service patterns
+        shift through the day) - fetch this periodically, not every poll,
+        to pick up newly-appeared routes; /snapshot's route_lines carries
+        just the small per-shape score, not the geometry, each cycle."""
+        return store.route_shapes()
 
     @app.get("/healthz")
     def healthz():

@@ -16,7 +16,7 @@ L.tileLayer("https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png", {
   attribution: "&copy; OpenStreetMap contributors"
 }).addTo(map);
 
-// Three independent layers, any combination can be on at once:
+// Four independent layers, any combination can be on at once:
 //   congestion - live fill+label on wherever a bus currently is, rebuilt
 //                every ~5s poll (a few hundred cells at most)
 //   demand     - the comprehensive, bus-independent wash (thousands of
@@ -26,20 +26,28 @@ L.tileLayer("https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png", {
 //   priority   - outline-only markers (no fill of their own) stamped over
 //                whichever *congestion* cells currently qualify; rebuilt
 //                alongside congestion since priority requires a live bus
+//   routes     - each active bus route drawn as its real street-shaped
+//                line, coloured by that route's current average
+//                congestion - an alternative to the grid that isn't cut up
+//                by arbitrary square boundaries. Geometry is fetched once
+//                per shape (from /route_shapes, a growing cache) and
+//                reused; only the score is refreshed every poll.
 // Demand is added first/stays visually underneath so the live congestion
 // cells and priority outlines read as being "on top of" the wash.
 const demandLayer = L.layerGroup();
 const congestionLayer = L.layerGroup().addTo(map); // on by default
 const priorityLayer = L.layerGroup(); // off by default, matches layerVisible below
+const routesLayer = L.layerGroup();
 let demandGridLoaded = false;
+const shapeGeometry = new Map(); // shape_id -> [[lat, lon], ...]
 
 const markers = new Map();
 let modelFitted = false;
 let modelBounds = null;
 let lastCongestion = { cells: [], hotspot_count: 0, priority_count: 0, cell_metres: 150 };
 
-const LAYER_GROUPS = { congestion: congestionLayer, demand: demandLayer, priority: priorityLayer };
-const layerVisible = { congestion: true, demand: false, priority: false };
+const LAYER_GROUPS = { congestion: congestionLayer, demand: demandLayer, priority: priorityLayer, routes: routesLayer };
+const layerVisible = { congestion: true, demand: false, priority: false, routes: false };
 
 export function isLayerVisible(name) {
   return !!layerVisible[name];
@@ -113,6 +121,42 @@ export async function loadDemandGrid() {
     console.warn("Could not load /demand_grid:", error.message);
     return false;
   }
+}
+
+// Fetch newly-seen route geometry. Safe/cheap to call repeatedly (e.g. on
+// an interval) - only adds shapes not already cached, since geometry never
+// changes once a shape has been seen. New bus routes can appear over time
+// as service patterns shift through the day, so unlike loadDemandGrid()
+// this one is meant to be re-polled, just far less often than /snapshot.
+export async function loadRouteShapes() {
+  try {
+    const response = await fetch("/route_shapes", { cache: "no-store" });
+    if (!response.ok) throw new Error(`HTTP ${response.status}`);
+    const shapes = await response.json();
+    Object.entries(shapes).forEach(([shapeId, info]) => {
+      if (!shapeGeometry.has(shapeId) && info.points && info.points.length >= 2) {
+        shapeGeometry.set(shapeId, info.points);
+      }
+    });
+  } catch (error) {
+    console.warn("Could not load /route_shapes:", error.message);
+  }
+}
+
+export function updateRouteLines(routeLines) {
+  routesLayer.clearLayers();
+  Object.entries(routeLines || {}).forEach(([shapeId, info]) => {
+    const points = shapeGeometry.get(shapeId);
+    if (!points) return; // geometry not fetched yet - appears once loadRouteShapes catches up
+    const color = congestionColor(info.score);
+    L.polyline(points, { color, weight: 4, opacity: 0.85 })
+      .bindPopup(
+        `<strong>${info.route_short_name || info.route_id || "Route"}</strong><br>` +
+        `Congestion: ${Math.round(info.score * 100)}%<br>` +
+        `${info.vehicle_count} bus${info.vehicle_count === 1 ? "" : "es"} on this line`
+      )
+      .addTo(routesLayer);
+  });
 }
 
 // The zoom level that makes `modelBounds` exactly fill the map panel at its
@@ -267,6 +311,7 @@ export function updateMarkers(vehicles) {
 export function renderSnapshot(snapshot) {
   applyModelBounds(snapshot.model_bounds);
   updateCongestion(snapshot.congestion || lastCongestion);
+  updateRouteLines(snapshot.route_lines);
   updateMarkers(snapshot.vehicles || []);
 }
 

@@ -1,4 +1,4 @@
-import { formatTime, renderSnapshot, toggleLayer, isLayerVisible, fetchSnapshot, loadDemandGrid, hasDemandData } from "./map-core.js";
+import { formatTime, renderSnapshot, toggleLayer, isLayerVisible, fetchSnapshot, loadDemandGrid, hasDemandData, loadRouteShapes } from "./map-core.js";
 
 // Each button is an independent on/off switch now (not a single active
 // mode) - reflect their starting state, then just flip on click.
@@ -16,6 +16,12 @@ loadDemandGrid().then((loaded) => {
     btn.title = loaded ? "" : "No demand data loaded - see data/demand/ in the README";
   });
 });
+
+// Route geometry accumulates as new routes are seen through the day - poll
+// it far less often than the 5s /snapshot cycle, just enough to pick up
+// newly-appeared routes without hammering the endpoint for no reason.
+loadRouteShapes();
+setInterval(loadRouteShapes, 30000);
 
 function setConnection(state, message) {
   const connection = document.getElementById("connection");

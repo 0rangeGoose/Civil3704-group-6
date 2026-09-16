@@ -16,6 +16,7 @@ from pipeline.analytics import (
     classify_adherence,
     congestion_grid,
     route_bunching_scores,
+    route_line_scores,
     score_vehicles,
     snap_to_shape,
     vehicle_congestion_score,
@@ -255,6 +256,49 @@ def test_route_bunching_scores_ignores_lone_bus_on_a_shape(static_gtfs):
     records = normalise(raw, static_gtfs, now=now)
 
     assert route_bunching_scores(records, static_gtfs) == {}
+
+
+def test_route_line_scores_averages_by_shape_not_route(static_gtfs):
+    now = int(time.time())
+    raw = RawFeeds(
+        vehicle_positions={
+            "buses": _vehicle_positions_feed(
+                [
+                    ("bus1", "trip_A", -33.87, 151.21, now),
+                    ("bus2", "trip_A", -33.871, 151.211, now),
+                ]
+            )
+        },
+        # bus1's trip is on time (0), bus2's is 10 min late (600) -> mean 0.5
+        trip_updates={"buses": _trip_updates_feed([("trip_A", 0)])},
+    )
+    records = score_vehicles(normalise(raw, static_gtfs, now=now), static_gtfs)
+    # Set distinct scores directly (rather than relying on real speed/delay
+    # inputs) to prove this is a genuine average, not just pass-through.
+    by_id = {r.vehicle_id: r for r in records}
+    by_id["bus1"].congestion_score = 0.0
+    by_id["bus2"].congestion_score = 1.0
+
+    lines = route_line_scores(records)
+
+    assert set(lines) == {"shape_100"}  # trip_A's shape_id, from the fixture
+    line = lines["shape_100"]
+    assert line["route_short_name"] == "M10"
+    assert line["vehicle_count"] == 2
+    assert line["score"] == pytest.approx(0.5)
+
+
+def test_route_line_scores_excludes_unscored_vehicles(static_gtfs):
+    now = int(time.time())
+    raw = RawFeeds(
+        vehicle_positions={
+            "buses": _vehicle_positions_feed([("bus1", "trip_A", -33.87, 151.21, now)])
+        },
+        trip_updates={},  # no delay, no speed -> normalise leaves congestion_score None
+    )
+    records = normalise(raw, static_gtfs, now=now)
+
+    assert route_line_scores(records) == {}
 
 
 def test_congestion_grid_buckets_and_flags_hotspots(static_gtfs):

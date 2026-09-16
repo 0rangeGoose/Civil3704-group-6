@@ -200,6 +200,35 @@ def score_vehicles(records: List[VehicleRecord], static: StaticGTFS) -> List[Veh
     return records
 
 
+def route_line_scores(records: List[VehicleRecord]) -> Dict[str, dict]:
+    """Average congestion per route SHAPE (not just route_id - inbound and
+    outbound usually have distinct shapes) among currently active buses.
+
+    Lets the map colour each route as a real street-shaped line - "which
+    service needs attention" directly - as an alternative/complement to the
+    grid, whose square boundaries don't line up with actual streets.
+
+    Returns {shape_id: {route_id, route_short_name, score, vehicle_count}}
+    for shapes with at least one bus that has a congestion_score.
+    """
+    by_shape: Dict[str, List[VehicleRecord]] = defaultdict(list)
+    for record in records:
+        if record.shape_id and record.congestion_score is not None:
+            by_shape[record.shape_id].append(record)
+
+    result: Dict[str, dict] = {}
+    for shape_id, shape_records in by_shape.items():
+        scores = [r.congestion_score for r in shape_records]
+        sample = shape_records[0]
+        result[shape_id] = {
+            "route_id": sample.route_id,
+            "route_short_name": sample.route_short_name,
+            "score": round(sum(scores) / len(scores), 3),
+            "vehicle_count": len(shape_records),
+        }
+    return result
+
+
 # Grid cell math (steps/key/bounds) lives in pipeline.gridmath, shared with
 # ingestion.demand's comprehensive demand grid so the two align on the map.
 _cell_key = gridmath.cell_key
