@@ -6,3 +6,9 @@
 # requirements.txt (and anything else *.txt) into LFS pointers too - see
 # commit history around "GTFS files" for the fallout. Keep this scoped.
 template-repository-main/data/gtfs/*.txt filter=lfs diff=lfs merge=lfs -text
+
+# The two real TZP24/TZ21 demand files (see .gitignore) - 104MB combined,
+# needed by the whole team for the Demand/Priority layers. Named explicitly
+# rather than a blanket *.geojson/*.csv rule, same reasoning as above.
+template-repository-main/data/demand/travel_zones_2021.geojson filter=lfs diff=lfs merge=lfs -text
+template-repository-main/data/demand/tzp24_employment.csv filter=lfs diff=lfs merge=lfs -text
