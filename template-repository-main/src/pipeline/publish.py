@@ -147,7 +147,7 @@ def build_app(store: SnapshotStore):
         period_def = config.TIME_PERIODS.get(period)
         if not period_def:
             return {
-                "congestion": {"cells": [], "hotspot_count": 0, "priority_count": 0},
+                "congestion": {"cells": [], "hotspot_count": 0},
                 "route_lines": {},
                 "date": None,
                 "period": period,

@@ -160,7 +160,7 @@ def test_demand_score_looks_up_the_containing_zone(demand_files):
     assert demand.demand_score(-33.5, 151.5) is None
 
 
-def test_congestion_grid_computes_priority_when_demand_supplied():
+def test_congestion_grid_computes_demand_score_when_demand_supplied():
     demand = DemandZones(
         zones=[
             DemandZone(
@@ -193,12 +193,9 @@ def test_congestion_grid_computes_priority_when_demand_supplied():
     assert len(grid["cells"]) == 1
     cell = grid["cells"][0]
     assert cell["demand_score"] == pytest.approx(1.0)
-    assert cell["priority_score"] == pytest.approx(cell["score"] * 1.0)
-    assert cell["priority"] is True
-    assert grid["priority_count"] == 1
 
 
-def test_congestion_grid_has_no_priority_data_without_demand():
+def test_congestion_grid_has_no_demand_score_without_demand():
     static = StaticGTFS(trips={"trip_A": TripInfo(route_id="100", route_short_name="M10", shape_id=None)})
     now = int(time.time())
     raw = RawFeeds(
@@ -211,7 +208,4 @@ def test_congestion_grid_has_no_priority_data_without_demand():
 
     grid = congestion_grid(records)  # no demand supplied
 
-    assert grid["priority_count"] == 0
     assert grid["cells"][0]["demand_score"] is None
-    assert grid["cells"][0]["priority_score"] is None
-    assert grid["cells"][0]["priority"] is False

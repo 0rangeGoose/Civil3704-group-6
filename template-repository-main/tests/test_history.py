@@ -27,7 +27,7 @@ def test_query_period_returns_empty_when_nothing_logged():
     result = history.query_period([7, 8])
 
     assert result == {
-        "congestion": {"cells": [], "hotspot_count": 0, "priority_count": 0, "cell_metres": 150},
+        "congestion": {"cells": [], "hotspot_count": 0, "cell_metres": 150},
         "route_lines": {},
         "date": None,
     }

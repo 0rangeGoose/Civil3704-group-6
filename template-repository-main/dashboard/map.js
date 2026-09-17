@@ -1,9 +1,9 @@
 // Bare map-only view for the projector - no header/metrics/table, just the
 // map. Layer switching is keyboard-only (no visible buttons to keep the
-// projected output clean): 1/2/3/4 each independently TOGGLE Congestion/
-// Demand/Priority/Routes on or off - any combination can be showing at
-// once. Left/Right arrows cycle through time periods (Now / AM Peak /
-// Midday / PM Peak / Evening).
+// projected output clean): 1/2/3 each independently TOGGLE Congestion/
+// Demand/Routes on or off - any combination can be showing at once.
+// Left/Right arrows cycle through time periods (Now / AM Peak / Midday /
+// PM Peak / Evening).
 import {
   map, setZoomBoost, isLayerVisible, toggleLayer, renderSnapshot, fetchSnapshot,
   loadDemandGrid, hasDemandData, loadRouteShapes,
@@ -32,11 +32,10 @@ setZoomBoost(0);
 const LAYERS = [
   { key: "1", name: "congestion", label: "Congestion" },
   { key: "2", name: "demand", label: "Demand" },
-  { key: "3", name: "priority", label: "Priority" },
-  { key: "4", name: "routes", label: "Routes" }
+  { key: "3", name: "routes", label: "Routes" }
 ];
 const KEY_TO_LAYER = Object.fromEntries(LAYERS.map((l) => [l.key, l.name]));
-const NEEDS_DEMAND_DATA = new Set(["demand", "priority"]); // routes doesn't depend on demand data at all
+const NEEDS_DEMAND_DATA = new Set(["demand"]); // routes doesn't depend on demand data at all
 
 function updateHint(note) {
   const hint = document.getElementById("layer-hint");

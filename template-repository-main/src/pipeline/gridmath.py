@@ -1,6 +1,6 @@
 """Shared lat/lon grid math.
 
-Used by both analytics.py (the per-poll congestion/priority cells, built
+Used by both analytics.py (the per-poll congestion cells, built
 from wherever buses currently are) and ingestion/demand.py (the one-time,
 comprehensive demand grid, built independent of buses). Kept in its own
 module rather than analytics.py so demand.py can use it too without a

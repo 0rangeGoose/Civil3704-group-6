@@ -27,16 +27,13 @@ L.tileLayer(`https://{s}.basemaps.cartocdn.com/rastertiles/voyager/{z}/{x}/{y}{r
   attribution: '&copy; <a href="https://www.openstreetmap.org/copyright">OpenStreetMap</a> contributors &copy; <a href="https://carto.com/attributions">CARTO</a>'
 }).addTo(map);
 
-// Four independent layers, any combination can be on at once:
+// Three independent layers, any combination can be on at once:
 //   congestion - live fill+label on wherever a vehicle currently is, rebuilt
 //                every ~5s poll (a few hundred cells at most)
 //   demand     - the comprehensive, vehicle-independent wash (thousands of
 //                cells, covering genuine coverage gaps too) - built ONCE
 //                from /demand_grid and never redrawn, since demand data
 //                doesn't change during a run
-//   priority   - outline-only markers (no fill of their own) stamped over
-//                whichever *congestion* cells currently qualify; rebuilt
-//                alongside congestion since priority requires a live vehicle
 //   routes     - each active route (bus, train, metro) drawn as its real street-shaped
 //                line, coloured by that route's current average
 //                congestion - an alternative to the grid that isn't cut up
@@ -44,10 +41,9 @@ L.tileLayer(`https://{s}.basemaps.cartocdn.com/rastertiles/voyager/{z}/{x}/{y}{r
 //                per shape (from /route_shapes, a growing cache) and
 //                reused; only the score is refreshed every poll.
 // Demand is added first/stays visually underneath so the live congestion
-// cells and priority outlines read as being "on top of" the wash.
+// cells read as being "on top of" the wash.
 const demandLayer = L.layerGroup();
 const congestionLayer = L.layerGroup().addTo(map); // on by default
-const priorityLayer = L.layerGroup(); // off by default, matches layerVisible below
 const routesLayer = L.layerGroup();
 let demandGridLoaded = false;
 const shapeGeometry = new Map(); // shape_id -> [[lat, lon], ...]
@@ -71,19 +67,19 @@ export function setZoomBoost(delta) {
   }
 }
 
-let lastCongestion = { cells: [], hotspot_count: 0, priority_count: 0, cell_metres: 150 };
+let lastCongestion = { cells: [], hotspot_count: 0, cell_metres: 150 };
 
-const LAYER_GROUPS = { congestion: congestionLayer, demand: demandLayer, priority: priorityLayer, routes: routesLayer };
-const layerVisible = { congestion: true, demand: false, priority: false, routes: false };
+const LAYER_GROUPS = { congestion: congestionLayer, demand: demandLayer, routes: routesLayer };
+const layerVisible = { congestion: true, demand: false, routes: false };
 
 export function isLayerVisible(name) {
   return !!layerVisible[name];
 }
 
 // Flip a layer on/off; returns the new state. Demand fading in/out just
-// shows/hides the pre-built static layer; congestion/priority are already
-// kept current every poll regardless of visibility, so toggling them is
-// just an add/removeLayer.
+// shows/hides the pre-built static layer; congestion is already kept
+// current every poll regardless of visibility, so toggling it is just an
+// add/removeLayer.
 export function toggleLayer(name) {
   const group = LAYER_GROUPS[name];
   if (!group) return false;
@@ -116,8 +112,8 @@ export async function loadDemandGrid() {
       const value = cell.demand_score;
       const hasValue = typeof value === "number";
       const color = hasValue ? congestionColor(value) : "#9aa39d";
-      // No permanent tooltip here (unlike the sparse congestion/priority
-      // cells): at ~3,400 cells, a permanent label on every single one is
+      // No permanent tooltip here (unlike the sparse congestion cells):
+      // at ~3,400 cells, a permanent label on every single one is
       // both unreadable (solid text) and the actual cause of a real
       // freeze - Leaflet has to create and continuously reposition one DOM
       // element per label the instant this layer is shown. Colour alone
@@ -262,7 +258,6 @@ export function formatTime(seconds) {
 export function updateCongestion(congestion) {
   lastCongestion = congestion;
   congestionLayer.clearLayers();
-  priorityLayer.clearLayers();
   const cells = (congestion && congestion.cells) || [];
 
   cells.forEach((cell) => {
@@ -289,7 +284,7 @@ export function updateCongestion(congestion) {
     });
     const demandLine = cell.demand_score == null
       ? "Demand: no data loaded"
-      : `Demand: ${(cell.demand_score * 100).toFixed(0)}%${cell.priority ? ' <span class="pill" style="background:#5b3fd6">priority</span>' : ""}`;
+      : `Demand: ${(cell.demand_score * 100).toFixed(0)}%`;
     rect.bindPopup(
       `<strong>Block ${cell.cell_id}</strong>${cell.hotspot ? ' <span class="pill">hotspot</span>' : ""}<br>` +
       `Congestion: ${(cell.score * 100).toFixed(0)}%<br>` +
@@ -299,18 +294,6 @@ export function updateCongestion(congestion) {
       `~${congestion.cell_metres || 300} m square`
     );
     rect.addTo(congestionLayer);
-
-    // Priority (high congestion AND high demand) is a separate, independently
-    // toggleable outline-only layer - not baked into the congestion fill -
-    // so it can be shown/hidden regardless of whether Congestion itself is on.
-    if (cell.priority) {
-      L.rectangle([[b.min_lat, b.min_lon], [b.max_lat, b.max_lon]], {
-        color: "#5b3fd6",
-        weight: 3,
-        fill: false,
-        interactive: false
-      }).addTo(priorityLayer);
-    }
   });
 }
 
@@ -372,7 +355,7 @@ export async function setPeriod(periodKey) {
     const response = await fetch(`/history?period=${encodeURIComponent(periodKey)}`, { cache: "no-store" });
     if (!response.ok) throw new Error(`HTTP ${response.status}`);
     const data = await response.json();
-    updateCongestion(data.congestion || { cells: [], hotspot_count: 0, priority_count: 0 });
+    updateCongestion(data.congestion || { cells: [], hotspot_count: 0 });
     updateRouteLines(data.route_lines || {});
     markers.forEach((marker) => map.removeLayer(marker));
     markers.clear();

@@ -49,8 +49,7 @@ def run_headless(api_key: str, max_cycles: Optional[int] = None) -> None:
 
             logger.info(
                 f"Cycle {cycle}: {len(records)} vehicles in CBD, "
-                f"{grid['hotspot_count']} congestion hotspot(s), "
-                f"{grid['priority_count']} priority zone(s)"
+                f"{grid['hotspot_count']} congestion hotspot(s)"
             )
             for route_id, agg in aggregator.snapshot().items():
                 logger.info(
@@ -113,7 +112,6 @@ def run_with_server(api_key: str) -> None:
         logger.info(
             f"Snapshot updated: {len(records)} vehicles in CBD, "
             f"{grid['hotspot_count']} congestion hotspot(s), "
-            f"{grid['priority_count']} priority zone(s), "
             f"{len(route_lines)} route line(s)"
         )
 

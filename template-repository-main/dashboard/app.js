@@ -1,6 +1,6 @@
 import {
   formatTime, renderSnapshot, toggleLayer, isLayerVisible, fetchSnapshot,
-  loadDemandGrid, hasDemandData, loadRouteShapes, setPeriod, getActivePeriod
+  loadDemandGrid, loadRouteShapes, setPeriod, getActivePeriod
 } from "./map-core.js";
 
 // Each button is an independent on/off switch now (not a single active
@@ -14,7 +14,7 @@ document.querySelectorAll(".layer-btn").forEach((btn) => {
 });
 
 loadDemandGrid().then((loaded) => {
-  document.querySelectorAll('.layer-btn[data-layer="demand"], .layer-btn[data-layer="priority"]').forEach((btn) => {
+  document.querySelectorAll('.layer-btn[data-layer="demand"]').forEach((btn) => {
     btn.disabled = !loaded;
     btn.title = loaded ? "" : "No demand data loaded - see data/demand/ in the README";
   });
@@ -47,7 +47,6 @@ function applyHistoricalMetrics(periodData) {
     : null;
   document.getElementById("vehicle-count").textContent = "—";
   document.getElementById("hotspots").textContent = periodData.congestion.hotspot_count ?? 0;
-  document.getElementById("priority-zones").textContent = "n/a";
   document.getElementById("avg-congestion").textContent = avg == null ? "--" : `${avg}%`;
   document.getElementById("on-time").textContent = "--";
   document.getElementById("last-update").textContent = periodData.date || "--";
@@ -80,7 +79,7 @@ function updateDashboard(snapshot) {
 
   const vehicles = snapshot.vehicles || [];
   const routes = snapshot.route_adherence || {};
-  const congestion = snapshot.congestion || { cells: [], hotspot_count: 0, priority_count: 0 };
+  const congestion = snapshot.congestion || { cells: [], hotspot_count: 0 };
   const samples = Object.values(routes);
   const totalSamples = samples.reduce((sum, route) => sum + route.sample_count, 0);
   const onTimeSamples = samples.reduce((sum, route) => sum + route.on_time_pct * route.sample_count / 100, 0);
@@ -91,7 +90,6 @@ function updateDashboard(snapshot) {
 
   document.getElementById("vehicle-count").textContent = snapshot.vehicle_count ?? vehicles.length;
   document.getElementById("hotspots").textContent = congestion.hotspot_count ?? 0;
-  document.getElementById("priority-zones").textContent = hasDemandData() ? (congestion.priority_count ?? 0) : "no data";
   document.getElementById("avg-congestion").textContent = avgCongestion == null ? "--" : `${avgCongestion}%`;
   document.getElementById("on-time").textContent = totalSamples ? `${Math.round(onTimeSamples / totalSamples * 100)}%` : "--";
   document.getElementById("last-update").textContent = formatTime(snapshot.updated_at);

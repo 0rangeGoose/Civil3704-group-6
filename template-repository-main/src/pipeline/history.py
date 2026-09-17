@@ -119,7 +119,7 @@ def query_period(
     exact same renderer it already uses for live data.
     """
     empty = {
-        "congestion": {"cells": [], "hotspot_count": 0, "priority_count": 0, "cell_metres": cell_metres},
+        "congestion": {"cells": [], "hotspot_count": 0, "cell_metres": cell_metres},
         "route_lines": {},
         "date": None,
     }
@@ -184,8 +184,6 @@ def query_period(
                 "routes": [],
                 "hotspot": is_hotspot,
                 "demand_score": None,
-                "priority_score": None,
-                "priority": False,
             }
         )
     cells.sort(key=lambda c: c["score"], reverse=True)
@@ -204,7 +202,6 @@ def query_period(
         "congestion": {
             "cells": cells,
             "hotspot_count": sum(1 for c in cells if c["hotspot"]),
-            "priority_count": 0,
             "cell_metres": cell_metres,
         },
         "route_lines": route_lines,

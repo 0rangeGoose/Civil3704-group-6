@@ -23,7 +23,6 @@
     <section class="metrics" aria-label="Network summary">
       <article class="metric"><span class="metric-label">Vehicles in CBD</span><strong id="vehicle-count">--</strong></article>
       <article class="metric"><span class="metric-label">Congestion hotspots</span><strong id="hotspots">--</strong></article>
-      <article class="metric"><span class="metric-label">Priority zones</span><strong id="priority-zones">--</strong></article>
       <article class="metric"><span class="metric-label">Avg congestion</span><strong id="avg-congestion">--</strong></article>
       <article class="metric"><span class="metric-label">On time</span><strong id="on-time">--</strong></article>
       <article class="metric"><span class="metric-label">Last update</span><strong class="metric-time" id="last-update">--</strong></article>
@@ -49,7 +48,6 @@
             <div class="layer-toggle" role="group" aria-label="Map layers (each is independent - any combination can be on)">
               <button type="button" class="layer-btn active" data-layer="congestion">Congestion</button>
               <button type="button" class="layer-btn" data-layer="demand">Demand</button>
-              <button type="button" class="layer-btn" data-layer="priority">Priority</button>
               <button type="button" class="layer-btn" data-layer="routes">Routes</button>
             </div>
             <span class="feed-badge" id="feed-badge">Waiting for feed</span>
@@ -65,8 +63,6 @@
           <span><i class="legend-dot on-time"></i>On time</span><span><i class="legend-dot late"></i>Late</span><span><i class="legend-dot very-late"></i>Very late</span><span><i class="legend-dot unknown"></i>Unknown</span>
           <span class="legend-group">Vehicle mode:</span>
           <span><i class="legend-shape bus"></i>Bus</span><span><i class="legend-shape train"></i>Train</span><span><i class="legend-shape metro"></i>Metro</span>
-          <span class="legend-group">Outline:</span>
-          <span><i class="legend-swatch priority"></i>Priority (high congestion + high demand)</span>
           <span class="legend-group">Line:</span>
           <span>Routes (colour = that route's current congestion)</span>
         </div>

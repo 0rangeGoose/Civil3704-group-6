@@ -156,14 +156,6 @@ CONGESTION_GRID_CELL_METRES = 150
 CONGESTION_HOTSPOT_THRESHOLD = 0.6   # cell score at/above this = a hotspot
 CONGESTION_HOTSPOT_MIN_VEHICLES = 2  # ...and at least this many buses in the cell
 
-# priority_score = congestion_score * demand_score (see pipeline/ingestion/
-# demand.py) - the "high demand AND high congestion" intersection that
-# actually justifies capacity investment, not raw congestion alone. Since
-# it's a product of two 0-1 numbers, it's naturally smaller than either
-# input on its own, so this threshold sits lower than the hotspot one -
-# tune once there's real demand data to calibrate against.
-PRIORITY_THRESHOLD = 0.35
-
 # ---------------------------------------------------------------------------
 # Historical trends (see pipeline/history.py)
 #

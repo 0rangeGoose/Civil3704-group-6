@@ -41,14 +41,14 @@ python src/main.py --mode headless --max-cycles 3   # bounded run, useful for a 
 ```
 
 While the server is running, open `http://localhost:8080/dashboard` for the
-full dashboard (vehicle positions, congestion/demand/priority layer toggle,
+full dashboard (vehicle positions, congestion/demand layer toggle,
 route adherence) - both poll `/snapshot` every five seconds and show a clear
 connection error if the pipeline is unavailable.
 
 For the projector: `http://localhost:8080/dashboard/map.html` is the map
 alone, no header/metrics/table. Layer switching there is keyboard-only (no
 visible buttons, so nothing sits on top of the projected image) - press
-`1` for Congestion, `2` for Demand, `3` for Priority.
+`1` for Congestion, `2` for Demand, `3` for Routes.
 
 The map-drawing logic (model bounds, congestion blocks, vehicle markers) is
 shared between both pages via `dashboard/map-core.js`, so a fix there only
@@ -84,7 +84,7 @@ pytest tests/ -v
 - Population/demand data is wired in (`pipeline/ingestion/demand.py`) but
   optional - it needs `data/demand/travel_zones_2021.geojson` and
   `data/demand/tzp24_employment.csv` from the TfNSW Open Data Hub (free
-  login) to activate; without them, Demand/Priority just show "no data".
+  login) to activate; without them, Demand just shows "no data".
 - No history/trend storage yet (current design is in-memory, current-state only).
 
 ## Documentation
