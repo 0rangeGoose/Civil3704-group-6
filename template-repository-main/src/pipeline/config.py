@@ -58,10 +58,13 @@ STATIC_REFRESH_HOURS = 24
 # CONFIRMED (v2, all modes):
 #   alerts              -> https://api.transport.nsw.gov.au/v2/gtfs/alerts/{mode}
 #
-# UNVERIFIED: sydneytrains / metro / lightrail vehicle_positions and
-# trip_updates moved from v1 to v2 in May 2025. The v2 path below follows
-# TfNSW's own versioning convention (same as the confirmed alerts v2 paths)
-# but has not been independently confirmed - check before use.
+# CONFIRMED 2026-09-17: sydneytrains and metro vehicle_positions/trip_updates
+# moved from v1 to v2 in May 2025. Hit both v2 endpoints live with the
+# configured API key - sydneytrains returned 171 vehicle positions / 448 trip
+# updates, metro returned 11 / 27, both parsing as valid GTFS-RT protobuf.
+#
+# UNVERIFIED: lightrail vehicle_positions and trip_updates - same v1->v2 move
+# is assumed but not independently checked yet.
 # ---------------------------------------------------------------------------
 REALTIME_FEEDS = {
     "buses": {
@@ -79,12 +82,12 @@ REALTIME_FEEDS = {
         "trip_updates": "https://api.transport.nsw.gov.au/v1/gtfs/realtime/nswtrains",
         "alerts": "https://api.transport.nsw.gov.au/v2/gtfs/alerts/nswtrains",
     },
-    "sydneytrains": {  # UNVERIFIED v2 path - confirm before use
+    "sydneytrains": {  # CONFIRMED 2026-09-17 - see note above
         "vehicle_positions": "https://api.transport.nsw.gov.au/v2/gtfs/vehiclepos/sydneytrains",
         "trip_updates": "https://api.transport.nsw.gov.au/v2/gtfs/realtime/sydneytrains",
         "alerts": "https://api.transport.nsw.gov.au/v2/gtfs/alerts/sydneytrains",
     },
-    "metro": {  # UNVERIFIED v2 path - confirm before use
+    "metro": {  # CONFIRMED 2026-09-17 - see note above
         "vehicle_positions": "https://api.transport.nsw.gov.au/v2/gtfs/vehiclepos/metro",
         "trip_updates": "https://api.transport.nsw.gov.au/v2/gtfs/realtime/metro",
         "alerts": "https://api.transport.nsw.gov.au/v2/gtfs/alerts/metro",
@@ -96,10 +99,11 @@ REALTIME_FEEDS = {
     },
 }
 
-# Start with buses only while the pipeline is being built/tested - buses are
-# the one mode with fully-confirmed URLs end to end. Add modes here once
-# their endpoints are verified.
-ACTIVE_MODES = ["buses"]
+# buses: the original confirmed mode. sydneytrains/metro added 2026-09-17
+# once their v2 endpoints were independently confirmed live (see note above).
+# nswtrains has confirmed URLs too but rarely enters the CBD bbox and hasn't
+# been requested; ferries/lightrail stay off - lightrail URLs still unverified.
+ACTIVE_MODES = ["buses", "sydneytrains", "metro"]
 
 POLL_INTERVAL_SECONDS = {
     "vehicle_positions": 15,

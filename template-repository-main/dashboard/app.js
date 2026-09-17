@@ -97,7 +97,7 @@ function updateDashboard(snapshot) {
   document.getElementById("last-update").textContent = formatTime(snapshot.updated_at);
   document.getElementById("feed-badge").textContent = vehicles.length ? "Live positions" : "No vehicles";
   document.getElementById("notice").textContent = vehicles.length
-    ? `Updated ${formatTime(snapshot.updated_at)} / ${vehicles.length} bus${vehicles.length === 1 ? "" : "es"} in the CBD / ${congestion.hotspot_count} hotspot${congestion.hotspot_count === 1 ? "" : "s"}`
+    ? `Updated ${formatTime(snapshot.updated_at)} / ${vehicles.length} vehicle${vehicles.length === 1 ? "" : "s"} in the CBD / ${congestion.hotspot_count} hotspot${congestion.hotspot_count === 1 ? "" : "s"}`
     : "Feed connected, but no vehicle positions are available in the CBD box.";
 }
 

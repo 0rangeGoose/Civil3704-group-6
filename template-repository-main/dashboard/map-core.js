@@ -28,16 +28,16 @@ L.tileLayer(`https://{s}.basemaps.cartocdn.com/rastertiles/voyager/{z}/{x}/{y}{r
 }).addTo(map);
 
 // Four independent layers, any combination can be on at once:
-//   congestion - live fill+label on wherever a bus currently is, rebuilt
+//   congestion - live fill+label on wherever a vehicle currently is, rebuilt
 //                every ~5s poll (a few hundred cells at most)
-//   demand     - the comprehensive, bus-independent wash (thousands of
+//   demand     - the comprehensive, vehicle-independent wash (thousands of
 //                cells, covering genuine coverage gaps too) - built ONCE
 //                from /demand_grid and never redrawn, since demand data
 //                doesn't change during a run
 //   priority   - outline-only markers (no fill of their own) stamped over
 //                whichever *congestion* cells currently qualify; rebuilt
-//                alongside congestion since priority requires a live bus
-//   routes     - each active bus route drawn as its real street-shaped
+//                alongside congestion since priority requires a live vehicle
+//   routes     - each active route (bus, train, metro) drawn as its real street-shaped
 //                line, coloured by that route's current average
 //                congestion - an alternative to the grid that isn't cut up
 //                by arbitrary square boundaries. Geometry is fetched once
@@ -131,7 +131,7 @@ export async function loadDemandGrid() {
           `<strong>Block ${cell.cell_id}</strong><br>` +
           `Demand: ${hasValue ? `${Math.round(value * 100)}%` : "no data"}<br>` +
           `~${grid.cell_metres || 150} m square<br>` +
-          `<span class="muted">Independent of current bus positions - includes coverage gaps.</span>`
+          `<span class="muted">Independent of current vehicle positions - includes coverage gaps.</span>`
         )
         .addTo(demandLayer);
     });
@@ -150,7 +150,7 @@ export async function loadDemandGrid() {
 
 // Fetch newly-seen route geometry. Safe/cheap to call repeatedly (e.g. on
 // an interval) - only adds shapes not already cached, since geometry never
-// changes once a shape has been seen. New bus routes can appear over time
+// changes once a shape has been seen. New routes can appear over time
 // as service patterns shift through the day, so unlike loadDemandGrid()
 // this one is meant to be re-polled, just far less often than /snapshot.
 export async function loadRouteShapes() {
@@ -178,7 +178,7 @@ export function updateRouteLines(routeLines) {
       .bindPopup(
         `<strong>${info.route_short_name || info.route_id || "Route"}</strong><br>` +
         `Congestion: ${Math.round(info.score * 100)}%<br>` +
-        `${info.vehicle_count} bus${info.vehicle_count === 1 ? "" : "es"} on this line`
+        `${info.vehicle_count} vehicle${info.vehicle_count === 1 ? "" : "s"} on this line`
       )
       .addTo(routesLayer);
   });
@@ -294,7 +294,7 @@ export function updateCongestion(congestion) {
       `<strong>Block ${cell.cell_id}</strong>${cell.hotspot ? ' <span class="pill">hotspot</span>' : ""}<br>` +
       `Congestion: ${(cell.score * 100).toFixed(0)}%<br>` +
       `${demandLine}<br>` +
-      `Holding: ${cell.vehicle_count} bus${cell.vehicle_count === 1 ? "" : "es"}<br>` +
+      `Holding: ${cell.vehicle_count} vehicle${cell.vehicle_count === 1 ? "" : "s"}<br>` +
       `Routes: ${cell.routes && cell.routes.length ? cell.routes.join(", ") : "n/a"}<br>` +
       `~${congestion.cell_metres || 300} m square`
     );
@@ -352,7 +352,7 @@ export function getActivePeriod() {
 // just a different source of the exact same {cells, route_lines} shape the
 // live snapshot already produces, so there's no second rendering path to
 // maintain. Live vehicle markers are cleared while viewing history: current
-// bus positions overlaid on a past-hours average would be misleading.
+// vehicle positions overlaid on a past-hours average would be misleading.
 export async function setPeriod(periodKey) {
   activePeriod = periodKey;
   if (periodKey === "now") {
