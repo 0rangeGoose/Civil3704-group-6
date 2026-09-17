@@ -314,6 +314,14 @@ export function updateCongestion(congestion) {
   });
 }
 
+// Mode -> marker shape, kept independent of the status colour so the two
+// signals (what it is / how it's running) can be read separately at a
+// glance. Anything outside these three (nswtrains, ferries, lightrail) is
+// never in ACTIVE_MODES today, but falls back to the plain circle rather
+// than disappearing if that changes.
+const MODE_SHAPE_CLASS = { buses: "mode-bus", sydneytrains: "mode-train", metro: "mode-metro" };
+const MODE_LABEL = { buses: "Bus", sydneytrains: "Train", metro: "Metro" };
+
 export function updateMarkers(vehicles) {
   const active = new Set();
   vehicles.forEach((vehicle) => {
@@ -321,10 +329,12 @@ export function updateMarkers(vehicles) {
     active.add(vehicle.vehicle_id);
     const [status, label] = statusFor(vehicle);
     const color = { "on-time": "#087f74", late: "#e8a72c", "very-late": "#cf5445", unknown: "#2874a6", cancelled: "#63716d" }[status];
-    const icon = L.divIcon({ className: "vehicle-icon", html: `<div class="vehicle-marker" style="background:${color}"></div>`, iconSize: [16, 16], iconAnchor: [8, 8] });
+    const modeClass = MODE_SHAPE_CLASS[vehicle.mode] || "mode-bus";
+    const icon = L.divIcon({ className: "vehicle-icon", html: `<div class="vehicle-marker ${modeClass}" style="background:${color}"></div>`, iconSize: [16, 16], iconAnchor: [8, 8] });
     const congestionPct = vehicle.congestion_score == null ? "n/a" : `${Math.round(vehicle.congestion_score * 100)}%`;
     const bunchingNote = vehicle.bunching_score == null ? "" : ` (bunching ${Math.round(vehicle.bunching_score * 100)}%)`;
-    const popup = `<strong>${vehicle.route_short_name || vehicle.route_id || "Unassigned route"}</strong><br>${vehicle.mode} / ${label}<br>${vehicle.delay_seconds == null ? "Delay unavailable" : `${vehicle.delay_seconds}s delay`}<br>Congestion: ${congestionPct}${bunchingNote}`;
+    const modeLabel = MODE_LABEL[vehicle.mode] || vehicle.mode;
+    const popup = `<strong>${vehicle.route_short_name || vehicle.route_id || "Unassigned route"}</strong><br>${modeLabel} / ${label}<br>${vehicle.delay_seconds == null ? "Delay unavailable" : `${vehicle.delay_seconds}s delay`}<br>Congestion: ${congestionPct}${bunchingNote}`;
     if (markers.has(vehicle.vehicle_id)) markers.get(vehicle.vehicle_id).setLatLng([vehicle.latitude, vehicle.longitude]).setIcon(icon).setPopupContent(popup);
     else markers.set(vehicle.vehicle_id, L.marker([vehicle.latitude, vehicle.longitude], { icon }).addTo(map).bindPopup(popup));
   });

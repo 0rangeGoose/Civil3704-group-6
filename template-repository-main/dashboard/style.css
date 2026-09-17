@@ -61,6 +61,15 @@ h2 { font-size: 19px; font-weight: 600; }
 .legend-swatch.priority { background: transparent; border: 2px solid var(--priority); }
 .on-time { background: var(--teal); }.late { background: var(--yellow); }.very-late { background: var(--red); }.unknown { background: var(--blue); }
 .vehicle-marker { width: 16px; height: 16px; border: 3px solid white; border-radius: 50%; box-shadow: 0 2px 8px rgba(23, 33, 31, .3); }
+.vehicle-marker.mode-train { border-radius: 3px; }
+.vehicle-marker.mode-metro { width: 12px; height: 12px; margin: 2px; border-radius: 2px; transform: rotate(45deg); }
+
+/* Same three shapes as .vehicle-marker's mode classes, at legend scale -
+   background is the neutral --muted grey since the legend's colour swatches
+   above already cover status; this row is shape-only. */
+.legend-shape { display: inline-block; width: 9px; height: 9px; background: var(--muted); border-radius: 50%; }
+.legend-shape.train { border-radius: 2px; }
+.legend-shape.metro { width: 7px; height: 7px; border-radius: 1px; transform: rotate(45deg); }
 .cell-label { background: transparent; border: 0; box-shadow: none; padding: 0; color: #17211f; font: 600 11px "DM Mono", monospace; text-shadow: 0 0 3px #fff, 0 0 3px #fff, 0 0 3px #fff; }
 .cell-label::before { display: none; }
 .leaflet-popup-content .pill { display: inline-block; background: var(--red); color: #fff; font: 500 9px "DM Mono", monospace; text-transform: uppercase; padding: 2px 6px; border-radius: 3px; }
