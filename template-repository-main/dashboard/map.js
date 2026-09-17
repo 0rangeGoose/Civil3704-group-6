@@ -23,14 +23,11 @@ map.keyboard.disable();
 map.dragging.disable();
 if (map.tap) map.tap.disable();
 
-// The exact edge-to-edge model fit (zoomBoost 0) is what projection
-// calibration needs eventually, but for now - viewed on a regular monitor,
-// pre-calibration - a closer default reads better. 0.5 levels ~= 1.4x
-// closer (roughly the middle 70% of the footprint, each axis). Revisit/
-// remove this once real corner-pin calibration onto the physical model
-// begins (see the report's Week 8 item) - at that point the view needs to
-// go back to the exact fit so it lines up with the model's real edges.
-setZoomBoost(0.5);
+// Locked to the exact edge-to-edge fit of the model's surveyed coordinates
+// (config.MODEL_CORNERS) - what projection calibration onto the physical
+// model needs: the visible area must match the model's real footprint
+// exactly, not a cropped-in view of it.
+setZoomBoost(0);
 
 const LAYERS = [
   { key: "1", name: "congestion", label: "Congestion" },

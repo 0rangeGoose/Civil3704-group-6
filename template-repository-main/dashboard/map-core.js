@@ -121,9 +121,7 @@ export async function loadDemandGrid() {
       // element per label the instant this layer is shown. Colour alone
       // carries the value; click a block for the exact number.
       L.rectangle([[b.min_lat, b.min_lon], [b.max_lat, b.max_lon]], {
-        color,
-        weight: 1,
-        dashArray: "3 4",
+        stroke: false,
         fillColor: color,
         fillOpacity: hasValue ? 0.15 + Math.min(0.4, value * 0.4) : 0.04
       })
