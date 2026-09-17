@@ -68,9 +68,115 @@ export function setZoomBoost(delta) {
 }
 
 let lastCongestion = { cells: [], hotspot_count: 0, cell_metres: 150 };
+let lastServerCongestion = { cells: [], hotspot_count: 0, cell_metres: 150 }; // the server's real grid, kept separate from lastCongestion (which toggleMode may overwrite with a client-recomputed one)
+let lastVehicles = []; // so toggleMode() can re-filter instantly, without waiting for the next poll
+let lastRouteLines = {};
 
 const LAYER_GROUPS = { congestion: congestionLayer, demand: demandLayer, routes: routesLayer };
 const layerVisible = { congestion: true, demand: false, routes: false };
+
+// Which vehicle modes actually get drawn - independent of the layer toggles
+// above (those pick which analytics layer shows; this picks which vehicles
+// show at all). All on by default. Kept as its own axis since a mode isn't
+// a layer - it's a property of each vehicle marker, same modes MODE_LABEL/
+// MODE_SHAPE_CLASS below already know about.
+export const MODES = [
+  { key: "buses", label: "Bus" },
+  { key: "sydneytrains", label: "Train" },
+  { key: "metro", label: "Metro" }
+];
+const modeVisible = { buses: true, sydneytrains: true, metro: true };
+
+export function isModeVisible(mode) {
+  return modeVisible[mode] !== false; // unknown modes default to visible
+}
+
+function allModesVisible() {
+  return MODES.every((m) => isModeVisible(m.key));
+}
+
+// Mirrors config.CONGESTION_HOTSPOT_THRESHOLD/_MIN_VEHICLES on the backend -
+// kept in sync manually (same as PERIODS further down). Only used for the
+// client-recomputed grid below; the server's own grid already applies these.
+const HOTSPOT_THRESHOLD = 0.6;
+const HOTSPOT_MIN_VEHICLES = 2;
+
+// Mirrors pipeline.gridmath's cell math exactly, so a client-recomputed
+// cell lines up on the map with the server's own grid cells.
+function gridSteps(refLat, cellMetres) {
+  const latStep = cellMetres / 111320.0;
+  const lonStep = cellMetres / (111320.0 * Math.cos((refLat * Math.PI) / 180));
+  return [latStep, lonStep];
+}
+
+// The Congestion layer normally just shows the server's pre-computed grid
+// (full fidelity: demand_score, real route lists). But that grid blends
+// every mode into one score per cell - a metro reading and a bus reading
+// sharing a block get averaged together with nothing on the map showing it
+// happened. There's no way to un-blend an already-averaged cell, so once a
+// mode is toggled off, the grid is rebuilt here instead, straight from the
+// live per-vehicle list the frontend already has (which does carry mode).
+// Traded away in this path: demand_score (needs the backend's TZP24/TZ21
+// zone data, not available client-side) and, since scoring happens here
+// rather than in pipeline.analytics, this only ever applies to the live
+// "Now" view - historical periods keep using whatever the history database
+// returns, same caveat as the Routes layer's mode filtering.
+function recomputeCongestionGrid(vehicles, cellMetres) {
+  if (!modelBounds) return { cells: [], hotspot_count: 0, cell_metres: cellMetres };
+  const refLat = (modelBounds.getSouth() + modelBounds.getNorth()) / 2;
+  const [latStep, lonStep] = gridSteps(refLat, cellMetres);
+  const buckets = new Map();
+
+  vehicles.forEach((v) => {
+    if (typeof v.congestion_score !== "number") return;
+    if (!isModeVisible(v.mode)) return;
+    const row = Math.floor(v.latitude / latStep);
+    const col = Math.floor(v.longitude / lonStep);
+    const key = `${row}c${col}`;
+    if (!buckets.has(key)) buckets.set(key, { row, col, members: [] });
+    buckets.get(key).members.push(v);
+  });
+
+  let hotspotCount = 0;
+  const cells = [];
+  buckets.forEach(({ row, col, members }) => {
+    const meanScore = members.reduce((sum, m) => sum + m.congestion_score, 0) / members.length;
+    const minLat = row * latStep, maxLat = (row + 1) * latStep;
+    const minLon = col * lonStep, maxLon = (col + 1) * lonStep;
+    const isHotspot = meanScore >= HOTSPOT_THRESHOLD && members.length >= HOTSPOT_MIN_VEHICLES;
+    if (isHotspot) hotspotCount++;
+    const routes = [...new Set(members.map((m) => m.route_short_name || m.route_id || "?"))].sort();
+    cells.push({
+      cell_id: `r${row}c${col}`,
+      bounds: { min_lat: minLat, max_lat: maxLat, min_lon: minLon, max_lon: maxLon },
+      center: { lat: (minLat + maxLat) / 2, lon: (minLon + maxLon) / 2 },
+      score: Math.round(meanScore * 1000) / 1000,
+      vehicle_count: members.length,
+      routes,
+      hotspot: isHotspot,
+      demand_score: null
+    });
+  });
+
+  return { cells, hotspot_count: hotspotCount, cell_metres: cellMetres };
+}
+
+export function toggleMode(mode) {
+  if (!(mode in modeVisible)) return true;
+  modeVisible[mode] = !modeVisible[mode];
+  // Re-apply immediately against the last-seen live data - otherwise a
+  // hidden mode's markers/routes/grid linger until the next ~5s poll. Only
+  // while "Now" is active: lastVehicles/lastRouteLines are stale live data
+  // once a historical period is on screen (renderSnapshot stops touching
+  // them then) - reapplying here would put live vehicles back on top of a
+  // historical view.
+  if (activePeriod === "now") {
+    updateMarkers(lastVehicles);
+    updateRouteLines(lastRouteLines);
+    updateCongestion(allModesVisible() ? lastServerCongestion : recomputeCongestionGrid(lastVehicles, lastServerCongestion.cell_metres || 150));
+  }
+  return modeVisible[mode];
+}
 
 export function isLayerVisible(name) {
   return !!layerVisible[name];
@@ -165,8 +271,13 @@ export async function loadRouteShapes() {
 }
 
 export function updateRouteLines(routeLines) {
+  lastRouteLines = routeLines || {};
   routesLayer.clearLayers();
   Object.entries(routeLines || {}).forEach(([shapeId, info]) => {
+    // info.mode is absent on historical (time-period) route lines - the
+    // history database doesn't store it yet, so those always show
+    // regardless of the mode toggles rather than being wrongly hidden.
+    if (info.mode && !isModeVisible(info.mode)) return;
     const points = shapeGeometry.get(shapeId);
     if (!points) return; // geometry not fetched yet - appears once loadRouteShapes catches up
     const color = congestionColor(info.score);
@@ -306,9 +417,11 @@ const MODE_SHAPE_CLASS = { buses: "mode-bus", sydneytrains: "mode-train", metro:
 const MODE_LABEL = { buses: "Bus", sydneytrains: "Train", metro: "Metro" };
 
 export function updateMarkers(vehicles) {
+  lastVehicles = vehicles;
   const active = new Set();
   vehicles.forEach((vehicle) => {
     if (typeof vehicle.latitude !== "number" || typeof vehicle.longitude !== "number") return;
+    if (!isModeVisible(vehicle.mode)) return; // marker stays out of `active`, so the cleanup pass below removes it if it was showing
     active.add(vehicle.vehicle_id);
     const [status, label] = statusFor(vehicle);
     const color = { "on-time": "#087f74", late: "#e8a72c", "very-late": "#cf5445", unknown: "#2874a6", cancelled: "#63716d" }[status];
@@ -372,9 +485,11 @@ export async function setPeriod(periodKey) {
 export function renderSnapshot(snapshot) {
   applyModelBounds(snapshot.model_bounds); // safe to always run - only takes effect once
   if (activePeriod !== "now") return; // a historical period is on screen - don't let the live poll overwrite it
-  updateCongestion(snapshot.congestion || lastCongestion);
+  lastServerCongestion = snapshot.congestion || lastServerCongestion;
+  const vehicles = snapshot.vehicles || [];
+  updateCongestion(allModesVisible() ? lastServerCongestion : recomputeCongestionGrid(vehicles, lastServerCongestion.cell_metres || 150));
   updateRouteLines(snapshot.route_lines);
-  updateMarkers(snapshot.vehicles || []);
+  updateMarkers(vehicles);
 }
 
 export async function fetchSnapshot() {

@@ -38,6 +38,10 @@ h2 { font-size: 19px; font-weight: 600; }
 .layer-btn:hover:not(.active):not(:disabled) { color: var(--ink); background: rgba(23, 33, 31, .06); }
 .layer-btn.active { background: var(--ink); color: #fff; }
 .layer-btn:disabled { opacity: .35; cursor: not-allowed; }
+.mode-toggle { display: flex; gap: 2px; background: var(--paper); border: 1px solid var(--line); border-radius: 5px; padding: 2px; }
+.mode-btn { border: 0; background: transparent; padding: 6px 11px; font: 600 10px "DM Mono", monospace; text-transform: uppercase; letter-spacing: .02em; color: var(--muted); cursor: pointer; border-radius: 3px; }
+.mode-btn:hover:not(.active) { color: var(--ink); background: rgba(23, 33, 31, .06); }
+.mode-btn.active { background: var(--blue); color: #fff; }
 .period-row { display: flex; align-items: center; gap: 14px; flex-wrap: wrap; margin-bottom: 24px; }
 .period-label { font: 600 11px "DM Mono", monospace; text-transform: uppercase; letter-spacing: .04em; color: var(--muted); }
 .period-toggle { display: flex; gap: 2px; background: var(--paper); border: 1px solid var(--line); border-radius: 5px; padding: 2px; }

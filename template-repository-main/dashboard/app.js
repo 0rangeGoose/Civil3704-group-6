@@ -1,6 +1,7 @@
 import {
   formatTime, renderSnapshot, toggleLayer, isLayerVisible, fetchSnapshot,
-  loadDemandGrid, loadRouteShapes, setPeriod, getActivePeriod
+  loadDemandGrid, loadRouteShapes, setPeriod, getActivePeriod,
+  toggleMode, isModeVisible
 } from "./map-core.js";
 
 // Each button is an independent on/off switch now (not a single active
@@ -10,6 +11,15 @@ document.querySelectorAll(".layer-btn").forEach((btn) => {
   btn.addEventListener("click", () => {
     if (btn.disabled) return;
     btn.classList.toggle("active", toggleLayer(btn.dataset.layer));
+  });
+});
+
+// Which vehicle modes are drawn at all - independent of the layer toggles
+// above (those pick the analytics layer; these pick which markers show).
+document.querySelectorAll(".mode-btn").forEach((btn) => {
+  btn.classList.toggle("active", isModeVisible(btn.dataset.mode));
+  btn.addEventListener("click", () => {
+    btn.classList.toggle("active", toggleMode(btn.dataset.mode));
   });
 });
 

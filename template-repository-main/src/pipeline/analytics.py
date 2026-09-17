@@ -223,6 +223,7 @@ def route_line_scores(records: List[VehicleRecord]) -> Dict[str, dict]:
         result[shape_id] = {
             "route_id": sample.route_id,
             "route_short_name": sample.route_short_name,
+            "mode": sample.mode,  # a shape belongs to exactly one mode - every record grouped under it agrees
             "score": round(sum(scores) / len(scores), 3),
             "vehicle_count": len(shape_records),
         }

@@ -1,13 +1,15 @@
 // Bare map-only view for the projector - no header/metrics/table, just the
 // map. Layer switching is keyboard-only (no visible buttons to keep the
 // projected output clean): 1/2/3 each independently TOGGLE Congestion/
-// Demand/Routes on or off - any combination can be showing at once.
+// Demand/Routes on or off - any combination can be showing at once. 4/5/6
+// independently toggle which vehicle modes are drawn (Bus/Train/Metro).
 // Left/Right arrows cycle through time periods (Now / AM Peak / Midday /
 // PM Peak / Evening).
 import {
   map, setZoomBoost, isLayerVisible, toggleLayer, renderSnapshot, fetchSnapshot,
   loadDemandGrid, hasDemandData, loadRouteShapes,
-  PERIODS, setPeriod, getActivePeriod
+  PERIODS, setPeriod, getActivePeriod,
+  MODES, isModeVisible, toggleMode
 } from "./map-core.js";
 
 // This view is projected onto a fixed physical model - it should never
@@ -37,15 +39,24 @@ const LAYERS = [
 const KEY_TO_LAYER = Object.fromEntries(LAYERS.map((l) => [l.key, l.name]));
 const NEEDS_DEMAND_DATA = new Set(["demand"]); // routes doesn't depend on demand data at all
 
+// Mode toggles pick up where the layer keys leave off (4/5/6), same
+// independent on/off pattern as 1/2/3 - just a different axis (which
+// vehicles are drawn, not which analytics layer).
+const MODE_KEYS = ["4", "5", "6"];
+const KEY_TO_MODE = Object.fromEntries(MODES.map((m, i) => [MODE_KEYS[i], m.key]));
+
 function updateHint(note) {
   const hint = document.getElementById("layer-hint");
   const layerStates = LAYERS.map(
     (l) => `[${isLayerVisible(l.name) ? "■" : "□"}${l.key}] ${l.label}`
   ).join("&nbsp;&nbsp;");
+  const modeStates = MODES.map(
+    (m, i) => `[${isModeVisible(m.key) ? "■" : "□"}${MODE_KEYS[i]}] ${m.label}`
+  ).join("&nbsp;&nbsp;");
   const periodLabel = PERIODS.find((p) => p.key === getActivePeriod())?.label || "Now";
   const unavailable = hasDemandData() ? "" : " (demand data not loaded)";
   hint.innerHTML =
-    `${layerStates}&nbsp;&nbsp;&nbsp;&nbsp;[←/→] ${periodLabel}` +
+    `${layerStates}&nbsp;&nbsp;&nbsp;&nbsp;${modeStates}&nbsp;&nbsp;&nbsp;&nbsp;[←/→] ${periodLabel}` +
     `<span class="keys">${unavailable}</span>` +
     (note ? `<span class="stale">${note}</span>` : "");
 }
@@ -60,6 +71,9 @@ async function cyclePeriod(direction) {
 window.addEventListener("keydown", (event) => {
   if (event.key === "ArrowRight") { cyclePeriod(1); return; }
   if (event.key === "ArrowLeft") { cyclePeriod(-1); return; }
+
+  const mode = KEY_TO_MODE[event.key];
+  if (mode) { toggleMode(mode); updateHint(); return; }
 
   const layer = KEY_TO_LAYER[event.key];
   if (!layer) return;
