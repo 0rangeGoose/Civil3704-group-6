@@ -9,11 +9,20 @@
 // shapes as pixels on one element instead of one DOM node per shape, which
 // matters a lot at that count (SVG, Leaflet's default, was visibly
 // stuttering/freezing the tab when that layer got switched on).
-export const map = L.map("map", { zoomControl: false, preferCanvas: true }).setView([-33.865, 151.204], 12);
+export const map = L.map("map", { zoomControl: false, preferCanvas: true, zoomSnap: 0.25 }).setView([-33.865, 151.204], 12);
 L.control.zoom({ position: "bottomright" }).addTo(map);
-L.tileLayer("https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png", {
-  maxZoom: 19,
-  attribution: "&copy; OpenStreetMap contributors"
+
+// CARTO's free basemap, not tile.openstreetmap.org directly - that server
+// is the OSM project's own low-capacity demo endpoint, and its usage policy
+// explicitly forbids exactly what we're doing (an app polled by multiple
+// people). It enforces this by serving "Access blocked" tiles once it
+// notices, which is what a teammate hit. CARTO's tiles are OSM data
+// (attribution required either way) served from infrastructure meant for
+// this kind of use, no signup/key needed at this volume.
+L.tileLayer("https://{s}.basemaps.cartocdn.com/rastertiles/voyager/{z}/{x}/{y}{r}.png", {
+  maxZoom: 20,
+  subdomains: "abcd",
+  attribution: '&copy; <a href="https://www.openstreetmap.org/copyright">OpenStreetMap</a> contributors &copy; <a href="https://carto.com/attributions">CARTO</a>'
 }).addTo(map);
 
 // Four independent layers, any combination can be on at once:
@@ -44,6 +53,22 @@ const shapeGeometry = new Map(); // shape_id -> [[lat, lon], ...]
 const markers = new Map();
 let modelFitted = false;
 let modelBounds = null;
+
+// Extra zoom applied on top of the exact model-bounds fit (see setZoomBoost)
+// - 0 by default (the exact 1:1 footprint fit used for projection
+// calibration). Only the projector page, which disables all zoom
+// interaction, sets this to pick a closer default view than the bare
+// edge-to-edge fit.
+let zoomBoost = 0;
+
+export function setZoomBoost(delta) {
+  zoomBoost = delta;
+  if (modelBounds) {
+    map.setView(modelBounds.getCenter(), map.getBoundsZoom(modelBounds, false) + zoomBoost);
+    lockZoomToModel();
+  }
+}
+
 let lastCongestion = { cells: [], hotspot_count: 0, priority_count: 0, cell_metres: 150 };
 
 const LAYER_GROUPS = { congestion: congestionLayer, demand: demandLayer, priority: priorityLayer, routes: routesLayer };
@@ -165,7 +190,7 @@ export function updateRouteLines(routeLines) {
 // control zoom out past the footprint.
 function lockZoomToModel() {
   if (!modelBounds) return;
-  const fitZoom = map.getBoundsZoom(modelBounds, false);
+  const fitZoom = map.getBoundsZoom(modelBounds, false) + zoomBoost;
   map.setMinZoom(fitZoom);
   if (map.getZoom() < fitZoom) map.setZoom(fitZoom);
 }
@@ -206,8 +231,9 @@ export function applyModelBounds(b) {
   lockZoomToModel();
   // No padding: the map panel is CSS-locked to the model's own aspect
   // ratio (2:1, matching the physical scale model), so fitting with zero
-  // padding makes the footprint fill the panel edge-to-edge on both axes.
-  map.fitBounds(modelBounds, { padding: [0, 0] });
+  // padding makes the footprint fill the panel edge-to-edge on both axes
+  // (before any zoomBoost is applied on top, for pages that set one).
+  map.setView(modelBounds.getCenter(), map.getBoundsZoom(modelBounds, false) + zoomBoost);
   modelFitted = true;
 }
 

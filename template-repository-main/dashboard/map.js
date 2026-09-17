@@ -5,7 +5,7 @@
 // once. Left/Right arrows cycle through time periods (Now / AM Peak /
 // Midday / PM Peak / Evening).
 import {
-  map, isLayerVisible, toggleLayer, renderSnapshot, fetchSnapshot,
+  map, setZoomBoost, isLayerVisible, toggleLayer, renderSnapshot, fetchSnapshot,
   loadDemandGrid, hasDemandData, loadRouteShapes,
   PERIODS, setPeriod, getActivePeriod
 } from "./map-core.js";
@@ -22,6 +22,15 @@ map.boxZoom.disable();
 map.keyboard.disable();
 map.dragging.disable();
 if (map.tap) map.tap.disable();
+
+// The exact edge-to-edge model fit (zoomBoost 0) is what projection
+// calibration needs eventually, but for now - viewed on a regular monitor,
+// pre-calibration - a closer default reads better. 0.5 levels ~= 1.4x
+// closer (roughly the middle 70% of the footprint, each axis). Revisit/
+// remove this once real corner-pin calibration onto the physical model
+// begins (see the report's Week 8 item) - at that point the view needs to
+// go back to the exact fit so it lines up with the model's real edges.
+setZoomBoost(0.5);
 
 const LAYERS = [
   { key: "1", name: "congestion", label: "Congestion" },
