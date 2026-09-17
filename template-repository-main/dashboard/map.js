@@ -5,10 +5,23 @@
 // once. Left/Right arrows cycle through time periods (Now / AM Peak /
 // Midday / PM Peak / Evening).
 import {
-  isLayerVisible, toggleLayer, renderSnapshot, fetchSnapshot,
+  map, isLayerVisible, toggleLayer, renderSnapshot, fetchSnapshot,
   loadDemandGrid, hasDemandData, loadRouteShapes,
   PERIODS, setPeriod, getActivePeriod
 } from "./map-core.js";
+
+// This view is projected onto a fixed physical model - it should never
+// scroll, drag or zoom away from the model's own registered bounds, or the
+// projection falls out of alignment with the real scale model underneath
+// it. The dashboard (app.js) keeps the map interactive for the team; only
+// this bare projector page locks it down.
+map.scrollWheelZoom.disable();
+map.doubleClickZoom.disable();
+map.touchZoom.disable();
+map.boxZoom.disable();
+map.keyboard.disable();
+map.dragging.disable();
+if (map.tap) map.tap.disable();
 
 const LAYERS = [
   { key: "1", name: "congestion", label: "Congestion" },

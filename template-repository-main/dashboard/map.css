@@ -5,6 +5,13 @@ html, body { height: 100%; }
 body { margin: 0; background: #0b0f0e; }
 #map { aspect-ratio: unset; width: 100vw; height: 100vh; max-height: none; }
 
+/* Static projector output, not an interactive map - the model itself never
+   moves, so zoom/pan controls have nothing meaningful to do here and would
+   only let someone accidentally knock the view out of registration with the
+   physical model. Interaction is also disabled in map.js; this just hides
+   the now-inert zoom buttons rather than leaving dead UI on screen. */
+.leaflet-control-zoom { display: none; }
+
 .layer-hint {
   position: fixed;
   left: 14px;
