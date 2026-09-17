@@ -12,14 +12,16 @@
 export const map = L.map("map", { zoomControl: false, preferCanvas: true, zoomSnap: 0.25 }).setView([-33.865, 151.204], 12);
 L.control.zoom({ position: "bottomright" }).addTo(map);
 
-// CARTO's free basemap, not tile.openstreetmap.org directly - that server
-// is the OSM project's own low-capacity demo endpoint, and its usage policy
+// CARTO's basemap, not tile.openstreetmap.org directly - that server is the
+// OSM project's own low-capacity demo endpoint, and its usage policy
 // explicitly forbids exactly what we're doing (an app polled by multiple
 // people). It enforces this by serving "Access blocked" tiles once it
 // notices, which is what a teammate hit. CARTO's tiles are OSM data
 // (attribution required either way) served from infrastructure meant for
-// this kind of use, no signup/key needed at this volume.
-L.tileLayer("https://{s}.basemaps.cartocdn.com/rastertiles/voyager/{z}/{x}/{y}{r}.png", {
+// this kind of use. Keyed via CARTO_API_KEY (carto.com/basemaps/apikey) so
+// requests aren't rate-limited as anonymous traffic.
+const CARTO_API_KEY = "cb1_3oi7_1_bd8314ed27760b5a31f22e04";
+L.tileLayer(`https://{s}.basemaps.cartocdn.com/rastertiles/voyager/{z}/{x}/{y}{r}.png?key=${CARTO_API_KEY}`, {
   maxZoom: 20,
   subdomains: "abcd",
   attribution: '&copy; <a href="https://www.openstreetmap.org/copyright">OpenStreetMap</a> contributors &copy; <a href="https://carto.com/attributions">CARTO</a>'

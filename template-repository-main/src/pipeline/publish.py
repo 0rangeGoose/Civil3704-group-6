@@ -4,9 +4,15 @@ HTTP (poll) and WebSocket (push at ~SNAPSHOT_PUSH_HZ).
 This is the seam between the headless pipeline and the presentation layer
 (model/projector renderer, wall-panel dashboard) described in the proposal:
 nothing downstream of SnapshotStore needs to know anything about GTFS.
-"""
 
-from __future__ import annotations
+NOTE: deliberately no `from __future__ import annotations` here. build_app()
+imports WebSocket function-locally (so the rest of the pipeline stays testable
+without fastapi installed), and under PEP 563 the annotation on the /ws handler
+would be left as the string "WebSocket", which FastAPI cannot resolve from this
+module's globals - it would fall back to treating `websocket` as a required
+query parameter and reject every handshake with HTTP 403. Everything below uses
+typing.Dict/List/Optional, so the future import buys nothing anyway.
+"""
 
 import asyncio
 import dataclasses

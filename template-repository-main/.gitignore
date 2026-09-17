@@ -77,19 +77,11 @@ data/cache/*
 *.csv
 *.geojson
 
-# The two files the pipeline actually reads for the demand layer - real
-# TfNSW data, needed by every teammate, and too large (104MB) for a normal
-# git blob. Carved out of the *.csv/*.geojson rules above and tracked via
-# Git LFS instead (see .gitattributes) so `git pull` fetches them for
-# everyone, instead of each person needing their own TfNSW portal login.
-!data/demand/travel_zones_2021.geojson
-!data/demand/tzp24_employment.csv
-
 # Raw TfNSW TZP24/TZ21 downloads kept locally for reference - the two files
-# above are already copied out of this folder into data/demand/. This
-# folder's original download names don't match the *.csv/*.geojson patterns
-# (e.g. "..._geojson.json" ends in .json, not .geojson) and include a
-# 108MB file over GitHub's 100MB hard limit.
+# the pipeline actually reads are already copied into data/demand/ (which
+# the *.csv/*.geojson rules above cover). This folder's original download
+# names don't match those patterns (e.g. "..._geojson.json" ends in .json,
+# not .geojson) and include a 108MB file over GitHub's 100MB hard limit.
 New folder/
 
 # Keep directory structure but ignore contents

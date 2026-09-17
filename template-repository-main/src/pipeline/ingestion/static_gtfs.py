@@ -50,12 +50,44 @@ class StaticGTFS:
         return self.trips.get(trip_id)
 
 
+LFS_POINTER_MAGIC = b"version https://git-lfs.github.com/spec/v1"
+
+
+def is_lfs_pointer(path: Path) -> bool:
+    """True if `path` is a git-LFS pointer stub rather than the real file.
+
+    A repo cloned without `git lfs pull` leaves ~130-byte text stubs in place
+    of data/gtfs/*.txt. They exist, so a plain .exists() check passes and the
+    download is skipped - then pd.read_csv parses the stub and every lookup
+    table silently comes back empty (or blows up on a missing column). Treat a
+    stub as absent so the bundle is fetched instead.
+    """
+    try:
+        with path.open("rb") as handle:
+            return handle.read(len(LFS_POINTER_MAGIC)) == LFS_POINTER_MAGIC
+    except OSError:
+        return False
+
+
+def _is_usable(path: Path) -> bool:
+    return path.exists() and not is_lfs_pointer(path)
+
+
 def ensure_downloaded(data_dir: Path, api_key: str) -> None:
     """Download + extract the static GTFS bundle if it isn't present locally."""
     data_dir.mkdir(parents=True, exist_ok=True)
-    missing = [f for f in REQUIRED_FILES if not (data_dir / f).exists()]
+    missing = [f for f in REQUIRED_FILES if not _is_usable(data_dir / f)]
     if not missing:
         return
+
+    stubs = [f for f in missing if (data_dir / f).exists()]
+    if stubs:
+        logger.warning(
+            f"{stubs} are git-LFS pointer stubs, not real data - run `git lfs pull`, "
+            "or let the download below replace them"
+        )
+        for name in stubs:
+            (data_dir / name).unlink()
 
     logger.warning(f"Missing {missing}; downloading static GTFS from TfNSW")
     response = requests.get(
@@ -73,6 +105,11 @@ def ensure_downloaded(data_dir: Path, api_key: str) -> None:
 def _read_csv(data_dir: Path, filename: str) -> Optional[pd.DataFrame]:
     path = data_dir / filename
     if not path.exists():
+        return None
+    if is_lfs_pointer(path):
+        # Optional files (shapes.txt, stop_times.txt) never reach
+        # ensure_downloaded's REQUIRED_FILES check, so guard here too.
+        logger.warning(f"{filename} is a git-LFS pointer stub, not real data - skipping")
         return None
     return pd.read_csv(path, dtype=str, low_memory=False)
 
