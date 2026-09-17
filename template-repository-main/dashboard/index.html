@@ -29,6 +29,18 @@
       <article class="metric"><span class="metric-label">Last update</span><strong class="metric-time" id="last-update">--</strong></article>
     </section>
 
+    <section class="period-row" aria-label="Time period">
+      <span class="period-label">Period:</span>
+      <div class="period-toggle" role="group" aria-label="Live vs. historical hour-of-day average">
+        <button type="button" class="period-btn active" data-period="now">Now</button>
+        <button type="button" class="period-btn" data-period="am_peak">AM Peak</button>
+        <button type="button" class="period-btn" data-period="midday">Midday</button>
+        <button type="button" class="period-btn" data-period="pm_peak">PM Peak</button>
+        <button type="button" class="period-btn" data-period="evening">Evening</button>
+      </div>
+      <span class="period-hint">Anything but "Now" shows an hour-of-day average built up from logged history, not live buses.</span>
+    </section>
+
     <section class="workspace">
       <div class="map-panel">
         <div class="panel-heading">

@@ -161,6 +161,29 @@ CONGESTION_HOTSPOT_MIN_VEHICLES = 2  # ...and at least this many buses in the ce
 PRIORITY_THRESHOLD = 0.35
 
 # ---------------------------------------------------------------------------
+# Historical trends (see pipeline/history.py)
+#
+# The live view only ever shows the current instant. To compare "AM Peak"
+# vs "Now" (an explicit proposal goal), the pipeline periodically logs the
+# already-computed per-cell/per-route scores to a small local database,
+# then averages by hour-of-day on request. Deliberately coarse - logging
+# every ~15s poll like the live view would bloat storage for no benefit at
+# this resolution, so it's throttled to once every few minutes.
+# ---------------------------------------------------------------------------
+HISTORY_DB_PATH = REPO_ROOT / "data" / "cache" / "history.sqlite"
+HISTORY_LOG_INTERVAL_SECONDS = 300  # 5 min
+
+# Named periods a planner actually thinks in - matches the proposal's own
+# "different periods of the day" language. Hours are 24h, local time,
+# inclusive. Adjust to match real observed peak times once there's data.
+TIME_PERIODS = {
+    "am_peak": {"label": "AM Peak", "hours": [7, 8]},
+    "midday": {"label": "Midday", "hours": [11, 12, 13]},
+    "pm_peak": {"label": "PM Peak", "hours": [16, 17]},
+    "evening": {"label": "Evening", "hours": [18, 19, 20]},
+}
+
+# ---------------------------------------------------------------------------
 # Publish layer
 # ---------------------------------------------------------------------------
 SNAPSHOT_HOST = "0.0.0.0"

@@ -305,11 +305,54 @@ export function updateMarkers(vehicles) {
   markers.forEach((marker, id) => { if (!active.has(id)) { map.removeLayer(marker); markers.delete(id); } });
 }
 
+// Named time periods (see config.TIME_PERIODS on the backend - kept in sync
+// manually since these are just fixed real-world period names). "now" means
+// "show the live poll", same as before this feature existed.
+export const PERIODS = [
+  { key: "now", label: "Now" },
+  { key: "am_peak", label: "AM Peak" },
+  { key: "midday", label: "Midday" },
+  { key: "pm_peak", label: "PM Peak" },
+  { key: "evening", label: "Evening" }
+];
+let activePeriod = "now";
+
+export function getActivePeriod() {
+  return activePeriod;
+}
+
+// Switch between live data and a historical hour-of-day average. Reuses
+// updateCongestion()/updateRouteLines() directly - a historical period is
+// just a different source of the exact same {cells, route_lines} shape the
+// live snapshot already produces, so there's no second rendering path to
+// maintain. Live vehicle markers are cleared while viewing history: current
+// bus positions overlaid on a past-hours average would be misleading.
+export async function setPeriod(periodKey) {
+  activePeriod = periodKey;
+  if (periodKey === "now") {
+    return null; // the next live poll repaints naturally
+  }
+  try {
+    const response = await fetch(`/history?period=${encodeURIComponent(periodKey)}`, { cache: "no-store" });
+    if (!response.ok) throw new Error(`HTTP ${response.status}`);
+    const data = await response.json();
+    updateCongestion(data.congestion || { cells: [], hotspot_count: 0, priority_count: 0 });
+    updateRouteLines(data.route_lines || {});
+    markers.forEach((marker) => map.removeLayer(marker));
+    markers.clear();
+    return data;
+  } catch (error) {
+    console.warn("Could not load /history:", error.message);
+    return null;
+  }
+}
+
 // Does the three map-only updates (bounds/blocks/vehicles) both pages need
 // on every poll. The full dashboard additionally updates its own metric
 // tiles/table from the same snapshot; this doesn't touch any of that.
 export function renderSnapshot(snapshot) {
-  applyModelBounds(snapshot.model_bounds);
+  applyModelBounds(snapshot.model_bounds); // safe to always run - only takes effect once
+  if (activePeriod !== "now") return; // a historical period is on screen - don't let the live poll overwrite it
   updateCongestion(snapshot.congestion || lastCongestion);
   updateRouteLines(snapshot.route_lines);
   updateMarkers(snapshot.vehicles || []);

@@ -16,7 +16,7 @@ import time
 from typing import Dict, List, Optional
 from pathlib import Path
 
-from . import config
+from . import config, history
 from .analytics import RouteAggregate
 from .normalise import VehicleRecord
 
@@ -129,6 +129,27 @@ def build_app(store: SnapshotStore):
         to pick up newly-appeared routes; /snapshot's route_lines carries
         just the small per-shape score, not the geometry, each cycle."""
         return store.route_shapes()
+
+    @app.get("/history")
+    def get_history(period: str = "now"):
+        """Hour-of-day average for a named period (am_peak/midday/pm_peak/
+        evening, see config.TIME_PERIODS) - same {"congestion", "route_lines"}
+        shape /snapshot uses, so the frontend can feed it through the exact
+        same renderer as live data. "now" or any unrecognised period returns
+        empty - the frontend already has live data for that case."""
+        period_def = config.TIME_PERIODS.get(period)
+        if not period_def:
+            return {
+                "congestion": {"cells": [], "hotspot_count": 0, "priority_count": 0},
+                "route_lines": {},
+                "sample_days": 0,
+                "period": period,
+                "label": period,
+            }
+        result = history.query_period(period_def["hours"])
+        result["period"] = period
+        result["label"] = period_def["label"]
+        return result
 
     @app.get("/healthz")
     def healthz():

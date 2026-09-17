@@ -17,7 +17,7 @@ import threading
 import time
 from typing import Optional
 
-from . import config
+from . import config, history
 from .analytics import RollingAggregator, congestion_grid, route_line_scores, score_vehicles
 from .ingestion import demand as demand_ingestion
 from .ingestion import realtime_gtfs, static_gtfs
@@ -82,8 +82,10 @@ def run_with_server(api_key: str) -> None:
         logger.info(f"Demand grid built: {len(demand_cells)} cells (independent of bus positions)")
 
     seen_shape_ids = set()
+    last_history_log = 0.0
 
     def on_update(raw):
+        nonlocal last_history_log
         records = score_vehicles(normalise(raw, static), static)
         aggregator.update(records)
         grid = congestion_grid(records, demand=demand)
@@ -114,6 +116,14 @@ def run_with_server(api_key: str) -> None:
             f"{grid['priority_count']} priority zone(s), "
             f"{len(route_lines)} route line(s)"
         )
+
+        # Coarse, slow-interval logging for the historical/trend view (see
+        # pipeline/history.py) - not every poll cycle, this data only needs
+        # hour-of-day resolution.
+        now = time.time()
+        if now - last_history_log >= config.HISTORY_LOG_INTERVAL_SECONDS:
+            history.log_snapshot(grid["cells"], route_lines, now=now)
+            last_history_log = now
 
     ingest_thread = threading.Thread(
         target=realtime_gtfs.poll_loop,

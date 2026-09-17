@@ -39,6 +39,14 @@ h2 { font-size: 19px; font-weight: 600; }
 .layer-btn:hover:not(.active):not(:disabled) { color: var(--ink); background: rgba(23, 33, 31, .06); }
 .layer-btn.active { background: var(--ink); color: #fff; }
 .layer-btn:disabled { opacity: .35; cursor: not-allowed; }
+.period-row { display: flex; align-items: center; gap: 14px; flex-wrap: wrap; margin-bottom: 24px; }
+.period-label { font: 600 11px "DM Mono", monospace; text-transform: uppercase; letter-spacing: .04em; color: var(--muted); }
+.period-toggle { display: flex; gap: 2px; background: var(--paper); border: 1px solid var(--line); border-radius: 5px; padding: 2px; }
+.period-btn { border: 0; background: transparent; padding: 6px 12px; font: 600 10px "DM Mono", monospace; text-transform: uppercase; letter-spacing: .02em; color: var(--muted); cursor: pointer; border-radius: 3px; }
+.period-btn:hover:not(.active) { color: var(--ink); background: rgba(23, 33, 31, .06); }
+.period-btn.active { background: var(--teal); color: #fff; }
+.period-hint { font: 11px "DM Mono", monospace; color: var(--muted); }
+
 /* 2:1 matches the physical scale model's proportions (2400mm x 1200mm),
    which is also the model footprint's real-world aspect ratio - keeping the
    panel this shape lets the map fill it exactly, with no space left over

@@ -1,4 +1,7 @@
-import { formatTime, renderSnapshot, toggleLayer, isLayerVisible, fetchSnapshot, loadDemandGrid, hasDemandData, loadRouteShapes } from "./map-core.js";
+import {
+  formatTime, renderSnapshot, toggleLayer, isLayerVisible, fetchSnapshot,
+  loadDemandGrid, hasDemandData, loadRouteShapes, setPeriod, getActivePeriod
+} from "./map-core.js";
 
 // Each button is an independent on/off switch now (not a single active
 // mode) - reflect their starting state, then just flip on click.
@@ -23,6 +26,36 @@ loadDemandGrid().then((loaded) => {
 loadRouteShapes();
 setInterval(loadRouteShapes, 30000);
 
+// Period tabs: "Now" is the live poll (unchanged); anything else swaps the
+// map to a historical hour-of-day average and freezes the headline metrics
+// on that period's own numbers, so the tiles never contradict what the map
+// is showing.
+document.querySelectorAll(".period-btn").forEach((btn) => {
+  btn.classList.toggle("active", btn.dataset.period === getActivePeriod());
+  btn.addEventListener("click", async () => {
+    document.querySelectorAll(".period-btn").forEach((b) => b.classList.remove("active"));
+    btn.classList.add("active");
+    const data = await setPeriod(btn.dataset.period);
+    if (data) applyHistoricalMetrics(data);
+  });
+});
+
+function applyHistoricalMetrics(periodData) {
+  const cells = (periodData.congestion && periodData.congestion.cells) || [];
+  const avg = cells.length
+    ? Math.round(cells.reduce((sum, c) => sum + c.score, 0) / cells.length * 100)
+    : null;
+  document.getElementById("vehicle-count").textContent = "—";
+  document.getElementById("hotspots").textContent = periodData.congestion.hotspot_count ?? 0;
+  document.getElementById("priority-zones").textContent = "n/a";
+  document.getElementById("avg-congestion").textContent = avg == null ? "--" : `${avg}%`;
+  document.getElementById("on-time").textContent = "--";
+  document.getElementById("feed-badge").textContent = `${periodData.label} average`;
+  document.getElementById("notice").textContent = cells.length
+    ? `Showing the ${periodData.label} average, based on ${periodData.sample_days} day${periodData.sample_days === 1 ? "" : "s"} of logged data.`
+    : `No history logged yet for ${periodData.label} - check back after the server's been running a while.`;
+}
+
 function setConnection(state, message) {
   const connection = document.getElementById("connection");
   connection.className = `connection ${state}`;
@@ -37,6 +70,13 @@ function updateRoutes(routes) {
 }
 
 function updateDashboard(snapshot) {
+  renderSnapshot(snapshot); // no-ops the map draw internally while a historical period is active
+  updateRoutes(snapshot.route_adherence || {});
+
+  // A historical period's tiles were already set by applyHistoricalMetrics()
+  // when it was selected - don't let the live poll clobber them.
+  if (getActivePeriod() !== "now") return;
+
   const vehicles = snapshot.vehicles || [];
   const routes = snapshot.route_adherence || {};
   const congestion = snapshot.congestion || { cells: [], hotspot_count: 0, priority_count: 0 };
@@ -58,9 +98,6 @@ function updateDashboard(snapshot) {
   document.getElementById("notice").textContent = vehicles.length
     ? `Updated ${formatTime(snapshot.updated_at)} / ${vehicles.length} bus${vehicles.length === 1 ? "" : "es"} in the CBD / ${congestion.hotspot_count} hotspot${congestion.hotspot_count === 1 ? "" : "s"}`
     : "Feed connected, but no vehicle positions are available in the CBD box.";
-
-  renderSnapshot(snapshot);
-  updateRoutes(routes);
 }
 
 async function refresh() {
