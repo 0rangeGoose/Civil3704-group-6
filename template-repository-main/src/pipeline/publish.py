@@ -132,17 +132,18 @@ def build_app(store: SnapshotStore):
 
     @app.get("/history")
     def get_history(period: str = "now"):
-        """Hour-of-day average for a named period (am_peak/midday/pm_peak/
-        evening, see config.TIME_PERIODS) - same {"congestion", "route_lines"}
-        shape /snapshot uses, so the frontend can feed it through the exact
-        same renderer as live data. "now" or any unrecognised period returns
-        empty - the frontend already has live data for that case."""
+        """The most recent day's reading for a named period's hour-of-day
+        window (am_peak/midday/pm_peak/evening, see config.TIME_PERIODS) -
+        same {"congestion", "route_lines"} shape /snapshot uses, so the
+        frontend can feed it through the exact same renderer as live data.
+        "now" or any unrecognised period returns empty - the frontend
+        already has live data for that case."""
         period_def = config.TIME_PERIODS.get(period)
         if not period_def:
             return {
                 "congestion": {"cells": [], "hotspot_count": 0, "priority_count": 0},
                 "route_lines": {},
-                "sample_days": 0,
+                "date": None,
                 "period": period,
                 "label": period,
             }

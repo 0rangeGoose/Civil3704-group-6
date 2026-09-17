@@ -106,21 +106,22 @@ def query_period(
     hours: List[int],
     cell_metres: float = config.CONGESTION_GRID_CELL_METRES,
 ) -> dict:
-    """Average every logged reading whose hour-of-day is in `hours`, grouped
-    back onto the cells/route shapes the live view uses.
+    """The most recent day's reading for the given hour-of-day window - not
+    blended across every day ever logged. While the database is only a few
+    days deep, an average across 2-3 days isn't meaningfully different from
+    "the most recent one", and "here's what AM Peak looked like yesterday"
+    is a much simpler thing to defend than an averaged blend of days.
 
     Returns {"congestion": {...same shape as /snapshot's congestion...},
              "route_lines": {...same shape as /snapshot's route_lines...},
-             "sample_days": int}
-    so the frontend can feed the result through the exact same renderer it
-    already uses for live data. sample_days lets the UI show how much
-    history a period is actually based on (honest about a "3 days" average
-    vs. a "3 months" one).
+             "date": "YYYY-MM-DD", or None if nothing's been logged yet for
+             this window} so the frontend can feed the result through the
+    exact same renderer it already uses for live data.
     """
     empty = {
         "congestion": {"cells": [], "hotspot_count": 0, "priority_count": 0, "cell_metres": cell_metres},
         "route_lines": {},
-        "sample_days": 0,
+        "date": None,
     }
     if not hours or not DB_PATH.exists():
         return empty
@@ -128,22 +129,42 @@ def query_period(
     conn = _connect()
     try:
         placeholders = ",".join("?" * len(hours))
-        cell_rows = conn.execute(
-            f"SELECT cell_id, AVG(score), SUM(vehicle_count), COUNT(*) "
-            f"FROM cell_history WHERE hour IN ({placeholders}) GROUP BY cell_id",
-            hours,
-        ).fetchall()
-        route_rows = conn.execute(
-            f"SELECT shape_id, route_short_name, AVG(score), SUM(vehicle_count) "
-            f"FROM route_history WHERE hour IN ({placeholders}) GROUP BY shape_id",
-            hours,
-        ).fetchall()
-        sample_days_row = conn.execute(
-            f"SELECT COUNT(DISTINCT day) FROM cell_history WHERE hour IN ({placeholders})",
-            hours,
-        ).fetchone()
+
+        # Determined independently per table: a cycle can legitimately log
+        # route readings with zero scored cells (or vice versa), so tying
+        # both to cell_history's latest day alone would silently drop a
+        # route-only reading.
+        latest_cell_day = conn.execute(
+            f"SELECT MAX(day) FROM cell_history WHERE hour IN ({placeholders})", hours
+        ).fetchone()[0]
+        latest_route_day = conn.execute(
+            f"SELECT MAX(day) FROM route_history WHERE hour IN ({placeholders})", hours
+        ).fetchone()[0]
+
+        if latest_cell_day is None and latest_route_day is None:
+            return empty
+
+        cell_rows = []
+        if latest_cell_day is not None:
+            cell_rows = conn.execute(
+                f"SELECT cell_id, AVG(score), SUM(vehicle_count), COUNT(*) "
+                f"FROM cell_history WHERE hour IN ({placeholders}) AND day = ? GROUP BY cell_id",
+                hours + [latest_cell_day],
+            ).fetchall()
+
+        route_rows = []
+        if latest_route_day is not None:
+            route_rows = conn.execute(
+                f"SELECT shape_id, route_short_name, AVG(score), SUM(vehicle_count) "
+                f"FROM route_history WHERE hour IN ({placeholders}) AND day = ? GROUP BY shape_id",
+                hours + [latest_route_day],
+            ).fetchall()
     finally:
         conn.close()
+
+    # Report whichever is more recent as "the" date - if they diverge, the
+    # newer one is what the UI should say it's showing.
+    latest_day = max(d for d in (latest_cell_day, latest_route_day) if d is not None)
 
     cells = []
     for cell_id, avg_score, total_vehicles, n_readings in cell_rows:
@@ -187,5 +208,5 @@ def query_period(
             "cell_metres": cell_metres,
         },
         "route_lines": route_lines,
-        "sample_days": (sample_days_row[0] if sample_days_row else 0) or 0,
+        "date": latest_day,
     }

@@ -50,10 +50,11 @@ function applyHistoricalMetrics(periodData) {
   document.getElementById("priority-zones").textContent = "n/a";
   document.getElementById("avg-congestion").textContent = avg == null ? "--" : `${avg}%`;
   document.getElementById("on-time").textContent = "--";
-  document.getElementById("feed-badge").textContent = `${periodData.label} average`;
+  document.getElementById("last-update").textContent = periodData.date || "--";
+  document.getElementById("feed-badge").textContent = periodData.date ? `${periodData.label}, ${periodData.date}` : `${periodData.label} - no data yet`;
   document.getElementById("notice").textContent = cells.length
-    ? `Showing the ${periodData.label} average, based on ${periodData.sample_days} day${periodData.sample_days === 1 ? "" : "s"} of logged data.`
-    : `No history logged yet for ${periodData.label} - check back after the server's been running a while.`;
+    ? `Showing ${periodData.label} from ${periodData.date} (the most recent day this window was logged).`
+    : `No history logged yet for ${periodData.label} - check back after the server's been running during that window.`;
 }
 
 function setConnection(state, message) {
