@@ -27,28 +27,42 @@ L.tileLayer(`https://{s}.basemaps.cartocdn.com/rastertiles/voyager/{z}/{x}/{y}{r
   attribution: '&copy; <a href="https://www.openstreetmap.org/copyright">OpenStreetMap</a> contributors &copy; <a href="https://carto.com/attributions">CARTO</a>'
 }).addTo(map);
 
-// Three independent layers, any combination can be on at once:
+// Four independent layers, any combination can be on at once:
 //   congestion - live fill+label on wherever a vehicle currently is, rebuilt
 //                every ~5s poll (a few hundred cells at most)
 //   demand     - the comprehensive, vehicle-independent wash (thousands of
 //                cells, covering genuine coverage gaps too) - built ONCE
 //                from /demand_grid and never redrawn, since demand data
 //                doesn't change during a run
+//   opal       - real observed Opal tap on/off activity per travel zone,
+//                z-scored against the other zones in view (see
+//                ingestion.opal_importance) rather than demand's [0,1] job
+//                density - built ONCE from /opal_grid, same lifecycle as
+//                demand
 //   routes     - each active route (bus, train, metro) drawn as its real street-shaped
 //                line, coloured by that route's current average
 //                congestion - an alternative to the grid that isn't cut up
 //                by arbitrary square boundaries. Geometry is fetched once
 //                per shape (from /route_shapes, a growing cache) and
 //                reused; only the score is refreshed every poll.
-// Demand is added first/stays visually underneath so the live congestion
-// cells read as being "on top of" the wash.
+// Demand/Opal are added first/stay visually underneath so the live
+// congestion cells read as being "on top of" the wash.
 const demandLayer = L.layerGroup();
+const opalLayer = L.layerGroup();
 const congestionLayer = L.layerGroup().addTo(map); // on by default
 const routesLayer = L.layerGroup();
 let demandGridLoaded = false;
+let opalGridLoaded = false;
 const shapeGeometry = new Map(); // shape_id -> [[lat, lon], ...]
 
+// vehicle_id -> { marker, missed }. `missed` is a grace counter, not just
+// on/off: a vehicle absent from a single poll (a transient feed gap, not
+// actually gone - TfNSW's live feed drops individual vehicles from one
+// cycle to the next fairly often) used to make its marker vanish and pop
+// back in a cycle or two later. Now it fades instead and only gets removed
+// after MARKER_GRACE_MISSES consecutive misses.
 const markers = new Map();
+const MARKER_GRACE_MISSES = 2;
 let modelFitted = false;
 let modelBounds = null;
 
@@ -72,8 +86,8 @@ let lastServerCongestion = { cells: [], hotspot_count: 0, cell_metres: 150 }; //
 let lastVehicles = []; // so toggleMode() can re-filter instantly, without waiting for the next poll
 let lastRouteLines = {};
 
-const LAYER_GROUPS = { congestion: congestionLayer, demand: demandLayer, routes: routesLayer };
-const layerVisible = { congestion: true, demand: false, routes: false };
+const LAYER_GROUPS = { congestion: congestionLayer, demand: demandLayer, opal: opalLayer, routes: routesLayer };
+const layerVisible = { congestion: true, demand: false, opal: false, routes: false };
 
 // Which vehicle modes actually get drawn - independent of the layer toggles
 // above (those pick which analytics layer shows; this picks which vehicles
@@ -250,6 +264,50 @@ export async function loadDemandGrid() {
   }
 }
 
+export function hasOpalData() {
+  return opalGridLoaded;
+}
+
+// Fetch and draw the Opal tap on/off importance grid once - same shape and
+// caveats as loadDemandGrid() above, just a different endpoint/field and a
+// diverging (not sequential) colour scale, since a z-score has a sign.
+export async function loadOpalGrid() {
+  if (opalGridLoaded) return true;
+  try {
+    const response = await fetch("/opal_grid", { cache: "no-store" });
+    if (!response.ok) throw new Error(`HTTP ${response.status}`);
+    const grid = await response.json();
+    const cells = grid.cells || [];
+    cells.forEach((cell) => {
+      const b = cell.bounds;
+      if (!b) return;
+      const value = cell.importance_score;
+      const hasValue = typeof value === "number";
+      const color = hasValue ? importanceColor(value) : "#9aa39d";
+      L.rectangle([[b.min_lat, b.min_lon], [b.max_lat, b.max_lon]], {
+        stroke: false,
+        fillColor: color,
+        fillOpacity: hasValue ? 0.15 + Math.min(0.4, Math.abs(value) * 0.15) : 0.04
+      })
+        .bindPopup(
+          `<strong>Block ${cell.cell_id}</strong><br>` +
+          `Importance: ${hasValue ? `${value.toFixed(1)}σ` : "no data"}<br>` +
+          `~${grid.cell_metres || 150} m square<br>` +
+          `<span class="muted">Opal tap on/off activity, z-scored against other zones in view (not raw volume).</span>`
+        )
+        .addTo(opalLayer);
+    });
+    opalGridLoaded = cells.length > 0;
+    if (opalGridLoaded && layerVisible.opal && !map.hasLayer(opalLayer)) {
+      map.addLayer(opalLayer);
+    }
+    return opalGridLoaded;
+  } catch (error) {
+    console.warn("Could not load /opal_grid:", error.message);
+    return false;
+  }
+}
+
 // Fetch newly-seen route geometry. Safe/cheap to call repeatedly (e.g. on
 // an interval) - only adds shapes not already cached, since geometry never
 // changes once a shape has been seen. New routes can appear over time
@@ -361,6 +419,21 @@ export function congestionColor(value) {
   return "#087f74";
 }
 
+// Opal importance score (a z-score, unbounded, signed) -> diverging colour
+// ramp: this is a polarity signal ("busier/quieter than the other zones in
+// view"), not a magnitude like congestion, so it gets two hues either side
+// of a neutral grey midpoint rather than one hue ramped light-to-dark.
+// Built from the dashboard's own --blue/--red/--line tokens (style.css) so
+// it reads as a deliberately different *kind* of layer from the
+// teal-amber-red congestion ramp, not just a recolour of it.
+export function importanceColor(value) {
+  if (value >= 1.5) return "#cf5445";   // --red: well above average
+  if (value >= 0.5) return "#d59b91";   // mild hotspot
+  if (value > -0.5) return "#dce3dd";   // --line: near the model-area average
+  if (value > -1.5) return "#86b0c6";   // mild coldspot
+  return "#2874a6";                     // --blue: well below average
+}
+
 export function formatTime(seconds) {
   if (!seconds) return "No update";
   return new Date(seconds * 1000).toLocaleTimeString([], { hour: "2-digit", minute: "2-digit", second: "2-digit" });
@@ -428,13 +501,49 @@ export function updateMarkers(vehicles) {
     const modeClass = MODE_SHAPE_CLASS[vehicle.mode] || "mode-bus";
     const icon = L.divIcon({ className: "vehicle-icon", html: `<div class="vehicle-marker ${modeClass}" style="background:${color}"></div>`, iconSize: [16, 16], iconAnchor: [8, 8] });
     const congestionPct = vehicle.congestion_score == null ? "n/a" : `${Math.round(vehicle.congestion_score * 100)}%`;
-    const bunchingNote = vehicle.bunching_score == null ? "" : ` (bunching ${Math.round(vehicle.bunching_score * 100)}%)`;
     const modeLabel = MODE_LABEL[vehicle.mode] || vehicle.mode;
-    const popup = `<strong>${vehicle.route_short_name || vehicle.route_id || "Unassigned route"}</strong><br>${modeLabel} / ${label}<br>${vehicle.delay_seconds == null ? "Delay unavailable" : `${vehicle.delay_seconds}s delay`}<br>Congestion: ${congestionPct}${bunchingNote}`;
-    if (markers.has(vehicle.vehicle_id)) markers.get(vehicle.vehicle_id).setLatLng([vehicle.latitude, vehicle.longitude]).setIcon(icon).setPopupContent(popup);
-    else markers.set(vehicle.vehicle_id, L.marker([vehicle.latitude, vehicle.longitude], { icon }).addTo(map).bindPopup(popup));
+    // The three raw signals behind the blended score above - not just the
+    // final number, so "why is this 80%?" has an answer on click. Any
+    // signal can be missing independently (see vehicle_congestion_score on
+    // the backend) - each line says so plainly rather than going blank.
+    const speedLine = typeof vehicle.speed === "number"
+      ? `${Math.round(vehicle.speed * 3.6)} km/h`
+      : "unavailable";
+    const latenessLine = vehicle.delay_seconds == null
+      ? "unavailable"
+      : vehicle.delay_seconds <= 0
+        ? `${Math.abs(vehicle.delay_seconds)}s early`
+        : `${vehicle.delay_seconds}s late`;
+    const bunchingLine = vehicle.bunching_score == null
+      ? "no nearby vehicle on this route"
+      : `${Math.round(vehicle.bunching_score * 100)}%`;
+    const popup =
+      `<strong>${vehicle.route_short_name || vehicle.route_id || "Unassigned route"}</strong><br>` +
+      `${modeLabel} / ${label}<br>` +
+      `Speed: ${speedLine}<br>` +
+      `Lateness: ${latenessLine}<br>` +
+      `Bunching: ${bunchingLine}<br>` +
+      `Congestion: ${congestionPct}`;
+    const entry = markers.get(vehicle.vehicle_id);
+    if (entry) {
+      entry.marker.setLatLng([vehicle.latitude, vehicle.longitude]).setIcon(icon).setPopupContent(popup);
+      entry.marker.setOpacity(1); // back from a missed cycle, if it was faded
+      entry.missed = 0;
+    } else {
+      const marker = L.marker([vehicle.latitude, vehicle.longitude], { icon }).addTo(map).bindPopup(popup);
+      markers.set(vehicle.vehicle_id, { marker, missed: 0 });
+    }
   });
-  markers.forEach((marker, id) => { if (!active.has(id)) { map.removeLayer(marker); markers.delete(id); } });
+  markers.forEach((entry, id) => {
+    if (active.has(id)) return;
+    entry.missed += 1;
+    if (entry.missed > MARKER_GRACE_MISSES) {
+      map.removeLayer(entry.marker);
+      markers.delete(id);
+    } else {
+      entry.marker.setOpacity(0.4); // still on screen, but flagged as unconfirmed this cycle
+    }
+  });
 }
 
 // Named time periods (see config.TIME_PERIODS on the backend - kept in sync
@@ -470,7 +579,7 @@ export async function setPeriod(periodKey) {
     const data = await response.json();
     updateCongestion(data.congestion || { cells: [], hotspot_count: 0 });
     updateRouteLines(data.route_lines || {});
-    markers.forEach((marker) => map.removeLayer(marker));
+    markers.forEach(({ marker }) => map.removeLayer(marker));
     markers.clear();
     return data;
   } catch (error) {

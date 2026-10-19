@@ -48,7 +48,8 @@ connection error if the pipeline is unavailable.
 For the projector: `http://localhost:8080/dashboard/map.html` is the map
 alone, no header/metrics/table. Layer switching there is keyboard-only (no
 visible buttons, so nothing sits on top of the projected image) - press
-`1` for Congestion, `2` for Demand, `3` for Routes.
+`1` for Congestion, `2` for Demand, `3` for Importance (Opal tap on/off),
+`4` for Routes.
 
 The map-drawing logic (model bounds, congestion blocks, vehicle markers) is
 shared between both pages via `dashboard/map-core.js`, so a fix there only
@@ -85,6 +86,14 @@ pytest tests/ -v
   optional - it needs `data/demand/travel_zones_2021.geojson` and
   `data/demand/tzp24_employment.csv` from the TfNSW Open Data Hub (free
   login) to activate; without them, Demand just shows "no data".
+- Opal tap on/off importance is wired in (`pipeline/ingestion/opal_importance.py`)
+  but optional too - it needs `data/demand/travel_zones_2021.geojson` (same
+  file as above) and `data/opal/origin_destination_<week>.csv` (the "origin
+  and destination by travel zone" file from TfNSW's Opal Tap On and Tap Off
+  Release 3 (2020) dataset, also behind a free portal login) to activate;
+  without them, Importance just shows "no data". Only one week is loaded by
+  default (`ORIGIN_DESTINATION_PATH`); it's a snapshot from four
+  non-consecutive weeks in 2020, not a live feed.
 - No history/trend storage yet (current design is in-memory, current-state only).
 
 ## Documentation

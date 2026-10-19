@@ -20,6 +20,7 @@ from typing import Optional
 from . import config, history
 from .analytics import RollingAggregator, congestion_grid, route_line_scores, score_vehicles
 from .ingestion import demand as demand_ingestion
+from .ingestion import opal_importance
 from .ingestion import realtime_gtfs, static_gtfs
 from .normalise import normalise
 from .publish import SnapshotStore, run_server
@@ -70,6 +71,7 @@ def run_with_server(api_key: str) -> None:
     """Run ingestion in a background thread; serve the live snapshot on the main thread."""
     static = static_gtfs.load_static_gtfs(api_key)
     demand = demand_ingestion.load_demand_zones()
+    opal = opal_importance.load_opal_importance()
     aggregator = RollingAggregator()
     store = SnapshotStore()
 
@@ -79,6 +81,13 @@ def run_with_server(api_key: str) -> None:
         demand_cells = demand.build_grid(config.CONGESTION_GRID_CELL_METRES)
         store.set_demand_grid(demand_cells, config.CONGESTION_GRID_CELL_METRES)
         logger.info(f"Demand grid built: {len(demand_cells)} cells (independent of bus positions)")
+
+    if opal is not None:
+        # Same lifecycle as the demand grid - real tap on/off activity
+        # doesn't change during a run either.
+        opal_cells = opal.build_grid(config.CONGESTION_GRID_CELL_METRES)
+        store.set_opal_grid(opal_cells, config.CONGESTION_GRID_CELL_METRES)
+        logger.info(f"Opal importance grid built: {len(opal_cells)} cells (independent of bus positions)")
 
     seen_shape_ids = set()
     last_history_log = 0.0

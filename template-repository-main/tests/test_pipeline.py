@@ -23,7 +23,7 @@ from pipeline.analytics import (
 )
 from pipeline.ingestion.realtime_gtfs import RawFeeds
 from pipeline.ingestion.static_gtfs import StaticGTFS, TripInfo
-from pipeline.normalise import normalise
+from pipeline.normalise import VehicleRecord, normalise
 from pipeline.publish import SnapshotStore
 
 
@@ -201,6 +201,40 @@ def test_vehicle_congestion_score_blends_all_three_signals():
     # bunched (1) -> only the bunching weight (0.3 of 1.0 total) contributes
     score = vehicle_congestion_score(8.3, 0, 1.0)
     assert score == pytest.approx(0.3, abs=0.01)
+
+
+def _stationary_record(vehicle_id, lat, lon):
+    return VehicleRecord(
+        vehicle_id=vehicle_id, mode="buses", route_id="100", route_short_name="M10",
+        trip_id="trip_A", shape_id=None,
+        latitude=lat, longitude=lon, bearing=None, speed=0.0,
+        timestamp=int(time.time()), delay_seconds=0, cancelled=False,
+    )
+
+
+def test_score_vehicles_excludes_zero_speed_near_a_stop_from_scoring():
+    # TfNSW's live feed never sets current_status/stop_id (confirmed against
+    # the real feed - see config.NEAR_STOP_THRESHOLD_METRES), so a stationary
+    # vehicle right next to a real stop is assumed to be boarding, not stuck.
+    static = StaticGTFS(stops={"stop_1": (-33.8700, 151.2000)})
+    record = _stationary_record("v1", -33.8701, 151.2000)  # ~11m from the stop
+
+    score_vehicles([record], static)
+
+    assert record.speed == 0.0  # the raw GPS reading is untouched, still shown honestly
+    # speed dropped from scoring entirely -> only the on-time delay signal counts
+    assert record.congestion_score == pytest.approx(0.0, abs=0.01)
+
+
+def test_score_vehicles_still_flags_zero_speed_far_from_any_stop():
+    static = StaticGTFS(stops={"stop_1": (-33.8700, 151.2000)})
+    record = _stationary_record("v2", -33.8750, 151.2000)  # ~556m from the stop - not boarding
+
+    score_vehicles([record], static)
+
+    # same inputs as the (0.0, 0, 0.571) case in test_vehicle_congestion_score -
+    # far from any stop, 0 km/h counts fully as congestion again.
+    assert record.congestion_score == pytest.approx(0.571, abs=0.01)
 
 
 def test_route_bunching_scores_flags_close_buses_on_same_shape(static_gtfs):

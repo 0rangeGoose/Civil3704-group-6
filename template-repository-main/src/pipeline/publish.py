@@ -43,6 +43,7 @@ class SnapshotStore:
         self._route_adherence: Dict[str, dict] = {}
         self._congestion: dict = {"cells": [], "hotspot_count": 0}
         self._demand_grid: dict = {"cells": [], "cell_metres": config.CONGESTION_GRID_CELL_METRES}
+        self._opal_grid: dict = {"cells": [], "cell_metres": config.CONGESTION_GRID_CELL_METRES}
         self._route_lines: Dict[str, dict] = {}
         self._route_shapes: Dict[str, dict] = {}
         self._updated_at: float = 0.0
@@ -57,6 +58,17 @@ class SnapshotStore:
     def demand_grid(self) -> dict:
         with self._lock:
             return self._demand_grid
+
+    def set_opal_grid(self, cells: List[dict], cell_metres: float) -> None:
+        """The Opal tap on/off importance layer (see
+        ingestion.opal_importance.OpalZones.build_grid) - set once at
+        startup, same lifecycle as the demand grid."""
+        with self._lock:
+            self._opal_grid = {"cells": cells, "cell_metres": cell_metres}
+
+    def opal_grid(self) -> dict:
+        with self._lock:
+            return self._opal_grid
 
     def add_route_shapes(self, shapes: Dict[str, dict]) -> None:
         """Accumulate route-line geometry (shape_id -> {points, route_id,
@@ -126,6 +138,13 @@ def build_app(store: SnapshotStore):
         bus position - fetched once by the frontend on load, not part of the
         repeating /snapshot poll, since it's static for the life of a run."""
         return store.demand_grid()
+
+    @app.get("/opal_grid")
+    def get_opal_grid():
+        """The Opal tap on/off importance layer (z-scored trip volume per
+        travel zone) - fetched once by the frontend on load, same lifecycle
+        as /demand_grid."""
+        return store.opal_grid()
 
     @app.get("/route_shapes")
     def get_route_shapes():

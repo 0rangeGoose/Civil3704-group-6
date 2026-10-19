@@ -144,6 +144,16 @@ CONGESTION_DELAY_CAP_SECONDS = 600   # delay at which the delay term saturates
 BUNCHING_CLOSE_METRES = 100
 BUNCHING_FAR_METRES = 800
 
+# A stationary (0 km/h) vehicle within this distance of any static GTFS stop
+# is treated as boarding passengers, not congested - its speed is excluded
+# from scoring (re-weighted onto delay/bunching) rather than counted as
+# slowness=1.0. TfNSW's live feed doesn't populate current_status or stop_id
+# (confirmed empty on every vehicle against the real feed), which is the
+# field GTFS-RT normally uses for exactly this distinction - this proximity
+# check is the fallback given what TfNSW actually sends. First-pass value,
+# not calibrated against real stop dwell zones.
+NEAR_STOP_THRESHOLD_METRES = 25.0
+
 # Weights when all three signals are available (they're re-normalised when
 # one or more is missing - see vehicle_congestion_score).
 CONGESTION_SPEED_WEIGHT = 0.4

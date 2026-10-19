@@ -44,6 +44,7 @@ from pathlib import Path
 from typing import Dict, List, Optional, Sequence, Tuple
 
 from .. import config, gridmath
+from .zone_geometry import extract_rings, point_in_rings, ring_bbox
 
 logger = logging.getLogger(__name__)
 
@@ -94,7 +95,7 @@ class DemandZones:
             min_lat, max_lat, min_lon, max_lon = zone.bbox
             if not (min_lat <= lat <= max_lat and min_lon <= lon <= max_lon):
                 continue
-            if _point_in_rings(lat, lon, zone.rings):
+            if point_in_rings(lat, lon, zone.rings):
                 return round(zone.employment / self.max_employment, 3)
         return None
 
@@ -131,7 +132,7 @@ class DemandZones:
                     bounds = gridmath.cell_bounds(row, col, cell_metres)
                     center_lat = (bounds["min_lat"] + bounds["max_lat"]) / 2
                     center_lon = (bounds["min_lon"] + bounds["max_lon"]) / 2
-                    if _point_in_rings(center_lat, center_lon, zone.rings):
+                    if point_in_rings(center_lat, center_lon, zone.rings):
                         seen[(row, col)] = round(zone.employment / self.max_employment, 3)
 
         cells = []
@@ -186,51 +187,6 @@ def _pick_nearest_year(available_years, reference_year: Optional[int]) -> Option
         return None
     reference = reference_year if reference_year is not None else datetime.date.today().year
     return min(available_years, key=lambda y: abs(y - reference))
-
-
-def _ring_bbox(ring: List[Tuple[float, float]]) -> Tuple[float, float, float, float]:
-    lats = [p[0] for p in ring]
-    lons = [p[1] for p in ring]
-    return min(lats), max(lats), min(lons), max(lons)
-
-
-def _point_in_ring(lat: float, lon: float, ring: List[Tuple[float, float]]) -> bool:
-    """Standard ray-casting point-in-polygon test."""
-    inside = False
-    n = len(ring)
-    j = n - 1
-    for i in range(n):
-        lat_i, lon_i = ring[i]
-        lat_j, lon_j = ring[j]
-        if (lon_i > lon) != (lon_j > lon):
-            x_intersect = (lat_j - lat_i) * (lon - lon_i) / (lon_j - lon_i + 1e-15) + lat_i
-            if lat < x_intersect:
-                inside = not inside
-        j = i
-    return inside
-
-
-def _point_in_rings(lat: float, lon: float, rings: List[List[Tuple[float, float]]]) -> bool:
-    """rings[0] is the exterior boundary; any further rings are holes cut out of it."""
-    if not rings or not _point_in_ring(lat, lon, rings[0]):
-        return False
-    return not any(_point_in_ring(lat, lon, hole) for hole in rings[1:])
-
-
-def _extract_rings(geometry: dict) -> List[List[Tuple[float, float]]]:
-    """GeoJSON coordinates are [lon, lat] - flip to (lat, lon) here so the
-    rest of the pipeline never has to think about GeoJSON's axis order."""
-    coords = geometry.get("coordinates", [])
-    gtype = geometry.get("type")
-
-    def flip(ring):
-        return [(point[1], point[0]) for point in ring]
-
-    if gtype == "Polygon":
-        return [flip(ring) for ring in coords]
-    if gtype == "MultiPolygon":
-        return [flip(ring) for polygon in coords for ring in polygon]
-    return []
 
 
 def load_demand_zones(
@@ -339,14 +295,14 @@ def load_demand_zones(
         if zone_id is None or zone_id not in employment_by_zone:
             continue
 
-        rings = _extract_rings(feature.get("geometry", {}))
+        rings = extract_rings(feature.get("geometry", {}))
         if not rings:
             continue
-        ring_bbox = _ring_bbox(rings[0])
+        zone_bbox = ring_bbox(rings[0])
 
         # Skip zones nowhere near the model footprint before doing anything
         # more expensive with them - TZ21 covers the whole state.
-        min_lat, max_lat, min_lon, max_lon = ring_bbox
+        min_lat, max_lat, min_lon, max_lon = zone_bbox
         if max_lat < bbox["min_lat"] or min_lat > bbox["max_lat"]:
             continue
         if max_lon < bbox["min_lon"] or min_lon > bbox["max_lon"]:
@@ -356,7 +312,7 @@ def load_demand_zones(
             DemandZone(
                 zone_id=zone_id,
                 employment=employment_by_zone[zone_id],
-                bbox=ring_bbox,
+                bbox=zone_bbox,
                 rings=rings,
             )
         )

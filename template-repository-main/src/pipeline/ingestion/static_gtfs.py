@@ -45,6 +45,7 @@ class StaticGTFS:
     trips: Dict[str, TripInfo] = field(default_factory=dict)
     shapes: Dict[str, List[Tuple[float, float]]] = field(default_factory=dict)
     stop_ids_in_bbox: set = field(default_factory=set)
+    stops: Dict[str, Tuple[float, float]] = field(default_factory=dict)  # stop_id -> (lat, lon)
 
     def lookup_trip(self, trip_id: str) -> Optional[TripInfo]:
         return self.trips.get(trip_id)
@@ -134,6 +135,11 @@ def load_and_filter(data_dir: Path = config.STATIC_GTFS_DIR, bbox: dict = config
         & (stops["stop_lon"] <= bbox["max_lon"])
     ]
     stop_ids_in_bbox = set(in_bbox["stop_id"])
+    stops_by_id: Dict[str, Tuple[float, float]] = {
+        row.stop_id: (row.stop_lat, row.stop_lon)
+        for row in in_bbox.itertuples(index=False)
+        if pd.notna(row.stop_lat) and pd.notna(row.stop_lon)
+    }
 
     route_names = routes.set_index("route_id")["route_short_name"].to_dict()
 
@@ -158,7 +164,9 @@ def load_and_filter(data_dir: Path = config.STATIC_GTFS_DIR, bbox: dict = config
         f"Static GTFS loaded: {len(trip_lookup)} trips, {len(shape_lookup)} shapes, "
         f"{len(stop_ids_in_bbox)} stops in bbox"
     )
-    return StaticGTFS(trips=trip_lookup, shapes=shape_lookup, stop_ids_in_bbox=stop_ids_in_bbox)
+    return StaticGTFS(
+        trips=trip_lookup, shapes=shape_lookup, stop_ids_in_bbox=stop_ids_in_bbox, stops=stops_by_id
+    )
 
 
 def cache_to_sqlite(static: StaticGTFS, db_path: Path = config.STATIC_GTFS_CACHE_DB) -> None:

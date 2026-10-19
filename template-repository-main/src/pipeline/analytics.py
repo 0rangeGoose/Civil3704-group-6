@@ -189,13 +189,35 @@ def vehicle_congestion_score(
     return round(score, 3)
 
 
+def _near_any_stop(lat: float, lon: float, stops: Dict[str, Tuple[float, float]],
+                    threshold_metres: float = config.NEAR_STOP_THRESHOLD_METRES) -> bool:
+    """True if (lat, lon) is within `threshold_metres` of any static GTFS
+    stop - see config.NEAR_STOP_THRESHOLD_METRES for why this exists (TfNSW's
+    live feed doesn't say whether a stopped vehicle is boarding or stuck)."""
+    ref_lat = gridmath.GRID_REF_LAT
+    lon_scale = 111_320.0 * math.cos(math.radians(ref_lat))
+    for stop_lat, stop_lon in stops.values():
+        lat_m = (lat - stop_lat) * 111_320.0
+        lon_m = (lon - stop_lon) * lon_scale
+        if math.hypot(lat_m, lon_m) <= threshold_metres:
+            return True
+    return False
+
+
 def score_vehicles(records: List[VehicleRecord], static: StaticGTFS) -> List[VehicleRecord]:
     """Set `congestion_score` (and `bunching_score`) on each record in place."""
     bunching = route_bunching_scores(records, static)
     for record in records:
         record.bunching_score = bunching.get(record.vehicle_id)
+        # record.speed itself is left untouched (still the true GPS reading,
+        # e.g. for the dashboard popup) - only the value fed into scoring is
+        # adjusted, and only when it's plausibly a scheduled stop rather than
+        # congestion: 0 km/h right next to a real stop.
+        speed_for_scoring = record.speed
+        if speed_for_scoring == 0 and _near_any_stop(record.latitude, record.longitude, static.stops):
+            speed_for_scoring = None
         record.congestion_score = vehicle_congestion_score(
-            record.speed, record.delay_seconds, record.bunching_score
+            speed_for_scoring, record.delay_seconds, record.bunching_score
         )
     return records
 
