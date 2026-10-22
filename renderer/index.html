@@ -140,6 +140,14 @@ let modeToGroup = {}; // feed mode -> controller group, from /config
 let segments = [];
 const SEGMENT_POLL_MS = 10000;
 
+// Live or replay, from each vehicle frame. During a time-lapse, positions
+// arrive `speed` times faster, so interpolation and fade-out timing shrink to
+// match; a new epoch (source switched, or a replay looped) clears the screen.
+let playback = { mode: "live", speed: 1 };
+let epoch = null;
+function pollIntervalMs() { return ((cfg.poll_interval_seconds || 15) * 1000) / (playback.speed || 1); }
+function staleAfterMs() { return ((cfg.stale_after_seconds || 90) * 1000) / (playback.speed || 1); }
+
 function applyControl(next) {
   const layoutChanged =
     next.theme !== control.theme ||
@@ -156,14 +164,21 @@ function applyControl(next) {
   if (control.line_layer !== "none" && !segments.length) pollSegments();
 }
 
+let lastSegmentPoll = 0;
 async function pollSegments() {
   if (control.line_layer === "none") return;
+  lastSegmentPoll = performance.now();
   try {
     const resp = await fetch("/segments", { cache: "no-store" });
     if (resp.ok) segments = await resp.json();
   } catch (_) { /* keep the last good set; the next poll retries */ }
 }
-setInterval(pollSegments, SEGMENT_POLL_MS);
+// Every 10s live; faster during a time-lapse (but no more than every 2s),
+// so street colours keep up with the recorded time.
+setInterval(() => {
+  const due = Math.max(2000, SEGMENT_POLL_MS / (playback.speed || 1));
+  if (performance.now() - lastSegmentPoll >= due) pollSegments();
+}, 1000);
 
 function levelColor(layer, level) {
   if (level === null || level === undefined) return null;
@@ -368,7 +383,7 @@ function applyFrame(frameVehicles) {
 function lerp(a, b, t) { return a + (b - a) * t; }
 
 function currentRenderPosition(entry, nowMs) {
-  const pollMs = (cfg.poll_interval_seconds || 15) * 1000;
+  const pollMs = pollIntervalMs();
   if (!entry.curr) return null;
   if (!entry.prev) return [entry.curr.lat, entry.curr.lon, 0];
   const elapsed = nowMs - entry.currReceivedAt;
@@ -392,8 +407,8 @@ function render() {
   if (calibrateMode) drawCalibrationCrosshairs();
 
   const nowMs = performance.now();
-  const staleMs = (cfg.stale_after_seconds || 90) * 1000;
-  const pollMs = (cfg.poll_interval_seconds || 15) * 1000;
+  const staleMs = staleAfterMs();
+  const pollMs = pollIntervalMs();
   const toDelete = [];
 
   for (const [key, entry] of vehicles) {
@@ -445,7 +460,10 @@ function render() {
       verificationMode ? "VERIFY" : null,
       n.dx || n.dy || n.scale !== 1 ? `NUDGE ${n.dx},${n.dy} x${n.scale.toFixed(3)}` : null,
     ].filter(Boolean);
-    statusEl.textContent = `pulse-cbd  |  ${vehicles.size} vehicles  |  ${wsStatus}` +
+    const when = playback.mode === "replay"
+      ? `REPLAY ${playback.label} @ ${new Date(playback.t * 1000).toLocaleTimeString("en-AU", { timeZone: "Australia/Sydney" })} x${playback.speed}`
+      : "LIVE";
+    statusEl.textContent = `pulse-cbd  |  ${when}  |  ${vehicles.size} vehicles  |  ${wsStatus}` +
       (modeFlags.length ? `  |  ${modeFlags.join(" ")}` : "");
   }
 }
@@ -681,6 +699,13 @@ function connectWebSocket() {
     const frame = JSON.parse(ev.data);
     if (frame.control) { applyControl(frame.control); return; }
     if (frame.control_error) { console.warn("control rejected:", frame.control_error); return; }
+    if (frame.epoch !== epoch) {
+      epoch = frame.epoch;
+      vehicles.clear();
+      segments = [];
+      pollSegments();
+    }
+    if (frame.playback) playback = frame.playback;
     applyFrame(frame.vehicles);
     if (frame.interchanges) interchanges = frame.interchanges;
   };

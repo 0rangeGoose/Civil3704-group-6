@@ -27,6 +27,7 @@ from engine.publish.control import MODE_GROUPS, ControlError, ControlState
 from engine.publish.feed import LiveVehicleFeed
 from engine.publish.homography import HomographyError
 from engine.publish.shapes_export import build_render_shapes
+from engine.sources.replay import RecordingIndex, ReplaySource
 
 logger = logging.getLogger("pulse_cbd.publish_server")
 
@@ -54,7 +55,7 @@ def _vehicle_frame(record) -> dict:
 
 
 def _interchange_frame(feed: "LiveVehicleFeed") -> list[dict]:
-    counts = feed.rolling_interchange_activity.counts()
+    counts = feed.rolling_interchange_activity.counts(now=feed.clock)
     return [
         {"name": ic.name, "lat": ic.lat, "lon": ic.lon, "count": counts.get(ic.name, 0)}
         for ic in feed.interchanges
@@ -79,7 +80,11 @@ async def stats_redirect_handler(request: web.Request) -> web.Response:
 
 async def health_handler(request: web.Request) -> web.Response:
     feed: LiveVehicleFeed = request.app["feed"]
-    return web.json_response({**feed.health(), "connected_pages": len(request.app["websockets"])})
+    return web.json_response({
+        **feed.health(),
+        "connected_pages": len(request.app["websockets"]),
+        "playback": _playback_frame(request.app),
+    })
 
 
 async def aggregate_handler(request: web.Request) -> web.Response:
@@ -109,10 +114,18 @@ async def _handle_control_message(app: web.Application, ws: web.WebSocketRespons
     try:
         message = json.loads(data)
         patch = message["control"]
+        session = patch.get("playback", {}).get("session") if isinstance(patch, dict) else None
+        if session not in (None, "live"):
+            known = await asyncio.to_thread(app["replay_index"].find, session)
+            if known is None:
+                raise ControlError(f"no recording {session!r}")
+        before = app["control"].state["playback"]["session"]
         app["control"].apply(patch)
-    except (ValueError, KeyError, TypeError, ControlError) as exc:
+    except (ValueError, KeyError, TypeError, AttributeError, ControlError) as exc:
         await _send_one(ws, json.dumps({"control_error": str(exc)}))
         return
+    if app["control"].state["playback"]["session"] != before:
+        await switch_source(app)
     await broadcast_control(app)
 
 
@@ -122,7 +135,50 @@ async def broadcast_control(app: web.Application) -> None:
 
 async def segments_handler(request: web.Request) -> web.Response:
     feed: LiveVehicleFeed = request.app["feed"]
-    return web.json_response(feed.segments.snapshot(time.time()))
+    return web.json_response(feed.segments.snapshot(feed.clock))
+
+
+async def recordings_handler(request: web.Request) -> web.Response:
+    index: RecordingIndex = request.app["replay_index"]
+    sessions = await asyncio.to_thread(index.sessions)
+    return web.json_response([s.to_json() for s in sessions])
+
+
+def _playback_frame(app: web.Application) -> dict:
+    feed: LiveVehicleFeed = app["feed"]
+    replay: ReplaySource | None = app["replay"]
+    if replay is None:
+        return {"mode": "live", "t": feed.clock, "speed": 1}
+    return {
+        "mode": "replay",
+        "session": replay.session.id,
+        "label": replay.session.label,
+        "t": feed.clock,
+        "speed": app["control"].state["playback"]["speed"],
+        "progress": round(replay.progress, 4),
+    }
+
+
+async def switch_source(app: web.Application) -> None:
+    """Swap the feed between live polling and a replay. Live polling (and the
+    server's own recording) pauses while a replay plays."""
+    feed: LiveVehicleFeed = app["feed"]
+    session_id = app["control"].state["playback"]["session"]
+    app["feed_task"].cancel()
+    try:
+        await app["feed_task"]
+    except asyncio.CancelledError:
+        pass
+    feed.reset()
+    if session_id == "live":
+        app["replay"] = None
+        app["feed_task"] = asyncio.create_task(feed.run_forever())
+    else:
+        session = app["replay_index"].find(session_id)
+        control = app["control"]
+        app["replay"] = ReplaySource(app["replay_index"], session, speed=lambda: control.state["playback"]["speed"])
+        app["feed_task"] = asyncio.create_task(feed.run_forever(app["replay"]))
+    logger.info("playback switched to %s", session_id)
 
 
 async def snapshot_handler(request: web.Request) -> web.Response:
@@ -227,6 +283,8 @@ async def _broadcast_loop(app: web.Application) -> None:
         frame = json.dumps(
             {
                 "t": time.time(),
+                "epoch": feed.epoch,
+                "playback": _playback_frame(app),
                 "vehicles": [_vehicle_frame(r) for r in feed.snapshot.values()],
                 "interchanges": _interchange_frame(feed),
             }
@@ -250,8 +308,10 @@ def build_app(cfg: Config) -> web.Application:
     app["cfg"] = cfg
     app["websockets"] = set()
     app["control"] = ControlState(cfg.root / "data" / "projection_nudge.json")
+    app["replay"] = None
     app["feed"] = LiveVehicleFeed(cfg)
     app["shapes"] = build_render_shapes(cfg.path("db_path"), cfg.bounding_box)
+    app["replay_index"] = RecordingIndex(app["feed"].recordings_dir)
 
     app.router.add_get("/", index_handler)
     app.router.add_get("/control", controller_handler)
@@ -261,6 +321,7 @@ def build_app(cfg: Config) -> web.Application:
     app.router.add_get("/snapshot", snapshot_handler)
     app.router.add_get("/shapes", shapes_handler)
     app.router.add_get("/segments", segments_handler)
+    app.router.add_get("/recordings", recordings_handler)
     app.router.add_get("/config", config_handler)
     app.router.add_get("/aggregate", aggregate_handler)
     app.router.add_get("/calibration", get_calibration_handler)

@@ -2,6 +2,34 @@
 
 Judgment calls made without stopping to ask, per the project brief. Newest first.
 
+## 2026-10-23 — Step 3: replay and time-lapse
+
+- **Replay goes through the same engine as live.** `engine/sources/replay.py` merges the
+  recorded feeds for a window into one stream ordered by fetch time and paces it at
+  `speed` x real time; the engine treats each payload's fetch time as "now"
+  (`feed.clock`), so 10-minute windows, adherence windows and stale-vehicle pruning all
+  run on recorded time. Switching source or looping bumps an `epoch` in every frame so
+  pages clear what they're showing.
+- **What can be replayed**: each AM peak (7:00–9:00) and PM peak (16:30–18:30) Sydney
+  time with at least 10% of expected bus updates, plus "latest 2 hours recorded" (for
+  testing before the first scheduled peak). Coverage counts real updates, not hour
+  files: the old server's September recordings have a file for every hour but only 1–3
+  bus updates per hour (it was being rate-limited), so they're hidden. The only usable
+  older sessions are weekends (6 Sep, 22 Aug), fine for testing, not for the showcase.
+- **Defaults**: live on startup; replays loop; 25x (a 2h peak in under 5 minutes), with
+  1x / 10x / 25x / 50x on the tablet. Live polling, and the server's own recording,
+  pause during a replay; the scheduled recorder is a separate process and isn't
+  affected.
+- **Map-matching speed-up (affects live too).** Profiling the replay showed the
+  nearest-route fallback took ~14ms per vehicle (92% of CPU; the live server sat at
+  ~85% CPU): almost every cached shape's bounding box covers the CBD, so the spatial
+  index couldn't rule any out. The index now holds 32-point pieces of each shape.
+  Dense recorded data now processes at ~96x real time (was ~11x), so 25x/50x replays
+  keep up — measured 50.0x effective at 50x.
+- On the projector, interpolation, fade-out and street-colour polling scale with the
+  replay speed. Which recording is playing, its clock and progress show on the tablet
+  only (and on the projection's status line if the team turns it on).
+
 ## 2026-10-23 — Step 2: TfNSW traffic and crowding on route segments
 
 - **Straight from TfNSW's fields, no estimation yet.** `congestion_level` and

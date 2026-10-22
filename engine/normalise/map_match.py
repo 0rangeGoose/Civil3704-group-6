@@ -20,6 +20,9 @@ from shapely.strtree import STRtree
 from engine.normalise.projection import to_metric, to_wgs84
 
 
+_PIECE_POINTS = 32
+
+
 @dataclass
 class MapMatch:
     matched_lat: float
@@ -37,8 +40,22 @@ class ShapeIndex:
         finally:
             conn.close()
 
-        self._shape_ids = list(self._shapes.keys())
-        self._tree = STRtree([self._shapes[sid] for sid in self._shape_ids])
+        # The search tree indexes short *pieces* of each shape, not whole
+        # shapes. Nearly every route's bounding box covers the CBD (the cache
+        # keeps a shape whole if it touches the footprint), so a tree of whole
+        # shapes can't rule any of them out and ends up measuring the distance
+        # to thousands of long lines per vehicle (~15ms each). Pieces have
+        # small boxes, so all but a handful are pruned.
+        self._piece_shape_ids: list[str] = []
+        pieces: list[LineString] = []
+        for shape_id, line in self._shapes.items():
+            coords = list(line.coords)
+            for i in range(0, len(coords) - 1, _PIECE_POINTS - 1):
+                piece = coords[i:i + _PIECE_POINTS]
+                if len(piece) >= 2:
+                    pieces.append(LineString(piece))
+                    self._piece_shape_ids.append(shape_id)
+        self._tree = STRtree(pieces)
 
     @staticmethod
     def _load_shapes(conn: sqlite3.Connection) -> dict[str, LineString]:
@@ -89,11 +106,13 @@ class ShapeIndex:
 
     def nearest_shape(self, lat: float, lon: float, max_distance_m: float) -> tuple[str, MapMatch] | None:
         """Geometric fallback when the feed's route/trip id didn't resolve."""
-        if not self._shape_ids:
+        if not self._piece_shape_ids:
             return None
         point = Point(to_metric(lat, lon))
-        idx = self._tree.nearest(point)
-        shape_id = self._shape_ids[idx]
+        hits = self._tree.query_nearest(point, max_distance=max_distance_m)
+        if len(hits) == 0:
+            return None
+        shape_id = self._piece_shape_ids[int(hits[0])]
         match = self._snap(self._shapes[shape_id], lat, lon)
         if match.distance_from_shape_m > max_distance_m:
             return None
