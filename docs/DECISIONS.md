@@ -2,6 +2,184 @@
 
 Judgment calls made without stopping to ask, per the project brief. Newest first.
 
+## 2026-10-23 — Step 2: TfNSW traffic and crowding on route segments
+
+- **Straight from TfNSW's fields, no estimation yet.** `congestion_level` and
+  `occupancy_status` become ordinal levels (`engine/normalise/levels.py`): traffic
+  0–3 (running smoothly → severe), crowding 0–3 (seats → crowded/full, with EMPTY
+  folded into "seats" and the three "no room" states into one, so the projection needs
+  four colours, not seven).
+- **Traffic counts buses only.** TfNSW also reports it for Metro, but a metro line
+  isn't in road traffic; it would paint rail corridors as "congested".
+- **Train crowding = the median carriage** of the 1007 `consist` extension when there's
+  no vehicle-level value, so one packed front car doesn't make a whole train "full".
+- **Route segments are 200m sections of each shape** by distance along it. A section
+  shows the mean level over the last 10 minutes, each vehicle counted once at its
+  latest reading. Several routes share most CBD streets, so sections overlap; they're
+  drawn worst-on-top. Deduplicating to physical street segments would fix that
+  properly but needs a street network we don't have; revisit if it reads badly on the
+  model.
+- **Dot colour follows a lens** (schedule / traffic / crowding) and **one street layer**
+  (off / traffic / crowding) at a time, both from the tablet or **L**/**K**. Dots with
+  no reading under the current lens are grey ("not reported").
+- First live check (Fri 23 Oct, ~10:30am): 164 of 269 buses on the model had a
+  traffic level, all buses and Metro had crowding, Sydney Trains 26 of 56 (via
+  carriages), light rail and ferries none. 633 sections with data; mostly "running
+  smoothly" and "seats available" at that hour.
+
+## 2026-10-23 — Step 1 implementation calls
+
+Step 1 of the showcase plan (below) is built: new footprint, projector view with no
+UI, tablet controller with keyboard backup, footprint-trimmed scheduled recording.
+Calls made along the way:
+
+- **Display state lives on the server** (`engine/publish/control.py`), sent over the
+  existing WebSocket. Pages send `{"control": patch}` and only change when the merged
+  state comes back, so the tablet, the laptop keyboard and the projector never
+  disagree. Only the nudge persists across restarts (`data/projection_nudge.json`);
+  everything else starts in the safe default (no HUD, not calibrating).
+- **Nudge = shift + uniform scale about the screen centre**, applied after whichever
+  projector is active. Switched off while calibrating, since crosshairs are placed in
+  raw screen pixels, and reset when a calibration is saved.
+- **The server now listens on 0.0.0.0** (`server.host`) so the tablet can reach it.
+  Anyone on the same network can open the controller, hence the hotspot rule. The team
+  PIN is checked in the browser only; it keeps visitors out, nothing more.
+- **`/stats` redirects to `/control#stats`**; `renderer/stats.html` is gone. The
+  theme setting moved from browser localStorage to the server's control state.
+- **Recording is trimmed to a 10%-padded footprint.** Trip updates are kept if their
+  vehicle was in the footprint in the last two polls *or* they stop at a footprint
+  stop (Sydney Trains/Metro trip ids don't match the static bundle, so the first rule
+  alone would drop them). Alerts pass through. The ~14GB of unfiltered recordings from
+  August is left in place, untouched.
+- **Writer tag in recording filenames** (`.serve.` / `.rec.`) so the server and the
+  scheduled recorder never append to the same gzip file at once. Hours are UTC.
+- **Requests are spaced ≥0.3s apart.** Polling fired ~22 requests in a burst every 15s
+  and TfNSW rejected a large share with 429 (only 12 payloads in 45s). Spaced out:
+  60 payloads/minute, no 429s.
+- **Only the combined `/v2/gtfs/alerts/all` feed is polled.** Each alerts payload
+  replaced the whole alert summary, so polling the 7 per-mode feeds as well meant the
+  stats panel only ever showed whichever arrived last (usually `regionbuses`). Also
+  saves 7 requests per cycle.
+- **Scheduled recording**: launchd agent, weekdays 06:55 and 16:25 for 130 minutes,
+  under `caffeinate -i`. Waking a sleeping Mac needs root, so
+  `scripts/install_recording_schedule.py` writes `scripts/wake_schedule.sh` (one
+  `pmset schedule wake` per peak up to 6 Nov) to run once with sudo.
+- The static cache was rebuilt for the new footprint from the 19 Aug timetable
+  bundle; the old cache is kept as `gtfs_cbd.pre-footprint.db`. Server startup now
+  takes ~13s (corridor export over the bigger cache).
+
+## 2026-09-25 — Showcase plan: merging the team's direction into pulse-cbd
+
+Agreed in a design review (grilling session) ahead of the **6 Nov 2026** showcase. Unlike
+the entries below, these were decided with the project owner, not made unilaterally.
+
+### Context
+
+- The team's branches (`group-repo/mid-project-demo`, a superset of `test-pipline`) are a
+  separate codebase under `template-repository-main/`: a Leaflet dashboard plus pipeline
+  with congestion / demand / routes layers, historical periods, and a keyboard-only
+  projector page. It shares no history with `pulse-cbd`'s `test` branch.
+- Their overall direction (a planning tool: congestion, demand, peak comparison) is the
+  right one, but the way they calculate congestion and demand is not. pulse-cbd stays the
+  single codebase; their ideas are rebuilt here properly rather than merged as-is.
+- Live feed check (2026-09-25, one snapshot): TfNSW already publishes per-vehicle
+  `congestion_level` (buses: 977 of 1,542 populated; metro: all; Sydney Trains: always
+  unknown) and `occupancy_status` (all buses and metro; trains mostly per carriage via the
+  1007 `consist` extension). Neither codebase used `congestion_level`.
+- Problems identified in the team's congestion score: it applies a bus free-flow speed to
+  trains/metro; treats absolute (upstream-accumulated) delay as local congestion; counts
+  dwell at stops/lights as slowness; scores scheduled high-frequency headways as bunching;
+  averages whatever vehicles are in a grid cell at that instant.
+- The team's "demand" layer is TZP24 place-of-work employment: static land use, not
+  transit demand.
+- Their `dashboard/map-core.js` commits a CARTO API key in plain text.
+
+### Decisions
+
+**Footprint.** Default `bounding_box` becomes the team's surveyed `MODEL_CORNERS`
+(NE −33.835123, 151.275993; SW −33.894723, 151.132966; ~13.2 km E-W × 6.6 km N-S, ~2:1).
+Stays in config so it can be changed.
+
+**Projection.** The projector mirrors the laptop screen, so the projected view shows map
+content only: no on-screen UI, no hint overlay, hidden cursor. No basemap (keeps the
+existing no-basemap decision; the team's CARTO basemap is not adopted). The rig (model +
+projector) stays set up between weekly sessions: each session starts with the `V`
+verification overlay; use a nudge/scale adjustment for small drift and full crosshair
+recalibration only when needed.
+
+**Controls.** Both the team and visitors operate it. A dedicated tablet by the model,
+on the laptop's own hotspot (not venue Wi-Fi, which may block device-to-device traffic),
+opens a controller page served by pulse-cbd that relays commands to the projected view
+over the existing WebSocket. Three tabs:
+- *Visitor view* (big buttons): layer toggles, zones/grid toggle, dot-colour lens,
+  live / AM replay / PM replay, a short legend.
+- *Team panel* (PIN or long-press): combined-score weights, nudge/scale, start
+  calibration, recording controls, system health (feed status, vehicle counts).
+- *Stats*: the existing `/stats` dashboard folds in here and stops being a separate page.
+
+Keyboard shortcuts stay on the laptop as a team backup.
+
+**Congestion.** Both, in this order:
+1. TfNSW's `congestion_level`, shown directly (buses + metro). Quick to ship and a
+   fallback if (2) runs late.
+2. A derived metric: **delay gained per road segment**. The change in a vehicle's delay
+   between consecutive observations is attributed to the stretch of road it covered.
+   Buses only, dwell at stops excluded.
+Validated with an **agreement table** (derived levels vs TfNSW's five categories across
+the recorded data), plus a short write-up of where and why they disagree.
+
+**Demand.** Four layers, each toggleable on its own:
+- *Live crowding*: occupancy from the feeds (vehicle-level, plus per-carriage for trains).
+- *Jobs*: TZP24 employment, labelled "jobs", not "demand".
+- *Service gap*: jobs vs scheduled service frequency per zone.
+- *Opal 2016*: Opal Tap On/Tap Off Release 2 (Nov 2016 weekday), 15-min bins by
+  location, labelled as pre-Metro and pre-CBD light rail.
+
+**Spatial units.** Things that move along routes (congestion, crowding) are drawn on
+route segments. Fixed-place layers get a toggle between **TZ21 travel zones** and the
+**150 m grid**, to compare them visually and pick one later.
+
+**Merging.** Layers can be stacked, capped at one area layer plus one line layer at a time
+(more is unreadable when projected). There is also one **combined "pressure" layer**:
+- inputs: congestion, crowding, service gap, Opal 2016 (jobs excluded, since it is
+  already inside service gap)
+- each input is percentile-ranked across zones (not min–max, so one extreme zone can't
+  flatten the rest)
+- equal weights by default, adjustable from the team panel
+- output 0–1, higher = more pressure on the network
+
+**Vehicle dots.** Colour shows adherence by default; the controller's lens switches it to
+congestion or crowding; dots go neutral white while an area layer is on. Interchange
+pulses stay on in every view.
+
+**Replay.** Live by default, plus recorded AM and PM peaks chosen from the controller,
+played either real-time or as a **time-lapse** (e.g. a 2-hour peak in ~5 minutes). The
+time-lapse is the showcase default. It also covers the team's AM/PM-peak comparison idea
+with real recordings instead of averaged history, and protects the demo if Wi-Fi or the
+TfNSW API fails.
+
+**Recording.** Showcase time of day is unknown, so record both peaks, **7–9 am and
+4:30–6:30 pm, every weekday**, starting as soon as step 1 lands. Runs on the Mac:
+`launchd` starts the recorder, `pmset` wakes the machine beforehand (needs `sudo` once;
+Mac must be on power). Only vehicles inside the footprint are stored; keep the best 3–4
+days.
+
+**Code location.** Local only, in `~/pulse-cbd` on the local `integration` branch
+(`test` stays a clean mirror of `group-repo/test`). Nothing is pushed.
+
+### Build order
+
+Each step is usable on the model on its own:
+
+1. New footprint; projector view with no UI; tablet controller + keyboard backup;
+   start scheduled recording.
+2. TfNSW congestion + live crowding on route segments; dot colour follows the lens.
+3. Replay and time-lapse from recordings.
+4. Jobs, service gap and Opal 2016 on zones and grid.
+5. Combined layer and weights.
+6. Derived congestion metric and agreement table.
+7. Polish from model sessions, report figures; **feature freeze ~30 Oct**.
+
 ## 2026-08-19 — Bug caught live: one stuck client could hang the broadcast loop for everyone
 
 Discovered while live-testing calibration: after the `alert()` freeze (previous entry), a

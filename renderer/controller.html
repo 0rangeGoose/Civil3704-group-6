@@ -1,0 +1,585 @@
+<!doctype html>
+<html>
+<head>
+<meta charset="utf-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1, maximum-scale=1" />
+<title>Pulse CBD — Controller</title>
+<style>
+  /* The tablet next to the model. The projector mirrors the laptop screen, so
+     every control lives here instead of on the projected image. Three tabs:
+     Display (visitors), Team (behind a PIN), Stats (what used to be /stats).
+     Sizing is for fingers: every control is at least 48px tall. */
+  * { box-sizing: border-box; }
+  :root {
+    --bg: #0a0e14; --fg: #e6edf3; --muted: #7d8590; --warn: #f0883e; --bad: #ff6b6b;
+    --panel-bg: #11161d; --panel-border: #21262d; --track-bg: #1c2129;
+    --on-bg: #1f6feb; --on-fg: #ffffff;
+    --bar-green: #39ff6a; --bar-blue: #bfe8ff; --ok: #3fb950;
+  }
+  @media (prefers-color-scheme: light) {
+    :root {
+      --bg: #f6f8fa; --fg: #1f2328; --muted: #59636e; --warn: #9a6700; --bad: #cf222e;
+      --panel-bg: #ffffff; --panel-border: #d0d7de; --track-bg: #eaeef2;
+      --on-bg: #0969da; --on-fg: #ffffff;
+      --bar-green: #1a7f37; --bar-blue: #0969da; --ok: #1a7f37;
+    }
+  }
+  html, body {
+    margin: 0; padding: 0; min-height: 100%;
+    background: var(--bg); color: var(--fg);
+    font: 16px/1.4 -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;
+    -webkit-tap-highlight-color: transparent; user-select: none;
+  }
+  header {
+    position: sticky; top: 0; z-index: 5; background: var(--bg);
+    display: flex; align-items: center; gap: 12px; padding: 12px 16px;
+    border-bottom: 1px solid var(--panel-border);
+  }
+  header h1 { font-size: 18px; margin: 0; font-weight: 600; flex: 1; }
+  #link { font-size: 13px; color: var(--muted); }
+  #link.down { color: var(--bad); }
+  nav { display: flex; gap: 6px; padding: 10px 16px; }
+  nav button {
+    flex: 1; min-height: 48px; font: inherit; font-weight: 600; border-radius: 8px; cursor: pointer;
+    background: var(--panel-bg); color: var(--muted); border: 1px solid var(--panel-border);
+  }
+  nav button[aria-selected="true"] { background: var(--track-bg); color: var(--fg); }
+  main { padding: 6px 16px 32px; }
+  .tab[hidden] { display: none; }
+  section {
+    background: var(--panel-bg); border: 1px solid var(--panel-border); border-radius: 10px;
+    padding: 16px; margin-bottom: 16px;
+  }
+  section h2 {
+    font-size: 13px; text-transform: uppercase; letter-spacing: 0.06em; color: var(--muted); margin: 0 0 12px;
+  }
+  .toggles { display: grid; grid-template-columns: repeat(auto-fill, minmax(150px, 1fr)); gap: 10px; }
+  .toggle {
+    min-height: 64px; font: inherit; font-size: 17px; font-weight: 600; border-radius: 10px; cursor: pointer;
+    background: var(--track-bg); color: var(--muted); border: 2px solid var(--panel-border);
+  }
+  .toggle[aria-pressed="true"] { background: var(--on-bg); color: var(--on-fg); border-color: var(--on-bg); }
+  .toggle:disabled { opacity: 0.4; cursor: default; }
+  .legend { display: grid; grid-template-columns: repeat(auto-fill, minmax(150px, 1fr)); gap: 8px 16px; font-size: 15px; }
+  .legend div { display: flex; align-items: center; gap: 10px; }
+  .swatch { width: 16px; height: 16px; border-radius: 50%; flex-shrink: 0; background: #000; }
+  #legend h3 { font-size: 14px; font-weight: 600; margin: 0 0 8px; }
+  #legend .legend + h3 { margin-top: 16px; }
+  .note { color: var(--muted); font-size: 14px; margin: 10px 0 0; }
+
+  .row { display: flex; align-items: center; justify-content: space-between; gap: 12px; padding: 6px 0; }
+  .row + .row { border-top: 1px solid var(--track-bg); }
+  .row .label { font-size: 15px; }
+  .row .label small { display: block; color: var(--muted); font-size: 12px; }
+  .seg { display: inline-flex; border: 1px solid var(--panel-border); border-radius: 8px; overflow: hidden; }
+  .seg button, .btn {
+    font: inherit; font-size: 15px; min-height: 48px; min-width: 64px; padding: 0 14px; cursor: pointer;
+    background: var(--track-bg); color: var(--fg); border: none;
+  }
+  .btn { border: 1px solid var(--panel-border); border-radius: 8px; }
+  .seg button + button { border-left: 1px solid var(--panel-border); }
+  .seg button[aria-pressed="true"] { background: var(--on-bg); color: var(--on-fg); }
+  .btn.warn { color: var(--warn); }
+
+  .nudge { display: grid; grid-template-columns: repeat(3, 64px); grid-template-rows: repeat(3, 56px); gap: 6px; }
+  .nudge button { font-size: 22px; }
+  .nudge-wrap { display: flex; flex-wrap: wrap; gap: 20px; align-items: center; }
+  .nudge-side { display: flex; flex-direction: column; gap: 8px; }
+  #nudge-readout { font: 13px ui-monospace, monospace; color: var(--muted); }
+
+  #pin-gate input {
+    font: inherit; font-size: 24px; letter-spacing: 0.3em; width: 160px; min-height: 52px; text-align: center;
+    background: var(--track-bg); color: var(--fg); border: 1px solid var(--panel-border); border-radius: 8px;
+  }
+  #pin-error { color: var(--bad); font-size: 14px; min-height: 20px; margin-top: 8px; }
+  .health-grid { display: grid; grid-template-columns: 1fr auto auto; gap: 4px 16px; font-size: 14px; }
+  .health-grid .head { color: var(--muted); font-size: 12px; text-transform: uppercase; }
+  .num { text-align: right; font-variant-numeric: tabular-nums; }
+  .stale { color: var(--warn); }
+
+  /* Stats tab -- carried over from the old /stats page. */
+  .mode-row, .headers { display: grid; grid-template-columns: 120px repeat(3, 1fr); gap: 10px; align-items: center; }
+  .mode-row { padding: 8px 0; border-top: 1px solid var(--track-bg); }
+  .mode-row:first-of-type { border-top: none; }
+  .mode-name { font-weight: 600; font-size: 14px; }
+  .window-label { font-size: 10px; color: var(--muted); text-transform: uppercase; text-align: center; }
+  .window-stat { text-align: center; }
+  .window-stat .pct { font-size: 20px; font-weight: 700; }
+  .window-stat .bar { height: 5px; border-radius: 3px; background: var(--track-bg); margin: 5px 0 3px; overflow: hidden; }
+  .window-stat .bar-fill { height: 100%; background: var(--bar-green); }
+  .window-stat .breakdown { font-size: 10px; color: var(--muted); }
+  .alert-count { font-size: 42px; font-weight: 700; line-height: 1; }
+  .alert-count.zero { color: var(--ok); }
+  .alert-count.nonzero { color: var(--warn); }
+  .alert-sub { color: var(--muted); font-size: 13px; margin-top: 6px; }
+  .severity-chip { display: inline-block; background: var(--track-bg); border-radius: 4px; padding: 2px 8px; margin: 2px 4px 2px 0; font-size: 12px; }
+  .route-list { font-size: 12px; color: var(--muted); margin-top: 10px; word-break: break-all; }
+  .interchange-row { display: flex; align-items: center; gap: 10px; padding: 6px 0; }
+  .interchange-name { width: 110px; flex-shrink: 0; font-size: 13px; }
+  .interchange-bar-track { flex: 1; height: 14px; background: var(--track-bg); border-radius: 3px; overflow: hidden; }
+  .interchange-bar-fill { height: 100%; background: var(--bar-blue); }
+  .interchange-count { width: 28px; text-align: right; font-variant-numeric: tabular-nums; font-size: 13px; }
+  .stats-grid { display: grid; grid-template-columns: 1.6fr 1fr; gap: 16px; align-items: start; }
+  @media (max-width: 900px) { .stats-grid { grid-template-columns: 1fr; } }
+  .stats-grid section { margin-bottom: 0; }
+  .stats-side { display: flex; flex-direction: column; gap: 16px; }
+</style>
+</head>
+<body>
+<header>
+  <h1>Pulse CBD</h1>
+  <div id="link">connecting…</div>
+</header>
+<nav role="tablist">
+  <button role="tab" data-tab="display" aria-selected="true">Display</button>
+  <button role="tab" data-tab="team" aria-selected="false">Team</button>
+  <button role="tab" data-tab="stats" aria-selected="false">Stats</button>
+</nav>
+
+<main>
+  <div class="tab" id="tab-display">
+    <section>
+      <h2>Show on the model</h2>
+      <div class="toggles" id="mode-toggles"></div>
+    </section>
+    <section>
+      <h2>Colour the vehicles by</h2>
+      <div class="toggles" id="lens-choices">
+        <button class="toggle" data-lens="adherence">Schedule</button>
+        <button class="toggle" data-lens="congestion">Traffic</button>
+        <button class="toggle" data-lens="crowding">Crowding</button>
+      </div>
+    </section>
+    <section>
+      <h2>Colour the streets by</h2>
+      <div class="toggles" id="line-choices">
+        <button class="toggle" data-line="none">Off</button>
+        <button class="toggle" data-line="congestion">Traffic</button>
+        <button class="toggle" data-line="crowding">Crowding</button>
+      </div>
+      <div class="toggles" style="margin-top:10px">
+        <button class="toggle" data-control="interchanges" aria-pressed="true">Interchange pulses</button>
+      </div>
+    </section>
+    <section>
+      <h2>What the colours mean</h2>
+      <div id="legend"></div>
+      <p class="note">Bigger dots are trains, metro and light rail; smaller dots are buses and ferries. Glowing rings are major interchanges, brighter when more services pass through.</p>
+    </section>
+  </div>
+
+  <div class="tab" id="tab-team" hidden>
+    <section id="pin-gate">
+      <h2>Team panel</h2>
+      <input id="pin-input" type="password" inputmode="numeric" autocomplete="off" placeholder="PIN" />
+      <button class="btn" id="pin-submit">Unlock</button>
+      <div id="pin-error"></div>
+    </section>
+
+    <div id="team-panel" hidden>
+      <section>
+        <h2>Projection</h2>
+        <div class="row">
+          <div class="label">Theme<small>Dark for the model, light for screens</small></div>
+          <div class="seg" id="theme-seg">
+            <button data-theme-choice="dark">Dark</button>
+            <button data-theme-choice="light">Light</button>
+          </div>
+        </div>
+        <div class="row">
+          <div class="label">Verification overlay<small>Bright corridors, to check alignment</small></div>
+          <div class="seg"><button data-control="verify">Off</button></div>
+        </div>
+        <div class="row">
+          <div class="label">Status line on projection<small>Vehicle count, connection, nudge</small></div>
+          <div class="seg"><button data-control="hud">Off</button></div>
+        </div>
+      </section>
+
+      <section>
+        <h2>Alignment</h2>
+        <div class="nudge-wrap">
+          <div class="nudge">
+            <span></span><button class="btn" data-nudge="0,-1">↑</button><span></span>
+            <button class="btn" data-nudge="-1,0">←</button>
+            <button class="btn" id="step-toggle" title="Step size">2px</button>
+            <button class="btn" data-nudge="1,0">→</button>
+            <span></span><button class="btn" data-nudge="0,1">↓</button><span></span>
+          </div>
+          <div class="nudge-side">
+            <div class="seg">
+              <button data-scale="-1">Smaller</button>
+              <button data-scale="1">Bigger</button>
+            </div>
+            <button class="btn" id="nudge-reset">Reset nudge</button>
+            <div id="nudge-readout"></div>
+          </div>
+        </div>
+        <p class="note">Nudge fixes small drift between sessions. If it's off by more than a few centimetres on the model, recalibrate.</p>
+        <div class="row">
+          <div class="label">Crosshair calibration<small>Drag crosshairs on the laptop; saving resets the nudge</small></div>
+          <button class="btn warn" id="calibrate-toggle">Start</button>
+        </div>
+      </section>
+
+      <section>
+        <h2>System health</h2>
+        <div id="health"></div>
+      </section>
+    </div>
+  </div>
+
+  <div class="tab" id="tab-stats" hidden>
+    <div class="stats-grid">
+      <section>
+        <h2>Schedule adherence by mode</h2>
+        <div class="headers">
+          <div></div>
+          <div class="window-label">5 min</div>
+          <div class="window-label">15 min</div>
+          <div class="window-label">60 min</div>
+        </div>
+        <div id="adherence-table"></div>
+      </section>
+      <div class="stats-side">
+        <section>
+          <h2>Active service alerts</h2>
+          <div id="alerts-panel"></div>
+        </section>
+        <section>
+          <h2>Interchange activity (last 5 min)</h2>
+          <div id="interchange-panel"></div>
+        </section>
+      </div>
+    </div>
+  </div>
+</main>
+
+<script>
+"use strict";
+
+const MODE_LABEL = {
+  sydneytrains: "Sydney Trains", metro: "Metro", nswtrains: "NSW Trains",
+  lightrail_innerwest: "Light Rail (IW)", lightrail_cbdandsoutheast: "Light Rail (CBD)",
+  buses: "Buses", ferries: "Ferries",
+};
+const MODE_ORDER = ["sydneytrains", "metro", "lightrail_innerwest", "lightrail_cbdandsoutheast", "nswtrains", "buses", "ferries"];
+const GROUP_LABEL = { trains: "Trains", metro: "Metro", lightrail: "Light rail", buses: "Buses", ferries: "Ferries" };
+const WINDOWS = [300, 900, 3600];
+const UNLOCK_KEY = "pulse-cbd-team-unlocked";
+
+// Same dark-theme colours as the projector (renderer/index.html), so the
+// legend matches what's on the model.
+const LEGENDS = {
+  adherence: {
+    title: "Vehicles: on schedule?",
+    note: "Compared with the timetable at the vehicle's next stop.",
+    items: [["#39ff6a", "On time"], ["#ffb020", "Running late"], ["#c81c2e", "Very late / cancelled"], ["#93a3b5", "No schedule data"]],
+  },
+  congestion: {
+    title: "Traffic (reported by Transport for NSW)",
+    note: "Buses only: trains and metro aren't in road traffic. Streets show the last 10 minutes.",
+    colors: ["#3ddc84", "#ffd23f", "#ff8c1a", "#ff2e4d"],
+    labelsKey: "congestion_labels",
+  },
+  crowding: {
+    title: "Crowding (reported by Transport for NSW)",
+    note: "Trains report each carriage; the middle carriage is shown. Streets show the last 10 minutes.",
+    colors: ["#5ec8ff", "#b48cff", "#ff7ad9", "#ff2e4d"],
+    labelsKey: "crowding_labels",
+  },
+};
+
+function legendItems(key) {
+  const def = LEGENDS[key];
+  const items = def.items || def.colors.map((c, i) => [c, cfg[def.labelsKey][i]]);
+  if (!def.items) items.push(["#93a3b5", "Not reported"]);
+  return items.map(([c, label]) => `<div><span class="swatch" style="background:${c}"></span>${label}</div>`).join("");
+}
+
+function renderLegend() {
+  const parts = [];
+  const lens = control.lens;
+  parts.push(`<h3>${LEGENDS[lens].title}</h3><div class="legend">${legendItems(lens)}</div><p class="note">${LEGENDS[lens].note}</p>`);
+  if (control.line_layer !== "none" && control.line_layer !== lens) {
+    const line = control.line_layer;
+    parts.push(`<h3>Streets: ${LEGENDS[line].title.toLowerCase()}</h3><div class="legend">${legendItems(line)}</div><p class="note">${LEGENDS[line].note}</p>`);
+  }
+  document.getElementById("legend").innerHTML = parts.join("");
+}
+const NUDGE_STEPS = [2, 20];
+const SCALE_STEP = 0.002;
+
+let cfg = null;
+let control = null; // server's display-control state; null until the first message
+let ws = null;
+let nudgeStep = NUDGE_STEPS[0];
+
+// --- Tabs --------------------------------------------------------------------
+
+function showTab(name) {
+  document.querySelectorAll("nav button").forEach((b) => b.setAttribute("aria-selected", String(b.dataset.tab === name)));
+  document.querySelectorAll(".tab").forEach((t) => { t.hidden = t.id !== `tab-${name}`; });
+  if (location.hash !== `#${name}`) history.replaceState(null, "", `#${name}`);
+  if (name === "stats") refreshStats();
+  if (name === "team") refreshHealth();
+}
+document.querySelector("nav").addEventListener("click", (ev) => {
+  const b = ev.target.closest("button[data-tab]");
+  if (b) showTab(b.dataset.tab);
+});
+
+// --- Server connection -------------------------------------------------------
+// Every button sends a patch; the page only changes when the server's state
+// comes back, so two controllers (or the laptop keyboard) never disagree.
+
+function sendControl(patch) {
+  if (ws && ws.readyState === WebSocket.OPEN) ws.send(JSON.stringify({ control: patch }));
+}
+
+function connect() {
+  const proto = location.protocol === "https:" ? "wss:" : "ws:";
+  ws = new WebSocket(`${proto}//${location.host}/ws`);
+  const link = document.getElementById("link");
+  ws.onopen = () => { link.textContent = "connected"; link.className = ""; };
+  ws.onclose = () => {
+    link.textContent = "disconnected — retrying"; link.className = "down";
+    setTimeout(connect, 1000);
+  };
+  ws.onerror = () => ws.close();
+  ws.onmessage = (ev) => {
+    const msg = JSON.parse(ev.data);
+    if (msg.control) render(msg.control);
+    else if (msg.control_error) console.warn("control rejected:", msg.control_error);
+    // vehicle frames are ignored here -- the controller doesn't draw the map
+  };
+}
+
+// --- Rendering control state -------------------------------------------------
+
+function buildModeToggles() {
+  const box = document.getElementById("mode-toggles");
+  box.innerHTML = "";
+  for (const group of Object.keys(cfg.mode_groups)) {
+    const b = document.createElement("button");
+    b.className = "toggle";
+    b.dataset.group = group;
+    b.textContent = GROUP_LABEL[group] || group;
+    b.setAttribute("aria-pressed", "true");
+    b.addEventListener("click", () => {
+      if (control) sendControl({ modes: { [group]: !control.modes[group] } });
+    });
+    box.appendChild(b);
+  }
+}
+
+function render(next) {
+  control = next;
+  document.querySelectorAll("#mode-toggles .toggle").forEach((b) => {
+    b.setAttribute("aria-pressed", String(control.modes[b.dataset.group] !== false));
+  });
+  document.querySelectorAll("[data-control]").forEach((b) => {
+    const on = !!control[b.dataset.control];
+    b.setAttribute("aria-pressed", String(on));
+    if (b.closest(".seg")) b.textContent = on ? "On" : "Off";
+  });
+  document.querySelectorAll("#theme-seg button").forEach((b) => {
+    b.setAttribute("aria-pressed", String(b.dataset.themeChoice === control.theme));
+  });
+  document.querySelectorAll("[data-lens]").forEach((b) => b.setAttribute("aria-pressed", String(b.dataset.lens === control.lens)));
+  document.querySelectorAll("[data-line]").forEach((b) => b.setAttribute("aria-pressed", String(b.dataset.line === control.line_layer)));
+  renderLegend();
+  const cal = document.getElementById("calibrate-toggle");
+  cal.textContent = control.calibrate ? "Stop" : "Start";
+  const n = control.nudge;
+  document.getElementById("nudge-readout").textContent =
+    `x ${n.dx >= 0 ? "+" : ""}${n.dx}px  y ${n.dy >= 0 ? "+" : ""}${n.dy}px  scale ${n.scale.toFixed(3)}`;
+}
+
+document.addEventListener("click", (ev) => {
+  const b = ev.target.closest("[data-control]");
+  if (b && control) sendControl({ [b.dataset.control]: !control[b.dataset.control] });
+});
+document.getElementById("lens-choices").addEventListener("click", (ev) => {
+  const b = ev.target.closest("[data-lens]");
+  if (b) sendControl({ lens: b.dataset.lens });
+});
+document.getElementById("line-choices").addEventListener("click", (ev) => {
+  const b = ev.target.closest("[data-line]");
+  if (b) sendControl({ line_layer: b.dataset.line });
+});
+document.getElementById("theme-seg").addEventListener("click", (ev) => {
+  const b = ev.target.closest("button[data-theme-choice]");
+  if (b) sendControl({ theme: b.dataset.themeChoice });
+});
+document.querySelectorAll("[data-nudge]").forEach((b) => {
+  b.addEventListener("click", () => {
+    if (!control) return;
+    const [x, y] = b.dataset.nudge.split(",").map(Number);
+    sendControl({ nudge: { dx: control.nudge.dx + x * nudgeStep, dy: control.nudge.dy + y * nudgeStep } });
+  });
+});
+document.getElementById("step-toggle").addEventListener("click", (ev) => {
+  nudgeStep = nudgeStep === NUDGE_STEPS[0] ? NUDGE_STEPS[1] : NUDGE_STEPS[0];
+  ev.target.textContent = `${nudgeStep}px`;
+});
+document.querySelectorAll("[data-scale]").forEach((b) => {
+  b.addEventListener("click", () => {
+    if (control) sendControl({ nudge: { scale: control.nudge.scale + Number(b.dataset.scale) * SCALE_STEP } });
+  });
+});
+document.getElementById("nudge-reset").addEventListener("click", () => {
+  sendControl({ nudge: { dx: 0, dy: 0, scale: 1 } });
+});
+document.getElementById("calibrate-toggle").addEventListener("click", () => {
+  if (control) sendControl({ calibrate: !control.calibrate });
+});
+
+// --- Team PIN ----------------------------------------------------------------
+// Keeps visitors out of alignment and calibration. Not a security boundary.
+
+function unlockTeam() {
+  document.getElementById("pin-gate").hidden = true;
+  document.getElementById("team-panel").hidden = false;
+  try { sessionStorage.setItem(UNLOCK_KEY, "1"); } catch (_) {}
+  refreshHealth();
+}
+function tryPin() {
+  const input = document.getElementById("pin-input");
+  if (!cfg.team_pin || input.value === cfg.team_pin) { unlockTeam(); return; }
+  document.getElementById("pin-error").textContent = "Wrong PIN";
+  input.value = "";
+}
+document.getElementById("pin-submit").addEventListener("click", tryPin);
+document.getElementById("pin-input").addEventListener("keydown", (ev) => { if (ev.key === "Enter") tryPin(); });
+
+// --- System health -----------------------------------------------------------
+
+async function refreshHealth() {
+  if (document.getElementById("team-panel").hidden) return;
+  const box = document.getElementById("health");
+  try {
+    const resp = await fetch("/health", { cache: "no-store" });
+    if (!resp.ok) throw new Error(`HTTP ${resp.status}`);
+    const h = await resp.json();
+    const staleAfter = (cfg.poll_interval_seconds || 15) * 3;
+    const modes = MODE_ORDER.filter((m) => m in h.feed_age_seconds || m in h.vehicles_by_mode);
+    let rows = `<div class="head">Mode</div><div class="head num">On model</div><div class="head num">Last feed</div>`;
+    for (const m of modes) {
+      const age = h.feed_age_seconds[m];
+      const ageText = age === undefined ? "—" : `${Math.round(age)}s ago`;
+      const cls = age === undefined || age > staleAfter ? "num stale" : "num";
+      rows += `<div>${MODE_LABEL[m] || m}</div><div class="num">${h.vehicles_by_mode[m] || 0}</div><div class="${cls}">${ageText}</div>`;
+    }
+    box.innerHTML = `
+      <div class="health-grid">${rows}</div>
+      <p class="note">${h.vehicles_total} vehicles on the model · ${h.connected_pages} page(s) connected</p>`;
+  } catch (e) {
+    box.innerHTML = `<p class="note stale">Can't reach the server (${e.message})</p>`;
+  }
+}
+
+// --- Stats (formerly /stats) -------------------------------------------------
+
+function pct(n) { return `${n.toFixed(0)}%`; }
+
+function renderAdherenceTable(byWindow) {
+  const modesPresent = new Set();
+  for (const w of WINDOWS) Object.keys(byWindow[w] || {}).forEach((m) => modesPresent.add(m));
+  const modes = MODE_ORDER.filter((m) => modesPresent.has(m));
+  const container = document.getElementById("adherence-table");
+  container.innerHTML = "";
+  if (!modes.length) {
+    container.innerHTML = `<div class="note">No adherence data yet.</div>`;
+    return;
+  }
+  for (const mode of modes) {
+    const row = document.createElement("div");
+    row.className = "mode-row";
+    const nameEl = document.createElement("div");
+    nameEl.className = "mode-name";
+    nameEl.textContent = MODE_LABEL[mode] || mode;
+    row.appendChild(nameEl);
+    for (const w of WINDOWS) {
+      const states = (byWindow[w] || {})[mode] || {};
+      const onTime = states.on_time || 0;
+      const otherBits = Object.entries(states)
+        .filter(([k]) => k !== "on_time")
+        .map(([k, v]) => `${k} ${v.toFixed(0)}%`)
+        .join(" · ");
+      const cell = document.createElement("div");
+      cell.className = "window-stat";
+      cell.innerHTML = `
+        <div class="pct">${pct(onTime)}</div>
+        <div class="bar"><div class="bar-fill" style="width:${onTime}%"></div></div>
+        <div class="breakdown">${otherBits || "—"}</div>`;
+      row.appendChild(cell);
+    }
+    container.appendChild(row);
+  }
+}
+
+function renderAlerts(alerts) {
+  const panel = document.getElementById("alerts-panel");
+  const countClass = alerts.count === 0 ? "zero" : "nonzero";
+  const severityChips = Object.entries(alerts.by_severity || {})
+    .map(([sev, n]) => `<span class="severity-chip">${sev}: ${n}</span>`)
+    .join("");
+  const routeIds = alerts.route_ids || [];
+  const shown = routeIds.slice(0, 10).join(", ");
+  const more = routeIds.length > 10 ? ` +${routeIds.length - 10} more` : "";
+  panel.innerHTML = `
+    <div class="alert-count ${countClass}">${alerts.count}</div>
+    <div class="alert-sub">active alert${alerts.count === 1 ? "" : "s"} on the model's routes and stops</div>
+    <div style="margin-top:10px;">${severityChips}</div>
+    ${routeIds.length ? `<div class="route-list">${routeIds.length} route(s) affected: ${shown}${more}</div>` : ""}`;
+}
+
+function renderInterchanges(interchanges) {
+  const panel = document.getElementById("interchange-panel");
+  const maxCount = Math.max(1, ...interchanges.map((ic) => ic.count));
+  panel.innerHTML = "";
+  for (const ic of [...interchanges].sort((a, b) => b.count - a.count)) {
+    const row = document.createElement("div");
+    row.className = "interchange-row";
+    row.innerHTML = `
+      <div class="interchange-name">${ic.name}</div>
+      <div class="interchange-bar-track"><div class="interchange-bar-fill" style="width:${(ic.count / maxCount) * 100}%"></div></div>
+      <div class="interchange-count">${ic.count}</div>`;
+    panel.appendChild(row);
+  }
+}
+
+async function refreshStats() {
+  if (document.getElementById("tab-stats").hidden) return;
+  try {
+    const resp = await fetch("/aggregate", { cache: "no-store" });
+    if (!resp.ok) throw new Error(`HTTP ${resp.status}`);
+    const data = await resp.json();
+    renderAdherenceTable(data.adherence_by_window || {});
+    renderAlerts(data.alerts || { count: 0, by_severity: {}, route_ids: [] });
+    renderInterchanges(data.interchanges || []);
+  } catch (e) {
+    document.getElementById("adherence-table").innerHTML = `<div class="note stale">Can't reach the server (${e.message})</div>`;
+  }
+}
+
+// --- Boot ----------------------------------------------------------------------
+
+async function boot() {
+  cfg = await (await fetch("/config")).json();
+  buildModeToggles();
+  let unlocked = false;
+  try { unlocked = sessionStorage.getItem(UNLOCK_KEY) === "1"; } catch (_) {}
+  if (unlocked) unlockTeam();
+  const start = location.hash.slice(1);
+  showTab(["display", "team", "stats"].includes(start) ? start : "display");
+  connect();
+  setInterval(refreshStats, 3000);
+  setInterval(refreshHealth, 3000);
+}
+
+boot();
+</script>
+</body>
+</html>

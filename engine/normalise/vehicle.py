@@ -23,11 +23,15 @@ class VehicleRecord:
     lon: float
     bearing: float | None
     position_timestamp: int | None
-    occupancy_status: str | None
+    occupancy_status: str | None  # vehicle-level, or the median carriage for trains
     # "static_join" | "degraded_route_fallback" | "geometric_match" | "unmatched"
     confidence: str
 
+    # TfNSW's own congestion_level; None when absent or UNKNOWN
+    congestion_level: str | None = None
+
     # Phase 3: map matching
+    shape_id: str | None = None
     matched_lat: float | None = None
     matched_lon: float | None = None
     distance_along_shape_m: float | None = None
@@ -50,7 +54,9 @@ class VehicleRecord:
             "bearing": self.bearing,
             "position_timestamp": self.position_timestamp,
             "occupancy_status": self.occupancy_status,
+            "congestion_level": self.congestion_level,
             "confidence": self.confidence,
+            "shape_id": self.shape_id,
             "matched_lat": self.matched_lat,
             "matched_lon": self.matched_lon,
             "distance_along_shape_m": self.distance_along_shape_m,

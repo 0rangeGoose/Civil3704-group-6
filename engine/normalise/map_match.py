@@ -14,6 +14,7 @@ from dataclasses import dataclass
 from pathlib import Path
 
 from shapely.geometry import LineString, Point
+from shapely.ops import substring
 from shapely.strtree import STRtree
 
 from engine.normalise.projection import to_metric, to_wgs84
@@ -63,6 +64,19 @@ class ShapeIndex:
         ):
             mapping.setdefault(shape_id, route_id)  # first trip's route wins, ties are rare
         return mapping
+
+    def shape_length_m(self, shape_id: str) -> float | None:
+        line = self._shapes.get(shape_id)
+        return line.length if line is not None else None
+
+    def section_latlon(self, shape_id: str, start_m: float, end_m: float) -> list[list[float]]:
+        """[[lat, lon], ...] of the shape between two distances along it."""
+        line = self._shapes.get(shape_id)
+        if line is None:
+            return []
+        part = substring(line, start_m, end_m)
+        coords = list(part.coords) if part.geom_type == "LineString" else [part.coords[0]] * 2
+        return [list(to_wgs84(x, y)) for x, y in coords]
 
     def route_for_shape(self, shape_id: str) -> str | None:
         return self._shape_route.get(shape_id)

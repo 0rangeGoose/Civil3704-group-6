@@ -3,6 +3,11 @@ compact JSON frame ~2x/sec, plus plain HTTP endpoints for debugging and the
 one-time static data (corridor shapes, bounding box) the renderer needs on
 load. Definition of done: this one command starts the engine and serves the
 renderer.
+
+The same WebSocket also carries display control: a page sends
+``{"control": {...patch...}}``, and every connected page receives the merged
+``{"control": {...state...}}`` (see engine/publish/control.py). Vehicle
+frames carry no "control" key, which is how pages tell the two apart.
 """
 from __future__ import annotations
 
@@ -15,7 +20,10 @@ from pathlib import Path
 from aiohttp import WSMsgType, web
 
 from engine.config import Config, load_config
+from engine.normalise.levels import CONGESTION_LABELS, CROWDING_LABELS, congestion_level, crowding_level
+from engine.normalise.segments import CONGESTION_MODES
 from engine.publish.calibration import CalibrationPoint, compute_and_save_calibration, load_calibration
+from engine.publish.control import MODE_GROUPS, ControlError, ControlState
 from engine.publish.feed import LiveVehicleFeed
 from engine.publish.homography import HomographyError
 from engine.publish.shapes_export import build_render_shapes
@@ -25,7 +33,7 @@ logger = logging.getLogger("pulse_cbd.publish_server")
 BROADCAST_INTERVAL_SECONDS = 0.5
 RENDERER_DIR = Path(__file__).resolve().parent.parent.parent / "renderer"
 RENDERER_INDEX = RENDERER_DIR / "index.html"
-STATS_INDEX = RENDERER_DIR / "stats.html"
+CONTROLLER_INDEX = RENDERER_DIR / "controller.html"
 
 
 def _vehicle_frame(record) -> dict:
@@ -39,6 +47,8 @@ def _vehicle_frame(record) -> dict:
         "rc": record.route_color,
         "rsn": record.route_short_name,
         "adh": record.adherence_state,
+        "cg": congestion_level(record.congestion_level) if record.mode in CONGESTION_MODES else None,
+        "oc": crowding_level(record.occupancy_status),
         "ts": record.position_timestamp,
     }
 
@@ -55,10 +65,21 @@ async def index_handler(request: web.Request) -> web.Response:
     return web.Response(text=RENDERER_INDEX.read_text(), content_type="text/html")
 
 
-async def stats_handler(request: web.Request) -> web.Response:
-    """The separate wall-panel/tablet display -- per the brief, aggregate
-    statistics never render onto the model surface itself."""
-    return web.Response(text=STATS_INDEX.read_text(), content_type="text/html")
+async def controller_handler(request: web.Request) -> web.Response:
+    """The tablet controller: visitor controls, the team panel, and the stats
+    that used to be /stats -- per the brief, text never renders onto the
+    model surface itself, and the projector mirrors the laptop screen, so
+    every control lives here instead."""
+    return web.Response(text=CONTROLLER_INDEX.read_text(), content_type="text/html")
+
+
+async def stats_redirect_handler(request: web.Request) -> web.Response:
+    raise web.HTTPFound("/control#stats")
+
+
+async def health_handler(request: web.Request) -> web.Response:
+    feed: LiveVehicleFeed = request.app["feed"]
+    return web.json_response({**feed.health(), "connected_pages": len(request.app["websockets"])})
 
 
 async def aggregate_handler(request: web.Request) -> web.Response:
@@ -71,14 +92,37 @@ async def websocket_handler(request: web.Request) -> web.WebSocketResponse:
     await ws.prepare(request)
     request.app["websockets"].add(ws)
     logger.info("renderer connected (%d total)", len(request.app["websockets"]))
+    await _send_one(ws, json.dumps({"control": request.app["control"].state}))
     try:
         async for msg in ws:
             if msg.type == WSMsgType.ERROR:
                 break
+            if msg.type == WSMsgType.TEXT:
+                await _handle_control_message(request.app, ws, msg.data)
     finally:
         request.app["websockets"].discard(ws)
         logger.info("renderer disconnected (%d remaining)", len(request.app["websockets"]))
     return ws
+
+
+async def _handle_control_message(app: web.Application, ws: web.WebSocketResponse, data: str) -> None:
+    try:
+        message = json.loads(data)
+        patch = message["control"]
+        app["control"].apply(patch)
+    except (ValueError, KeyError, TypeError, ControlError) as exc:
+        await _send_one(ws, json.dumps({"control_error": str(exc)}))
+        return
+    await broadcast_control(app)
+
+
+async def broadcast_control(app: web.Application) -> None:
+    await _broadcast(app, json.dumps({"control": app["control"].state}))
+
+
+async def segments_handler(request: web.Request) -> web.Response:
+    feed: LiveVehicleFeed = request.app["feed"]
+    return web.json_response(feed.segments.snapshot(time.time()))
 
 
 async def snapshot_handler(request: web.Request) -> web.Response:
@@ -98,6 +142,11 @@ async def config_handler(request: web.Request) -> web.Response:
             "bounding_box": {"north": bbox.north, "south": bbox.south, "west": bbox.west, "east": bbox.east},
             "stale_after_seconds": cfg.raw["realtime_gtfs"]["stale_after_seconds"],
             "poll_interval_seconds": cfg.raw["realtime_gtfs"]["poll_interval_seconds"],
+            "mode_groups": MODE_GROUPS,
+            "congestion_labels": CONGESTION_LABELS,
+            "crowding_labels": CROWDING_LABELS,
+            # Keeps visitors out of the team panel; not a security boundary.
+            "team_pin": str(cfg.raw.get("controller", {}).get("team_pin", "")),
         }
     )
 
@@ -138,6 +187,11 @@ async def post_calibration_handler(request: web.Request) -> web.Response:
         return web.json_response({"error": str(exc)}, status=400)
 
     logger.info("calibration saved: %d points, canvas %dx%d", len(points), canvas_width, canvas_height)
+    # Crosshairs are placed in raw screen pixels, so any nudge on top of the
+    # old calibration no longer applies to the new one.
+    request.app["control"].reset_nudge()
+    request.app["control"].apply({"calibrate": False})
+    await broadcast_control(request.app)
     return web.json_response(record)
 
 
@@ -154,12 +208,21 @@ async def _send_one(ws: web.WebSocketResponse, frame: str) -> bool:
         return False
 
 
+async def _broadcast(app: web.Application, frame: str) -> None:
+    # A slow/frozen client must not be able to stall broadcasts to
+    # everyone else -- sent concurrently, each with its own timeout,
+    # rather than one at a time in a plain loop.
+    sockets = app["websockets"]
+    targets = list(sockets)
+    results = await asyncio.gather(*(_send_one(ws, frame) for ws in targets))
+    sockets -= {ws for ws, ok in zip(targets, results) if not ok}
+
+
 async def _broadcast_loop(app: web.Application) -> None:
     feed: LiveVehicleFeed = app["feed"]
     while True:
         await asyncio.sleep(BROADCAST_INTERVAL_SECONDS)
-        sockets = app["websockets"]
-        if not sockets:
+        if not app["websockets"]:
             continue
         frame = json.dumps(
             {
@@ -168,12 +231,7 @@ async def _broadcast_loop(app: web.Application) -> None:
                 "interchanges": _interchange_frame(feed),
             }
         )
-        # A slow/frozen client must not be able to stall broadcasts to
-        # everyone else -- sent concurrently, each with its own timeout,
-        # rather than one at a time in a plain loop.
-        results = await asyncio.gather(*(_send_one(ws, frame) for ws in list(sockets)))
-        dead = {ws for ws, ok in zip(list(sockets), results) if not ok}
-        sockets -= dead
+        await _broadcast(app, frame)
 
 
 async def _start_background_tasks(app: web.Application) -> None:
@@ -191,14 +249,18 @@ def build_app(cfg: Config) -> web.Application:
     app = web.Application()
     app["cfg"] = cfg
     app["websockets"] = set()
+    app["control"] = ControlState(cfg.root / "data" / "projection_nudge.json")
     app["feed"] = LiveVehicleFeed(cfg)
     app["shapes"] = build_render_shapes(cfg.path("db_path"), cfg.bounding_box)
 
     app.router.add_get("/", index_handler)
-    app.router.add_get("/stats", stats_handler)
+    app.router.add_get("/control", controller_handler)
+    app.router.add_get("/stats", stats_redirect_handler)
+    app.router.add_get("/health", health_handler)
     app.router.add_get("/ws", websocket_handler)
     app.router.add_get("/snapshot", snapshot_handler)
     app.router.add_get("/shapes", shapes_handler)
+    app.router.add_get("/segments", segments_handler)
     app.router.add_get("/config", config_handler)
     app.router.add_get("/aggregate", aggregate_handler)
     app.router.add_get("/calibration", get_calibration_handler)
@@ -215,8 +277,27 @@ def main() -> None:
     if not cfg.path("db_path").exists():
         raise SystemExit(f"error: {cfg.path('db_path')} not found -- run scripts/run_phase1.py first")
     app = build_app(cfg)
-    logger.info("Pulse CBD serving on http://127.0.0.1:8765")
-    web.run_app(app, host="127.0.0.1", port=8765, print=None)
+    server_cfg = cfg.raw.get("server", {})
+    host = server_cfg.get("host", "127.0.0.1")
+    port = int(server_cfg.get("port", 8765))
+    logger.info("Pulse CBD projector view: http://127.0.0.1:%d/", port)
+    for address in _lan_addresses() if host == "0.0.0.0" else []:
+        logger.info("tablet controller: http://%s:%d/control", address, port)
+    web.run_app(app, host=host, port=port, print=None)
+
+
+def _lan_addresses() -> list[str]:
+    """This machine's IPv4 addresses other than loopback, so the log can
+    show the tablet which URL to open (e.g. the laptop's hotspot address)."""
+    import socket
+
+    addresses = set()
+    try:
+        for info in socket.getaddrinfo(socket.gethostname(), None, socket.AF_INET):
+            addresses.add(info[4][0])
+    except socket.gaierror:
+        pass
+    return sorted(a for a in addresses if not a.startswith("127."))
 
 
 if __name__ == "__main__":

@@ -3,11 +3,14 @@
 # Secrets (API keys) stay in .env, never here.
 
 bounding_box:
-  # WGS84. Adjust after measuring the physical model.
-  north: -33.8550
-  south: -33.9000
-  west: 151.1830
-  east: 151.2262
+  # WGS84. The physical model's surveyed footprint (NE/SW corners), taken
+  # from the team's MODEL_CORNERS on group-repo/mid-project-demo: ~13.2km
+  # E-W x 6.6km N-S. Changing this means rebuilding the static cache with
+  # scripts/run_phase1.py, since that is filtered to the same box.
+  north: -33.83512300658737
+  south: -33.894722633376766
+  west: 151.13296645445593
+  east: 151.27599316594075
 
 # Projector-pixel calibration, computed via the renderer's calibration mode
 # (Phase 5) and persisted here so it survives restarts, per the brief.
@@ -29,6 +32,10 @@ static_gtfs:
 realtime_gtfs:
   base_host: "https://api.transport.nsw.gov.au"
   poll_interval_seconds: 15
+  # TfNSW rate-limits each API key (about 5 requests/second). Requests within
+  # a poll cycle are spaced at least this far apart instead of fired in a
+  # burst, which was getting a large share of them rejected with 429.
+  min_request_interval_seconds: 0.3
   # Checked against opendata.transport.nsw.gov.au dataset/resource pages on
   # 2026-08-19. sydneytrains, metro and lightrail/innerwest were migrated to
   # v2 for trip_updates and vehicle_positions ("v1 ... superseded by v2" on
@@ -56,15 +63,12 @@ realtime_gtfs:
       buses: "/v1/gtfs/vehiclepos/buses"
       ferries: "/v1/gtfs/vehiclepos/ferries/sydneyferries"
       lightrail_cbdandsoutheast: "/v1/gtfs/vehiclepos/lightrail/cbdandsoutheast"
+    # Only the combined feed: each alerts payload replaces the engine's whole
+    # alert summary, so polling the per-mode feeds too meant the summary only
+    # ever reflected whichever one arrived last. Per-mode paths, if needed:
+    # /v2/gtfs/alerts/{sydneytrains,metro,lightrail,nswtrains,buses,ferries,regionbuses}
     service_alerts:
       all: "/v2/gtfs/alerts/all"
-      sydneytrains: "/v2/gtfs/alerts/sydneytrains"
-      metro: "/v2/gtfs/alerts/metro"
-      lightrail: "/v2/gtfs/alerts/lightrail"
-      nswtrains: "/v2/gtfs/alerts/nswtrains"
-      buses: "/v2/gtfs/alerts/buses"
-      ferries: "/v2/gtfs/alerts/ferries"
-      regionbuses: "/v2/gtfs/alerts/regionbuses"
   # Bus trip IDs mutate under trip alteration; this many stale seconds past
   # poll_interval before a vehicle is treated as gone rather than just late.
   stale_after_seconds: 90
@@ -99,3 +103,15 @@ interchanges:
   - Gadigal
   - Museum
   - St James
+
+# The tablet controller reaches the server over the laptop's hotspot, so it
+# listens on every interface, not just localhost. Anyone on the same network
+# can open the controller -- use the hotspot, not venue/university Wi-Fi.
+server:
+  host: "0.0.0.0"
+  port: 8765
+
+controller:
+  # Keeps visitors out of the team panel on the tablet. Not a security
+  # boundary: it's sent to every page that loads /config.
+  team_pin: "3704"

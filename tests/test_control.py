@@ -1,0 +1,67 @@
+import json
+
+import pytest
+
+from engine.publish.control import ControlError, ControlState
+
+
+def test_defaults_are_the_safe_showcase_state():
+    s = ControlState().state
+    assert s["theme"] == "dark"
+    assert s["hud"] is False and s["calibrate"] is False and s["verify"] is False
+    assert all(s["modes"].values())
+    assert s["nudge"] == {"dx": 0.0, "dy": 0.0, "scale": 1.0}
+
+
+def test_patch_merges_nested_fields():
+    c = ControlState()
+    c.apply({"modes": {"buses": False}, "nudge": {"dx": 4}})
+    assert c.state["modes"]["buses"] is False
+    assert c.state["modes"]["trains"] is True
+    assert c.state["nudge"] == {"dx": 4.0, "dy": 0.0, "scale": 1.0}
+
+
+@pytest.mark.parametrize("patch", [
+    {"theme": "neon"},
+    {"hud": "yes"},
+    {"modes": {"trams": False}},
+    {"nudge": {"dx": True}},
+    {"nudge": {"rotate": 1}},
+    {"unknown": 1},
+    ["not", "an", "object"],
+])
+def test_invalid_patch_is_rejected_without_partial_changes(patch):
+    c = ControlState()
+    before = json.dumps(c.state, sort_keys=True)
+    with pytest.raises(ControlError):
+        c.apply({"hud": True, **patch} if isinstance(patch, dict) else patch)
+    assert json.dumps(c.state, sort_keys=True) == before
+
+
+def test_nudge_is_clamped():
+    c = ControlState()
+    c.apply({"nudge": {"scale": 10, "dx": -99999}})
+    assert c.state["nudge"]["scale"] == 2.0
+    assert c.state["nudge"]["dx"] == -2000.0
+
+
+def test_nudge_persists_across_restarts_but_nothing_else_does(tmp_path):
+    path = tmp_path / "nudge.json"
+    c = ControlState(path)
+    c.apply({"nudge": {"dx": 6, "scale": 1.01}, "hud": True})
+    restarted = ControlState(path).state
+    assert restarted["nudge"] == {"dx": 6.0, "dy": 0.0, "scale": 1.01}
+    assert restarted["hud"] is False
+
+
+def test_reset_nudge(tmp_path):
+    c = ControlState(tmp_path / "nudge.json")
+    c.apply({"nudge": {"dx": 6, "dy": -2, "scale": 0.9}})
+    c.reset_nudge()
+    assert c.state["nudge"] == {"dx": 0.0, "dy": 0.0, "scale": 1.0}
+
+
+def test_corrupt_nudge_file_is_ignored(tmp_path):
+    path = tmp_path / "nudge.json"
+    path.write_text("{not json")
+    assert ControlState(path).state["nudge"] == {"dx": 0.0, "dy": 0.0, "scale": 1.0}

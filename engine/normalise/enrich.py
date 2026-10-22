@@ -42,6 +42,7 @@ def enrich_vehicle_record(
         nearest = shapes.nearest_shape(record.lat, record.lon, max_match_distance_m)
         if nearest is not None:
             found_shape_id, match = nearest
+            shape_id = found_shape_id
             if record.confidence == "unmatched":
                 found_route_id = shapes.route_for_shape(found_shape_id)
                 route = lookup.route_by_id(found_route_id) if found_route_id else None
@@ -61,6 +62,7 @@ def enrich_vehicle_record(
 
     return dataclasses.replace(
         record,
+        shape_id=shape_id if match else None,
         matched_lat=match.matched_lat if match else None,
         matched_lon=match.matched_lon if match else None,
         distance_along_shape_m=match.distance_along_shape_m if match else None,

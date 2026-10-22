@@ -23,9 +23,21 @@ soft glowing dot, colour-coded by whether it's running on time, sized by mode (a
 train reads bigger than a bus), with a short comet tail showing recent movement and
 dim route corridors underneath so an empty street reads as empty rather than as a gap.
 
-Open `http://127.0.0.1:8765/stats` for a second, separate dashboard — live
-on-time percentages by mode, active service alerts, and which interchanges are
-busiest right now. This is meant for a wall panel or tablet, not the model itself.
+Open `http://<laptop address>:8765/control` on the tablet next to the model. The
+projector mirrors the laptop screen, so the projected view shows map content only (no
+buttons, hints or cursor), and everything is controlled from the tablet instead:
+
+- **Display** (for visitors): which vehicle types are shown, interchange pulses, and a
+  colour legend.
+- **Team** (behind a PIN, `controller.team_pin` in config): projection theme,
+  verification overlay, an on-projection status line, alignment nudge, crosshair
+  calibration, and system health (vehicles per mode, feed age).
+- **Stats**: on-time percentages by mode, active service alerts, and the busiest
+  interchanges (this used to be the separate `/stats` page, which now redirects here).
+
+The server prints the tablet URL on startup. Use the laptop's own hotspot for the
+tablet: the server listens on every interface, and venue/university Wi-Fi often
+blocks devices from reaching each other anyway.
 
 ## Why it's built the way it is
 
@@ -143,10 +155,21 @@ Real, TfNSW-specific data quirks the engine has to tolerate rather than choke on
 
 ## Recording
 
-Every raw protobuf payload the engine receives is written to
-`data/recordings/{mode}/{feed_type}/{hour}.ndjson.gz` as it's processed — a full,
-replayable record of everything the engine has ever seen, for future offline
-development or debugging without hitting the live API.
+Raw protobuf payloads are written to
+`data/recordings/{mode}/{feed_type}/{UTC hour}.{writer}.ndjson.gz`, trimmed to the
+model footprint first (`engine/sources/footprint.py`) — statewide feeds cost ~14GB in a
+few hours. The server records while it runs (`serve` files), and a weekday schedule
+records the AM and PM peaks even when it isn't running (`rec` files):
+
+```bash
+python scripts/run_record.py --minutes 130          # one-off recording
+python scripts/install_recording_schedule.py        # weekday 06:55 and 16:25, 130 min each
+sudo sh scripts/wake_schedule.sh                    # once: wakes the Mac before each peak
+python scripts/install_recording_schedule.py --uninstall
+```
+
+The schedule is a launchd agent (`~/Library/LaunchAgents/com.pulsecbd.recorder.plist`,
+log in `data/recordings/recorder.log`). The Mac must be on power for scheduled wakes.
 
 ---
 
@@ -176,7 +199,7 @@ pulse-cbd/
 
   renderer/
     index.html                The model-facing Canvas renderer + calibration mode
-    stats.html                 The separate wall-panel/tablet stats dashboard
+    controller.html           The tablet controller: Display / Team / Stats tabs
 
   scripts/
     run_phase1.py             Static foundation only (build the SQLite cache)
@@ -224,8 +247,14 @@ python scripts/run_phase1.py
 python scripts/run_publish.py
 ```
 
-Then open `http://127.0.0.1:8765/` (model view) and `http://127.0.0.1:8765/stats`
-(dashboard) in a browser.
+Then open `http://127.0.0.1:8765/` full-screen on the laptop (it's mirrored to the
+projector) and the `/control` URL the server prints on the tablet.
+
+**Keyboard backup** on the projector page (each key goes through the server, so the
+tablet stays in sync): **C** calibrate, **V** verification overlay, **H** status line,
+**T** theme, **P** interchange pulses, **L** dot colour (schedule / traffic / crowding),
+**K** street lines (off / traffic / crowding), **1–5** trains / metro / light rail / buses /
+ferries, **arrows** nudge (shift ×10), **[ ]** scale, **0** reset nudge.
 
 **Headless dev/debug tools** (no rendering, just prove the data pipeline works and
 inspect it directly):
@@ -238,15 +267,15 @@ python scripts/run_phase3.py --cycles 7            # + map matching/adherence + 
 **Tests**:
 
 ```bash
-pytest        # 68 tests, ~0.4s, no network required
+pytest        # 86 tests, ~0.5s, no network required
 ```
 
 ### Calibrating onto a physical model (once one exists)
 
 1. Point a projector at the model, run `scripts/run_publish.py`, and full-screen
    `http://127.0.0.1:8765/` on the projector's display.
-2. Press **C** to enter calibration mode — four (or more) draggable crosshairs
-   appear.
+2. Press **C** (or **Start** under Team → Alignment on the tablet) to enter
+   calibration mode — four (or more) draggable crosshairs appear.
 3. Drag each crosshair to line up with a physical registration mark on the model,
    and type in that mark's known latitude/longitude.
 4. Click **Save calibration** — the server computes a homography and writes it to
@@ -255,6 +284,10 @@ pytest        # 68 tests, ~0.4s, no network required
 5. Press **V** to toggle the verification overlay (route corridors rendered bright)
    to visually confirm the alignment looks right against the physical model before
    trusting it with live data.
+
+Between weekly sessions the rig stays set up, so start each session with **V** and
+fix small drift with the tablet's nudge (Team → Alignment) rather than recalibrating.
+Saving a new calibration resets the nudge.
 
 ---
 

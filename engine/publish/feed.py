@@ -22,9 +22,11 @@ from engine.normalise.aggregate import (
 from engine.normalise.build import build_vehicle_records
 from engine.normalise.enrich import enrich_vehicle_record
 from engine.normalise.map_match import ShapeIndex
+from engine.normalise.segments import SegmentAggregator
 from engine.normalise.static_lookup import StaticLookup
 from engine.normalise.trip_updates import build_trip_update_index
 from engine.normalise.vehicle import VehicleRecord
+from engine.sources.footprint import FootprintFilter
 from engine.sources.live import LiveSource
 from engine.sources.recorder import RecordingSource
 
@@ -45,7 +47,9 @@ class LiveVehicleFeed:
         self.snapshot: dict[str, VehicleRecord] = {}
         self.snapshot_updated_at: dict[str, float] = {}
         self.alerts_summary: dict = {"count": 0, "by_severity": {}, "route_ids": []}
+        self.last_positions_at: dict[str, float] = {}  # mode -> wall time of its latest vehicle_positions poll
         self.rolling_adherence = RollingAdherence()
+        self.segments = SegmentAggregator(self._shapes)
 
         self.interchanges: list[Interchange] = load_interchanges(db_path, cfg.raw["interchanges"])
         self.rolling_interchange_activity = RollingInterchangeActivity()
@@ -53,7 +57,8 @@ class LiveVehicleFeed:
 
         self._trip_update_index_by_mode: dict[str, dict] = {}
         recordings_dir = cfg.root / "data" / "recordings"
-        self._source = RecordingSource(LiveSource(cfg), recordings_dir)
+        footprint = FootprintFilter(cfg.bounding_box, self._cbd_stop_ids)
+        self._source = RecordingSource(LiveSource(cfg), recordings_dir, footprint, tag="serve")
 
     async def run_forever(self) -> None:
         bbox = self._cfg.bounding_box
@@ -77,6 +82,7 @@ class LiveVehicleFeed:
                 self.snapshot[enriched.vehicle_key] = enriched
                 self.snapshot_updated_at[enriched.vehicle_key] = now
                 self.rolling_adherence.record(enriched.mode, enriched.adherence_state, at=now)
+                self.segments.record(enriched, at=now)
 
                 position_lat = enriched.matched_lat if enriched.matched_lat is not None else enriched.lat
                 position_lon = enriched.matched_lon if enriched.matched_lon is not None else enriched.lon
@@ -84,6 +90,7 @@ class LiveVehicleFeed:
                     self.interchanges, position_lat, position_lon, self._interchange_radius_m
                 ):
                     self.rolling_interchange_activity.record(name, enriched.vehicle_key, at=now)
+            self.last_positions_at[raw.mode] = now
             self._prune_stale(now)
             logger.info(
                 "vehicle_positions:%s: %d vehicles, snapshot size %d",
@@ -102,6 +109,19 @@ class LiveVehicleFeed:
                 {"name": ic.name, "lat": ic.lat, "lon": ic.lon, "count": interchange_counts.get(ic.name, 0)}
                 for ic in self.interchanges
             ],
+        }
+
+    def health(self) -> dict:
+        """What the controller's team panel shows: vehicles on the model per
+        mode, and how long since each mode's feed last arrived."""
+        now = time.time()
+        by_mode: dict[str, int] = {}
+        for record in self.snapshot.values():
+            by_mode[record.mode] = by_mode.get(record.mode, 0) + 1
+        return {
+            "vehicles_total": len(self.snapshot),
+            "vehicles_by_mode": by_mode,
+            "feed_age_seconds": {mode: round(now - t, 1) for mode, t in self.last_positions_at.items()},
         }
 
     def _prune_stale(self, now: float) -> None:
