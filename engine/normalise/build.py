@@ -11,6 +11,7 @@ import logging
 
 from engine.config import BoundingBox
 from engine.normalise.decode import DecodeError, parse_feed_message
+from engine.normalise.levels import crowding_from_carriages
 from engine.normalise.proto import pb
 from engine.normalise.quirks import dedupe_ferry_entities
 from engine.normalise.static_lookup import StaticLookup
@@ -61,6 +62,19 @@ def build_vehicle_records(
             if vp.HasField("occupancy_status")
             else None
         )
+        if occupancy is None:
+            # Sydney Trains mostly report crowding per carriage (1007 extension).
+            occupancy = crowding_from_carriages([
+                pb.CarriageDescriptor.OccupancyStatus.Name(c.occupancy_status)
+                for c in vp.Extensions[pb.consist]
+                if c.HasField("occupancy_status")
+            ])
+        congestion = (
+            pb.VehiclePosition.CongestionLevel.Name(vp.congestion_level)
+            if vp.HasField("congestion_level")
+            and vp.congestion_level != pb.VehiclePosition.UNKNOWN_CONGESTION_LEVEL
+            else None
+        )
 
         records.append(
             VehicleRecord(
@@ -76,6 +90,7 @@ def build_vehicle_records(
                 bearing=vp.position.bearing if vp.position.HasField("bearing") else None,
                 position_timestamp=vp.timestamp if vp.HasField("timestamp") else None,
                 occupancy_status=occupancy,
+                congestion_level=congestion,
                 confidence=join.confidence,
             )
         )

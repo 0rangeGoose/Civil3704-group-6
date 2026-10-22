@@ -1,0 +1,130 @@
+"""Shared display-control state for the projector view.
+
+The projector mirrors the laptop screen, so nothing interactive can live on
+the projected image itself. Instead the tablet controller (and the laptop
+keyboard, as a backup) send small patches to the server over the existing
+WebSocket; the server validates them here, holds the one authoritative copy,
+and broadcasts the result to every connected page -- so the projector, the
+tablet and any other open controller always agree.
+
+Only the nudge (a small shift/scale on top of the calibration, for drift
+between weekly sessions) is persisted across restarts; everything else
+resets to its default, which is the safe state to start a showcase from.
+"""
+from __future__ import annotations
+
+import copy
+import json
+import logging
+from pathlib import Path
+from typing import Any
+
+logger = logging.getLogger("pulse_cbd.control")
+
+# Vehicle-mode groups as the controller shows them. A group can cover several
+# feed modes (e.g. both light rail lines).
+MODE_GROUPS: dict[str, list[str]] = {
+    "trains": ["sydneytrains", "nswtrains"],
+    "metro": ["metro"],
+    "lightrail": ["lightrail_innerwest", "lightrail_cbdandsoutheast"],
+    "buses": ["buses"],
+    "ferries": ["ferries"],
+}
+
+# What vehicle-dot colour shows, and which street-segment layer is drawn (at
+# most one line layer at a time; see docs/DECISIONS.md).
+LENSES = ("adherence", "congestion", "crowding")
+LINE_LAYERS = ("none", "congestion", "crowding")
+
+IDENTITY_NUDGE = {"dx": 0.0, "dy": 0.0, "scale": 1.0}
+_NUDGE_LIMITS = {"dx": (-2000.0, 2000.0), "dy": (-2000.0, 2000.0), "scale": (0.5, 2.0)}
+
+DEFAULT_STATE: dict[str, Any] = {
+    "theme": "dark",
+    "verify": False,
+    "hud": False,
+    "calibrate": False,
+    "interchanges": True,
+    "lens": "adherence",
+    "line_layer": "none",
+    "modes": {group: True for group in MODE_GROUPS},
+    "nudge": dict(IDENTITY_NUDGE),
+}
+
+
+class ControlError(ValueError):
+    pass
+
+
+def _clamp(value: float, bounds: tuple[float, float]) -> float:
+    return max(bounds[0], min(bounds[1], value))
+
+
+class ControlState:
+    def __init__(self, nudge_path: Path | None = None):
+        self._nudge_path = nudge_path
+        self.state: dict[str, Any] = copy.deepcopy(DEFAULT_STATE)
+        if nudge_path is not None and nudge_path.exists():
+            try:
+                self.apply({"nudge": json.loads(nudge_path.read_text())})
+            except (ControlError, ValueError) as exc:
+                logger.warning("ignoring unreadable nudge file %s: %s", nudge_path, exc)
+
+    def apply(self, patch: Any) -> dict[str, Any]:
+        """Validate and merge a patch. Raises ControlError without changing
+        anything if any part of it is invalid."""
+        if not isinstance(patch, dict):
+            raise ControlError("patch must be an object")
+        updated = copy.deepcopy(self.state)
+        for key, value in patch.items():
+            if key == "theme":
+                if value not in ("dark", "light"):
+                    raise ControlError(f"theme must be 'dark' or 'light', got {value!r}")
+                updated["theme"] = value
+            elif key == "lens":
+                if value not in LENSES:
+                    raise ControlError(f"lens must be one of {', '.join(LENSES)}")
+                updated["lens"] = value
+            elif key == "line_layer":
+                if value not in LINE_LAYERS:
+                    raise ControlError(f"line_layer must be one of {', '.join(LINE_LAYERS)}")
+                updated["line_layer"] = value
+            elif key in ("verify", "hud", "calibrate", "interchanges"):
+                if not isinstance(value, bool):
+                    raise ControlError(f"{key} must be true/false")
+                updated[key] = value
+            elif key == "modes":
+                if not isinstance(value, dict):
+                    raise ControlError("modes must be an object")
+                for group, on in value.items():
+                    if group not in MODE_GROUPS:
+                        raise ControlError(f"unknown mode group {group!r}")
+                    if not isinstance(on, bool):
+                        raise ControlError(f"modes.{group} must be true/false")
+                    updated["modes"][group] = on
+            elif key == "nudge":
+                if not isinstance(value, dict):
+                    raise ControlError("nudge must be an object")
+                for field, amount in value.items():
+                    if field not in _NUDGE_LIMITS:
+                        raise ControlError(f"unknown nudge field {field!r}")
+                    if isinstance(amount, bool) or not isinstance(amount, (int, float)):
+                        raise ControlError(f"nudge.{field} must be a number")
+                    updated["nudge"][field] = _clamp(float(amount), _NUDGE_LIMITS[field])
+            else:
+                raise ControlError(f"unknown control {key!r}")
+
+        nudge_changed = updated["nudge"] != self.state["nudge"]
+        self.state = updated
+        if nudge_changed:
+            self._save_nudge()
+        return self.state
+
+    def reset_nudge(self) -> dict[str, Any]:
+        return self.apply({"nudge": dict(IDENTITY_NUDGE)})
+
+    def _save_nudge(self) -> None:
+        if self._nudge_path is None:
+            return
+        self._nudge_path.parent.mkdir(parents=True, exist_ok=True)
+        self._nudge_path.write_text(json.dumps(self.state["nudge"]))

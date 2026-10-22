@@ -5,3 +5,6 @@ __pycache__/
 data/
 .pytest_cache/
 .DS_Store
+
+# Generated per machine by scripts/install_recording_schedule.py
+scripts/wake_schedule.sh

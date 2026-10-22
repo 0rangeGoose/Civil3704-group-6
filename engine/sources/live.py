@@ -32,6 +32,8 @@ class LiveSource:
         realtime_cfg = cfg.raw["realtime_gtfs"]
         self._base = realtime_cfg["base_host"]
         self._poll_interval = realtime_cfg["poll_interval_seconds"]
+        self._min_request_interval = realtime_cfg.get("min_request_interval_seconds", 0.0)
+        self._last_request_at = float("-inf")
         self._feeds = realtime_cfg["feeds"]
         self._headers = {"Authorization": f"apikey {cfg.api_key}"}
 
@@ -67,6 +69,11 @@ class LiveSource:
                 await asyncio.sleep(max(0.0, self._poll_interval - elapsed))
 
     async def _fetch_once(self, client: httpx.AsyncClient, key: str, path: str) -> bytes | None:
+        loop = asyncio.get_event_loop()
+        wait = self._last_request_at + self._min_request_interval - loop.time()
+        if wait > 0:
+            await asyncio.sleep(wait)
+        self._last_request_at = loop.time()
         try:
             resp = await client.get(path)
         except httpx.HTTPError as exc:
