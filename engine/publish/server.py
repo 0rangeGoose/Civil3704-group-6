@@ -27,6 +27,7 @@ from engine.publish.control import MODE_GROUPS, ControlError, ControlState
 from engine.publish.feed import LiveVehicleFeed
 from engine.publish.homography import HomographyError
 from engine.publish.shapes_export import build_render_shapes
+from engine.demand.areas import build_area_layers
 from engine.sources.replay import RecordingIndex, ReplaySource
 
 logger = logging.getLogger("pulse_cbd.publish_server")
@@ -136,6 +137,15 @@ async def broadcast_control(app: web.Application) -> None:
 async def segments_handler(request: web.Request) -> web.Response:
     feed: LiveVehicleFeed = request.app["feed"]
     return web.json_response(feed.segments.snapshot(feed.clock))
+
+
+async def areas_handler(request: web.Request) -> web.Response:
+    """Static area layers; built (or loaded from cache) in the background at
+    startup, so this is empty for the first few seconds on a fresh build."""
+    layers = request.app["areas"] or {"available": {}, "zones": [], "grid": [], "meta": {}}
+    if request.query.get("meta"):  # the tablet only needs what's available and how it was built
+        return web.json_response({"available": layers["available"], "meta": layers["meta"]})
+    return web.json_response(layers)
 
 
 async def recordings_handler(request: web.Request) -> web.Response:
@@ -292,7 +302,15 @@ async def _broadcast_loop(app: web.Application) -> None:
         await _broadcast(app, frame)
 
 
+async def _load_areas(app: web.Application) -> None:
+    try:
+        app["areas"] = await asyncio.to_thread(build_area_layers, app["cfg"])
+    except Exception:  # the live map must still come up without them
+        logger.exception("area layers failed to build")
+
+
 async def _start_background_tasks(app: web.Application) -> None:
+    app["areas_task"] = asyncio.create_task(_load_areas(app))
     app["feed_task"] = asyncio.create_task(app["feed"].run_forever())
     app["broadcast_task"] = asyncio.create_task(_broadcast_loop(app))
 
@@ -309,6 +327,7 @@ def build_app(cfg: Config) -> web.Application:
     app["websockets"] = set()
     app["control"] = ControlState(cfg.root / "data" / "projection_nudge.json")
     app["replay"] = None
+    app["areas"] = None
     app["feed"] = LiveVehicleFeed(cfg)
     app["shapes"] = build_render_shapes(cfg.path("db_path"), cfg.bounding_box)
     app["replay_index"] = RecordingIndex(app["feed"].recordings_dir)
@@ -322,6 +341,7 @@ def build_app(cfg: Config) -> web.Application:
     app.router.add_get("/shapes", shapes_handler)
     app.router.add_get("/segments", segments_handler)
     app.router.add_get("/recordings", recordings_handler)
+    app.router.add_get("/areas", areas_handler)
     app.router.add_get("/config", config_handler)
     app.router.add_get("/aggregate", aggregate_handler)
     app.router.add_get("/calibration", get_calibration_handler)

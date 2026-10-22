@@ -2,6 +2,40 @@
 
 Judgment calls made without stopping to ask, per the project brief. Newest first.
 
+## 2026-10-23 — Step 4: jobs, service gap and Opal 2016 on zones and grid
+
+Built in full, as decided (all three layers, on both units). Details in the docstring of
+`engine/demand/areas.py`; the calls that matter for the report:
+
+- **Static, computed once.** Places don't change during a run, so layers build at startup
+  in the background (~5s) and are cached until an input changes. Server start isn't
+  delayed; the tablet greys out area buttons until they're ready.
+- **Units**: TZ21 travel zones (405 in the footprint, kept whole for their values and
+  clipped to the footprint for drawing) and 150m grid cells in UTM (3,204, square on the
+  model). Grid jobs are an area-weighted share of the zones a cell overlaps.
+- **Service = scheduled departures within 200m, 7:00–9:00, on a reference Tuesday**
+  (27 Oct 2026, from the static timetable). It counts each trip once per stop it serves
+  in reach, so it measures how much service a worker there can reach, not distinct trips.
+- **Service gap = percentile rank of jobs − percentile rank of departures** among units
+  with jobs, so it's relative to the rest of the footprint, not an absolute standard.
+  First results look right: RPA Hospital, Australian Technology Park, Garden Island and
+  Chippendale come out most underserved.
+- **Opal 2016**: stations (train/light rail/ferry) are placed by matching Opal's names
+  to today's stop names (base name + "Station"/"Wharf"/"Light Rail", since Opal writes
+  "Circular Quay, No. 3 Wharf" where GTFS has "Circular Quay, Wharf 3"). Bus taps are
+  only given by **postcode**, so each postcode's bus taps are scaled by the share of its
+  area inside the footprint and split evenly across today's bus stops in it, using ABS
+  POA 2021 boundaries. Busiest: Wynyard, Central, Town Hall, as expected.
+- **Colours**: 0–4 bins. Quintiles for jobs and Opal; fixed bands at ±0.15/±0.4 for the
+  gap (blue = more service than jobs, orange = underserved). Vehicles turn white while an
+  area layer is on, as planned.
+- **Drawing is clipped to the footprint.** Route corridors used to extend past the model
+  edge (they're exported with 15% padding), which on the real rig lands on the table.
+  Checked visually in Chrome: zones, grid, Opal and the tablet legend all render.
+- Data: TZ21/TZP24 taken from the team branch via Git LFS; Opal Release 2 and ABS POA
+  downloaded. `scripts/prepare_demand_data.py` cuts the 109MB statewide zones and the
+  postcode shapefile down to ~1MB each; `pyshp` is an optional `[prep]` dependency.
+
 ## 2026-10-23 — Step 3: replay and time-lapse
 
 - **Replay goes through the same engine as live.** `engine/sources/replay.py` merges the
