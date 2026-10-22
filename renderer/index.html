@@ -105,6 +105,18 @@ const LEVEL_COLOR = {
   },
 };
 
+// Area layers (engine/demand/areas.py): each unit arrives with a 0-4 bin.
+// Jobs and Opal are sequential (brighter = more); the service gap diverges
+// from blue (more service than jobs) through grey to orange (underserved).
+const AREA_COLOR = {
+  jobs: ["#2a2f6b", "#43449e", "#6a56c9", "#9d6be3", "#d892ff"],
+  service_gap: ["#2f7bff", "#86b4ff", "#62666e", "#ffb066", "#ff6a00"],
+  opal: ["#123f3b", "#16716a", "#1fa89e", "#4fd8ca", "#b0fff6"],
+};
+const AREA_ALPHA = { dark: 0.55, light: 0.45 };
+// While an area layer is on, vehicles go neutral so they don't compete with it.
+const NEUTRAL_DOT = { dark: "#f2f4f7", light: "#30363d" };
+
 // Size/glow radius encodes mode, so heavy rail reads differently from a bus.
 const MODE_RADIUS = {
   sydneytrains: 7, nswtrains: 7, metro: 7,
@@ -131,7 +143,7 @@ let theme = "dark";
 // ever one source of truth.
 let control = {
   theme: "dark", verify: false, hud: false, calibrate: false, interchanges: true,
-  lens: "adherence", line_layer: "none", modes: {}, nudge: { dx: 0, dy: 0, scale: 1 },
+  lens: "adherence", line_layer: "none", area_layer: "none", area_unit: "zones", modes: {}, nudge: { dx: 0, dy: 0, scale: 1 },
 };
 let modeToGroup = {}; // feed mode -> controller group, from /config
 
@@ -139,6 +151,12 @@ let modeToGroup = {}; // feed mode -> controller group, from /config
 // from /segments while a line layer is on. [{id, pts, congestion, crowding}]
 let segments = [];
 const SEGMENT_POLL_MS = 10000;
+
+// Static area layers from /areas: {zones: [...], grid: [...]}, each unit
+// {rings: [[[lat, lon], ...]], bins: {jobs, service_gap, opal}}. Drawn once
+// into an offscreen canvas per (layer, unit, theme, projection).
+let areas = null;
+let areaLayerCanvas = null;
 
 // Live or replay, from each vehicle frame. During a time-lapse, positions
 // arrive `speed` times faster, so interpolation and fade-out timing shrink to
@@ -149,6 +167,7 @@ function pollIntervalMs() { return ((cfg.poll_interval_seconds || 15) * 1000) / 
 function staleAfterMs() { return ((cfg.stale_after_seconds || 90) * 1000) / (playback.speed || 1); }
 
 function applyControl(next) {
+  const areaChanged = next.area_layer !== control.area_layer || next.area_unit !== control.area_unit;
   const layoutChanged =
     next.theme !== control.theme ||
     next.calibrate !== control.calibrate ||
@@ -161,6 +180,7 @@ function applyControl(next) {
   if (control.calibrate && !calibrateMode) enterCalibrateMode();
   if (!control.calibrate && calibrateMode) exitCalibrateMode();
   if (layoutChanged) rebuildLayers();
+  else if (areaChanged) areaLayerCanvas = drawAreaLayer();
   if (control.line_layer !== "none" && !segments.length) pollSegments();
 }
 
@@ -187,6 +207,7 @@ function levelColor(layer, level) {
 }
 
 function dotColor(entry) {
+  if (control.area_layer !== "none") return NEUTRAL_DOT[theme];
   const unknown = ADHERENCE_COLOR[theme].unknown;
   if (control.lens === "congestion") return levelColor("congestion", entry.cg) || unknown;
   if (control.lens === "crowding") return levelColor("crowding", entry.oc) || unknown;
@@ -257,6 +278,76 @@ function rebuildLayers() {
   projector = selectProjector();
   corridorLayerDim = drawCorridorLayer(CANVAS_THEME[theme].corridorDim, 1);
   corridorLayerBright = drawCorridorLayer(CANVAS_THEME[theme].corridorBright, 1.6);
+  areaLayerCanvas = drawAreaLayer();
+}
+
+function clipToFootprint() {
+  const bb = cfg.bounding_box;
+  const corners = [[bb.north, bb.west], [bb.north, bb.east], [bb.south, bb.east], [bb.south, bb.west]];
+  ctx.beginPath();
+  corners.forEach(([lat, lon], i) => {
+    const [x, y] = projector.project(lat, lon);
+    if (i === 0) ctx.moveTo(x, y); else ctx.lineTo(x, y);
+  });
+  ctx.closePath();
+  ctx.clip();
+}
+
+function drawAreaLayer() {
+  const layer = control.area_layer;
+  if (layer === "none" || !areas || !projector) return null;
+  const units = areas[control.area_unit] || [];
+  const off = document.createElement("canvas");
+  off.width = canvas.width;
+  off.height = canvas.height;
+  const octx = off.getContext("2d");
+  octx.globalAlpha = AREA_ALPHA[theme];
+  octx.lineJoin = "round";
+  for (const unit of units) {
+    const bin = unit.bins[layer];
+    if (bin === null || bin === undefined) continue;
+    octx.fillStyle = AREA_COLOR[layer][bin];
+    octx.beginPath();
+    for (const ring of unit.rings) {
+      ring.forEach(([lat, lon], i) => {
+        const [x, y] = projector.project(lat, lon);
+        if (i === 0) octx.moveTo(x, y); else octx.lineTo(x, y);
+      });
+      octx.closePath();
+    }
+    octx.fill();
+  }
+  // Thin unit outlines so neighbouring zones in the same bin stay readable.
+  octx.globalAlpha = 0.25;
+  octx.strokeStyle = CANVAS_THEME[theme].bg;
+  octx.lineWidth = 1;
+  for (const unit of units) {
+    if (unit.bins[layer] === null || unit.bins[layer] === undefined) continue;
+    octx.beginPath();
+    for (const ring of unit.rings) {
+      ring.forEach(([lat, lon], i) => {
+        const [x, y] = projector.project(lat, lon);
+        if (i === 0) octx.moveTo(x, y); else octx.lineTo(x, y);
+      });
+      octx.closePath();
+    }
+    octx.stroke();
+  }
+  return off;
+}
+
+// Built in the background at server start, so retry until it's ready.
+async function loadAreas() {
+  try {
+    const resp = await fetch("/areas", { cache: "no-store" });
+    const body = resp.ok ? await resp.json() : null;
+    if (body && (body.zones.length || body.grid.length)) {
+      areas = body;
+      areaLayerCanvas = drawAreaLayer();
+      return;
+    }
+  } catch (_) { /* retry below */ }
+  setTimeout(loadAreas, 5000);
 }
 
 // A saved calibration (Phase 5) takes over from the flat-screen linear fit
@@ -399,6 +490,12 @@ function render() {
 
   ctx.fillStyle = CANVAS_THEME[theme].bg;
   ctx.fillRect(0, 0, canvas.width, canvas.height);
+
+  // Nothing is drawn outside the model's footprint, where it would land on the
+  // table rather than the model. Calibration sees the whole screen.
+  ctx.save();
+  if (!calibrateMode) clipToFootprint();
+  if (areaLayerCanvas && !verificationMode) ctx.drawImage(areaLayerCanvas, 0, 0);
   ctx.drawImage(verificationMode ? corridorLayerBright : corridorLayerDim, 0, 0);
 
   drawSegments();
@@ -451,6 +548,7 @@ function render() {
     ctx.fill();
   }
 
+  ctx.restore();
   for (const key of toDelete) vehicles.delete(key);
 
   if (control.hud) {
@@ -650,11 +748,13 @@ document.getElementById("cal-save").addEventListener("click", async () => {
 // directly, so the tablet shows the same state.
 //   C calibrate   V verification overlay   H status line   T theme   P pulses
 //   L dot colour (schedule / congestion / crowding)   K street lines (off / congestion / crowding)
+//   A areas (off / jobs / service gap / Opal 2016)   G areas on travel zones / 150m grid
 //   1-5 trains / metro / light rail / buses / ferries
 //   arrows nudge (shift = x10)   [ ] scale   0 reset nudge
 const KEY_MODE_GROUPS = ["trains", "metro", "lightrail", "buses", "ferries"];
 const LENSES = ["adherence", "congestion", "crowding"];
 const LINE_LAYERS = ["none", "congestion", "crowding"];
+const AREA_LAYERS = ["none", "jobs", "service_gap", "opal"];
 const nextOf = (list, current) => list[(list.indexOf(current) + 1) % list.length];
 const NUDGE_STEP_PX = 2;
 const SCALE_STEP = 0.002;
@@ -671,6 +771,8 @@ document.addEventListener("keydown", (ev) => {
   else if (key === "p") sendControl({ interchanges: !control.interchanges });
   else if (key === "l") sendControl({ lens: nextOf(LENSES, control.lens) });
   else if (key === "k") sendControl({ line_layer: nextOf(LINE_LAYERS, control.line_layer) });
+  else if (key === "a") sendControl({ area_layer: nextOf(AREA_LAYERS, control.area_layer) });
+  else if (key === "g") sendControl({ area_unit: control.area_unit === "zones" ? "grid" : "zones" });
   else if (key >= "1" && key <= "5") {
     const group = KEY_MODE_GROUPS[Number(key) - 1];
     sendControl({ modes: { [group]: control.modes[group] === false } });
@@ -722,6 +824,7 @@ async function boot() {
   shapes = await shapesResp.json();
   calibration = await calResp.json(); // null if none saved yet -- Phase 4's linear fit is used
   resize();
+  loadAreas();
   connectWebSocket();
   requestAnimationFrame(render);
 }

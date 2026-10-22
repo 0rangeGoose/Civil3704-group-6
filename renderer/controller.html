@@ -10,6 +10,7 @@
      Display (visitors), Team (behind a PIN), Stats (what used to be /stats).
      Sizing is for fingers: every control is at least 48px tall. */
   * { box-sizing: border-box; }
+  [hidden] { display: none !important; }
   :root {
     --bg: #0a0e14; --fg: #e6edf3; --muted: #7d8590; --warn: #f0883e; --bad: #ff6b6b;
     --panel-bg: #11161d; --panel-border: #21262d; --track-bg: #1c2129;
@@ -184,6 +185,22 @@
       </div>
     </section>
     <section>
+      <h2>Colour the areas by</h2>
+      <div class="toggles" id="area-choices">
+        <button class="toggle" data-area="none">Off</button>
+        <button class="toggle" data-area="jobs">Jobs</button>
+        <button class="toggle" data-area="service_gap">Service gap</button>
+        <button class="toggle" data-area="opal">Opal 2016</button>
+      </div>
+      <div class="row">
+        <div class="label">Area shape<small>Compare which reads better on the model</small></div>
+        <div class="seg" id="unit-seg">
+          <button data-unit="zones">Travel zones</button>
+          <button data-unit="grid">150 m grid</button>
+        </div>
+      </div>
+    </section>
+    <section>
       <h2>What the colours mean</h2>
       <div id="legend"></div>
       <p class="note">Bigger dots are trains, metro and light rail; smaller dots are buses and ferries. Glowing rings are major interchanges, brighter when more services pass through.</p>
@@ -312,6 +329,37 @@ const LEGENDS = {
   },
 };
 
+let areaMeta = null; // {available, meta} from /areas?meta=1
+
+const AREA_LEGENDS = {
+  jobs: {
+    title: "Jobs (TfNSW TZP24 projections)",
+    colors: ["#2a2f6b", "#43449e", "#6a56c9", "#9d6be3", "#d892ff"],
+    labels: ["Fewest jobs", "", "", "", "Most jobs"],
+    note: (m) => `People employed in each area in ${m.jobs_year}, ranked into fifths. Where jobs are, not where people live.`,
+  },
+  service_gap: {
+    title: "Service gap: jobs vs. public transport",
+    colors: ["#2f7bff", "#86b4ff", "#62666e", "#ffb066", "#ff6a00"],
+    labels: ["Much more service than jobs", "More service", "Balanced", "More jobs", "Much more jobs than service"],
+    note: (m) => `Jobs compared with scheduled departures within ${m.walk_m} m, ${m.peak} on a weekday (${m.service_day}). Orange areas have many workers and little service.`,
+  },
+  opal: {
+    title: "Opal taps, November 2016",
+    colors: ["#123f3b", "#16716a", "#1fa89e", "#4fd8ca", "#b0fff6"],
+    labels: ["Fewest taps", "", "", "", "Most taps"],
+    note: (m) => `Tap-ons and tap-offs ${m.peak}, average weekday 21–25 Nov 2016. Before the Metro and CBD light rail opened. Buses are by postcode, spread across its bus stops.`,
+  },
+};
+
+function areaLegend(key) {
+  const def = AREA_LEGENDS[key];
+  const items = def.colors.map((c, i) => [c, def.labels[i]]).filter(([, l]) => l);
+  const swatches = `<div class="legend">${items.map(([c, l]) => `<div><span class="swatch" style="background:${c};border-radius:3px"></span>${l}</div>`).join("")}</div>`;
+  const note = areaMeta && areaMeta.meta.peak ? `<p class="note">${def.note(areaMeta.meta)}</p>` : "";
+  return `<h3>Areas: ${def.title}</h3>${swatches}${note}<p class="note">Vehicles turn white while an area layer is on.</p>`;
+}
+
 function legendItems(key) {
   const def = LEGENDS[key];
   const items = def.items || def.colors.map((c, i) => [c, cfg[def.labelsKey][i]]);
@@ -321,8 +369,9 @@ function legendItems(key) {
 
 function renderLegend() {
   const parts = [];
+  if (control.area_layer !== "none") parts.push(areaLegend(control.area_layer));
   const lens = control.lens;
-  parts.push(`<h3>${LEGENDS[lens].title}</h3><div class="legend">${legendItems(lens)}</div><p class="note">${LEGENDS[lens].note}</p>`);
+  if (control.area_layer === "none") parts.push(`<h3>${LEGENDS[lens].title}</h3><div class="legend">${legendItems(lens)}</div><p class="note">${LEGENDS[lens].note}</p>`);
   if (control.line_layer !== "none" && control.line_layer !== lens) {
     const line = control.line_layer;
     parts.push(`<h3>Streets: ${LEGENDS[line].title.toLowerCase()}</h3><div class="legend">${legendItems(line)}</div><p class="note">${LEGENDS[line].note}</p>`);
@@ -413,6 +462,11 @@ function render(next) {
   });
   document.querySelectorAll("[data-lens]").forEach((b) => b.setAttribute("aria-pressed", String(b.dataset.lens === control.lens)));
   document.querySelectorAll("[data-line]").forEach((b) => b.setAttribute("aria-pressed", String(b.dataset.line === control.line_layer)));
+  document.querySelectorAll("[data-area]").forEach((b) => {
+    b.setAttribute("aria-pressed", String(b.dataset.area === control.area_layer));
+    if (b.dataset.area !== "none") b.disabled = !(areaMeta && areaMeta.available[b.dataset.area]);
+  });
+  document.querySelectorAll("[data-unit]").forEach((b) => b.setAttribute("aria-pressed", String(b.dataset.unit === control.area_unit)));
   renderLegend();
   renderSessions();
   document.querySelectorAll("#speed-seg button").forEach((b) => {
@@ -437,6 +491,28 @@ document.getElementById("line-choices").addEventListener("click", (ev) => {
   const b = ev.target.closest("[data-line]");
   if (b) sendControl({ line_layer: b.dataset.line });
 });
+document.getElementById("area-choices").addEventListener("click", (ev) => {
+  const b = ev.target.closest("[data-area]");
+  if (b && !b.disabled) sendControl({ area_layer: b.dataset.area });
+});
+document.getElementById("unit-seg").addEventListener("click", (ev) => {
+  const b = ev.target.closest("[data-unit]");
+  if (b) sendControl({ area_unit: b.dataset.unit });
+});
+
+async function loadAreaMeta() {
+  try {
+    const resp = await fetch("/areas?meta=1", { cache: "no-store" });
+    const body = resp.ok ? await resp.json() : null;
+    if (body && body.meta && body.meta.peak) {
+      areaMeta = body;
+      if (control) render(control);
+      return;
+    }
+  } catch (_) { /* retry below */ }
+  setTimeout(loadAreaMeta, 5000); // still building at server start
+}
+
 document.getElementById("theme-seg").addEventListener("click", (ev) => {
   const b = ev.target.closest("button[data-theme-choice]");
   if (b) sendControl({ theme: b.dataset.themeChoice });
@@ -474,7 +550,10 @@ async function refreshSessions() {
   try {
     const resp = await fetch("/recordings", { cache: "no-store" });
     if (resp.ok) sessions = await resp.json();
-  } catch (_) { return; }
+  } catch (_) {
+    setTimeout(refreshSessions, 5000); // server still starting; don't wait for the minute timer
+    return;
+  }
   renderSessions();
 }
 
@@ -656,6 +735,7 @@ async function boot() {
   showTab(["display", "team", "stats"].includes(start) ? start : "display");
   connect();
   refreshSessions();
+  loadAreaMeta();
   setInterval(refreshSessions, 60000);
   setInterval(refreshStats, 3000);
   setInterval(refreshHealth, 3000);

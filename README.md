@@ -153,6 +153,32 @@ Real, TfNSW-specific data quirks the engine has to tolerate rather than choke on
 - **Occupancy data is inconsistent across modes** — treated as optional metadata everywhere, never required.
 - **(Discovered during build, not in the original spec)** Sydney Trains, Metro, and CBD/South-East Light Rail realtime feeds use route ids from a different namespace than the static bundle entirely — see `confidence: geometric_match` above.
 
+## Demand layers
+
+Static area layers, chosen on the tablet (Display → Colour the areas by), on either
+TfNSW travel zones or a 150 m grid (Area shape) so you can compare them on the model:
+**jobs** (TZP24, 2026), **service gap** (jobs vs scheduled departures within 200 m,
+7–9am on a weekday) and **Opal 2016** (tap-ons/offs 7–9am, 21–25 Nov 2016). Vehicles
+turn white while one is on. How each is calculated: `engine/demand/areas.py`.
+
+The source files aren't in git (`data/` is ignored). To set them up:
+
+```bash
+# Travel zones + jobs: from the team branch (Git LFS), or the TfNSW Open Data Hub
+git lfs fetch group-repo mid-project-demo
+for f in travel_zones_2021.geojson tzp24_employment.csv; do
+  git show group-repo/mid-project-demo:template-repository-main/data/demand/$f | git lfs smudge > data/demand/$f
+done
+# Opal Tap On and Tap Off Release 2, time with location, 21-27 Nov 2016 (data.nsw.gov.au)
+curl -L -o data/opal/time_loc_20161121-27.csv <resource URL>
+# Postcode boundaries (ABS POA 2021, GDA2020 shapefile, ~53MB), unzipped somewhere temporary
+pip install -e ".[prep]"
+python scripts/prepare_demand_data.py --poa-dir /path/to/POA_2021_AUST_GDA2020_SHP
+```
+
+The server builds the layers in the background on first start (~5s) and caches them in
+`data/demand/area_layers.json` until an input changes.
+
 ## Recording
 
 Raw protobuf payloads are written to
@@ -257,7 +283,8 @@ projector) and the `/control` URL the server prints on the tablet.
 **Keyboard backup** on the projector page (each key goes through the server, so the
 tablet stays in sync): **C** calibrate, **V** verification overlay, **H** status line,
 **T** theme, **P** interchange pulses, **L** dot colour (schedule / traffic / crowding),
-**K** street lines (off / traffic / crowding), **1–5** trains / metro / light rail / buses /
+**K** street lines (off / traffic / crowding), **A** areas (off / jobs / service gap / Opal 2016),
+**G** areas on travel zones / grid, **1–5** trains / metro / light rail / buses /
 ferries, **arrows** nudge (shift ×10), **[ ]** scale, **0** reset nudge.
 
 **Headless dev/debug tools** (no rendering, just prove the data pipeline works and
@@ -271,7 +298,7 @@ python scripts/run_phase3.py --cycles 7            # + map matching/adherence + 
 **Tests**:
 
 ```bash
-pytest        # 102 tests, ~1s, no network required
+pytest        # 116 tests, ~1s, no network required
 ```
 
 ### Calibrating onto a physical model (once one exists)

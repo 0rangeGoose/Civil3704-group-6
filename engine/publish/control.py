@@ -35,6 +35,9 @@ MODE_GROUPS: dict[str, list[str]] = {
 # most one line layer at a time; see docs/DECISIONS.md).
 LENSES = ("adherence", "congestion", "crowding")
 LINE_LAYERS = ("none", "congestion", "crowding")
+# Static area layers (engine/demand/areas.py) and the unit they're drawn on.
+AREA_LAYERS = ("none", "jobs", "service_gap", "opal")
+AREA_UNITS = ("zones", "grid")
 
 IDENTITY_NUDGE = {"dx": 0.0, "dy": 0.0, "scale": 1.0}
 
@@ -52,6 +55,8 @@ DEFAULT_STATE: dict[str, Any] = {
     "interchanges": True,
     "lens": "adherence",
     "line_layer": "none",
+    "area_layer": "none",
+    "area_unit": "zones",
     "playback": {"session": "live", "speed": DEFAULT_REPLAY_SPEED},
     "modes": {group: True for group in MODE_GROUPS},
     "nudge": dict(IDENTITY_NUDGE),
@@ -95,6 +100,14 @@ class ControlState:
                 if value not in LINE_LAYERS:
                     raise ControlError(f"line_layer must be one of {', '.join(LINE_LAYERS)}")
                 updated["line_layer"] = value
+            elif key == "area_layer":
+                if value not in AREA_LAYERS:
+                    raise ControlError(f"area_layer must be one of {', '.join(AREA_LAYERS)}")
+                updated["area_layer"] = value
+            elif key == "area_unit":
+                if value not in AREA_UNITS:
+                    raise ControlError(f"area_unit must be one of {', '.join(AREA_UNITS)}")
+                updated["area_unit"] = value
             elif key in ("verify", "hud", "calibrate", "interchanges"):
                 if not isinstance(value, bool):
                     raise ControlError(f"{key} must be true/false")
