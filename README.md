@@ -168,6 +168,10 @@ sudo sh scripts/wake_schedule.sh                    # once: wakes the Mac before
 python scripts/install_recording_schedule.py --uninstall
 ```
 
+Recordings replay from the tablet (Display → Time): any recorded AM/PM peak, or the
+latest two hours, in real time or as a 10× / 25× / 50× time-lapse that loops. Live
+polling pauses while a replay plays.
+
 The schedule is a launchd agent (`~/Library/LaunchAgents/com.pulsecbd.recorder.plist`,
 log in `data/recordings/recorder.log`). The Mac must be on power for scheduled wakes.
 
@@ -267,7 +271,7 @@ python scripts/run_phase3.py --cycles 7            # + map matching/adherence + 
 **Tests**:
 
 ```bash
-pytest        # 86 tests, ~0.5s, no network required
+pytest        # 102 tests, ~1s, no network required
 ```
 
 ### Calibrating onto a physical model (once one exists)

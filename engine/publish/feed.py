@@ -3,6 +3,11 @@ an in-memory current snapshot -- the thing the WebSocket/HTTP layer serves.
 
 This is the same pipeline scripts/run_phase3.py exercises headless, wired up
 as a long-running service instead of a bounded CLI run.
+
+The source is either live polling (recorded as it goes) or a replay of
+recordings (engine/sources/replay.py). Either way, "now" is the fetch time of
+the payload being processed (``self.clock``), not the wall clock -- so rolling
+windows cover recorded time during a time-lapse, and live behaves as before.
 """
 from __future__ import annotations
 
@@ -29,6 +34,7 @@ from engine.normalise.vehicle import VehicleRecord
 from engine.sources.footprint import FootprintFilter
 from engine.sources.live import LiveSource
 from engine.sources.recorder import RecordingSource
+from engine.sources.replay import RESTART
 
 logger = logging.getLogger("pulse_cbd.feed")
 
@@ -44,25 +50,39 @@ class LiveVehicleFeed:
         self._very_late_multiplier = self._thresholds["very_late_multiplier"]
         self._stale_after_seconds = cfg.raw["realtime_gtfs"]["stale_after_seconds"]
 
+        self.interchanges: list[Interchange] = load_interchanges(db_path, cfg.raw["interchanges"])
+        self._interchange_radius_m = cfg.raw.get("interchange_radius_m", 300)
+        self.recordings_dir = cfg.root / "data" / "recordings"
+
+        self.epoch = 0  # bumped on every reset, so pages know to drop what they're showing
+        self.reset()
+
+    def reset(self) -> None:
+        """Forget everything derived from the current source -- on switching
+        between live and replay, and each time a replay loops."""
+        self.clock = time.time()
         self.snapshot: dict[str, VehicleRecord] = {}
         self.snapshot_updated_at: dict[str, float] = {}
         self.alerts_summary: dict = {"count": 0, "by_severity": {}, "route_ids": []}
-        self.last_positions_at: dict[str, float] = {}  # mode -> wall time of its latest vehicle_positions poll
+        self.last_positions_at: dict[str, float] = {}  # mode -> wall time its latest positions arrived
         self.rolling_adherence = RollingAdherence()
         self.segments = SegmentAggregator(self._shapes)
-
-        self.interchanges: list[Interchange] = load_interchanges(db_path, cfg.raw["interchanges"])
         self.rolling_interchange_activity = RollingInterchangeActivity()
-        self._interchange_radius_m = cfg.raw.get("interchange_radius_m", 300)
-
         self._trip_update_index_by_mode: dict[str, dict] = {}
-        recordings_dir = cfg.root / "data" / "recordings"
-        footprint = FootprintFilter(cfg.bounding_box, self._cbd_stop_ids)
-        self._source = RecordingSource(LiveSource(cfg), recordings_dir, footprint, tag="serve")
+        self.epoch += 1
 
-    async def run_forever(self) -> None:
+    def live_source(self) -> RecordingSource:
+        footprint = FootprintFilter(self._cfg.bounding_box, self._cbd_stop_ids)
+        return RecordingSource(LiveSource(self._cfg), self.recordings_dir, footprint, tag="serve")
+
+    async def run_forever(self, source=None) -> None:
         bbox = self._cfg.bounding_box
-        async for raw in self._source.stream():
+        source = source or self.live_source()
+        async for raw in source.stream():
+            if raw.feed_type == RESTART:
+                self.reset()
+                continue
+            self.clock = raw.fetched_at.timestamp()
             if raw.feed_type == "trip_updates":
                 self._trip_update_index_by_mode[raw.mode] = build_trip_update_index(raw.payload)
                 continue
@@ -74,7 +94,7 @@ class LiveVehicleFeed:
 
             records = build_vehicle_records(raw, bbox, self._lookup)
             trip_updates = self._trip_update_index_by_mode.get(raw.mode, {})
-            now = time.time()
+            now = self.clock
             for r in records:
                 enriched = enrich_vehicle_record(
                     r, trip_updates, self._shapes, self._lookup, self._thresholds, self._very_late_multiplier
@@ -90,7 +110,7 @@ class LiveVehicleFeed:
                     self.interchanges, position_lat, position_lon, self._interchange_radius_m
                 ):
                     self.rolling_interchange_activity.record(name, enriched.vehicle_key, at=now)
-            self.last_positions_at[raw.mode] = now
+            self.last_positions_at[raw.mode] = time.time()
             self._prune_stale(now)
             logger.info(
                 "vehicle_positions:%s: %d vehicles, snapshot size %d",
@@ -101,9 +121,9 @@ class LiveVehicleFeed:
         """Everything the stats panel (and the model renderer's interchange
         pulses) need: rolling adherence by window, active alerts, and
         per-interchange recent activity counts."""
-        interchange_counts = self.rolling_interchange_activity.counts()
+        interchange_counts = self.rolling_interchange_activity.counts(now=self.clock)
         return {
-            "adherence_by_window": self.rolling_adherence.breakdown_all_windows(),
+            "adherence_by_window": self.rolling_adherence.breakdown_all_windows(now=self.clock),
             "alerts": self.alerts_summary,
             "interchanges": [
                 {"name": ic.name, "lat": ic.lat, "lon": ic.lon, "count": interchange_counts.get(ic.name, 0)}

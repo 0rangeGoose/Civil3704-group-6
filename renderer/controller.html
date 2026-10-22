@@ -63,6 +63,13 @@
   .legend { display: grid; grid-template-columns: repeat(auto-fill, minmax(150px, 1fr)); gap: 8px 16px; font-size: 15px; }
   .legend div { display: flex; align-items: center; gap: 10px; }
   .swatch { width: 16px; height: 16px; border-radius: 50%; flex-shrink: 0; background: #000; }
+  #now-showing { font-size: 17px; font-weight: 600; margin-bottom: 10px; }
+  #now-showing small { display: block; font-size: 13px; font-weight: 400; color: var(--muted); }
+  .progress { height: 6px; border-radius: 3px; background: var(--track-bg); overflow: hidden; margin: 0 0 12px; }
+  .progress div { height: 100%; width: 0; background: var(--on-bg); }
+  #session-choices { margin-bottom: 8px; }
+  #session-choices .toggle { font-size: 14px; min-height: 56px; padding: 4px 8px; }
+  #session-choices .toggle small { display: block; font-weight: 400; font-size: 12px; opacity: 0.8; }
   #legend h3 { font-size: 14px; font-weight: 600; margin: 0 0 8px; }
   #legend .legend + h3 { margin-top: 16px; }
   .note { color: var(--muted); font-size: 14px; margin: 10px 0 0; }
@@ -138,6 +145,21 @@
 
 <main>
   <div class="tab" id="tab-display">
+    <section>
+      <h2>Time</h2>
+      <div id="now-showing"></div>
+      <div class="progress" id="replay-progress" hidden><div></div></div>
+      <div class="toggles" id="session-choices"></div>
+      <div class="row" id="speed-row">
+        <div class="label">Replay speed</div>
+        <div class="seg" id="speed-seg">
+          <button data-speed="1">Real time</button>
+          <button data-speed="10">10×</button>
+          <button data-speed="25">25×</button>
+          <button data-speed="50">50×</button>
+        </div>
+      </div>
+    </section>
     <section>
       <h2>Show on the model</h2>
       <div class="toggles" id="mode-toggles"></div>
@@ -314,6 +336,8 @@ let cfg = null;
 let control = null; // server's display-control state; null until the first message
 let ws = null;
 let nudgeStep = NUDGE_STEPS[0];
+let sessions = []; // replayable recordings, from /recordings
+let lastPlayback = null;
 
 // --- Tabs --------------------------------------------------------------------
 
@@ -351,7 +375,8 @@ function connect() {
     const msg = JSON.parse(ev.data);
     if (msg.control) render(msg.control);
     else if (msg.control_error) console.warn("control rejected:", msg.control_error);
-    // vehicle frames are ignored here -- the controller doesn't draw the map
+    else if (msg.playback) renderPlayback(msg.playback);
+    // the controller doesn't draw vehicles, it only reads the playback clock
   };
 }
 
@@ -389,6 +414,10 @@ function render(next) {
   document.querySelectorAll("[data-lens]").forEach((b) => b.setAttribute("aria-pressed", String(b.dataset.lens === control.lens)));
   document.querySelectorAll("[data-line]").forEach((b) => b.setAttribute("aria-pressed", String(b.dataset.line === control.line_layer)));
   renderLegend();
+  renderSessions();
+  document.querySelectorAll("#speed-seg button").forEach((b) => {
+    b.setAttribute("aria-pressed", String(Number(b.dataset.speed) === control.playback.speed));
+  });
   const cal = document.getElementById("calibrate-toggle");
   cal.textContent = control.calibrate ? "Stop" : "Start";
   const n = control.nudge;
@@ -433,6 +462,57 @@ document.getElementById("nudge-reset").addEventListener("click", () => {
 });
 document.getElementById("calibrate-toggle").addEventListener("click", () => {
   if (control) sendControl({ calibrate: !control.calibrate });
+});
+
+// --- Time: live or a recorded peak --------------------------------------------
+
+const sydneyTime = (t) => new Date(t * 1000).toLocaleTimeString("en-AU", {
+  timeZone: "Australia/Sydney", hour: "numeric", minute: "2-digit",
+});
+
+async function refreshSessions() {
+  try {
+    const resp = await fetch("/recordings", { cache: "no-store" });
+    if (resp.ok) sessions = await resp.json();
+  } catch (_) { return; }
+  renderSessions();
+}
+
+function renderSessions() {
+  const box = document.getElementById("session-choices");
+  const current = control ? control.playback.session : "live";
+  const choices = [{ id: "live", label: "Live now", coverage: 1 }, ...sessions.slice(0, 7)];
+  box.innerHTML = "";
+  for (const c of choices) {
+    const b = document.createElement("button");
+    b.className = "toggle";
+    b.setAttribute("aria-pressed", String(c.id === current));
+    const [title, when] = c.label.split(" · ");
+    const partial = c.coverage < 1 ? " (partly recorded)" : "";
+    b.innerHTML = `${title}${when ? `<small>${when}${partial}</small>` : ""}`;
+    b.addEventListener("click", () => sendControl({ playback: { session: c.id } }));
+    box.appendChild(b);
+  }
+  document.getElementById("speed-row").hidden = current === "live";
+}
+
+function renderPlayback(p) {
+  lastPlayback = p;
+  const el = document.getElementById("now-showing");
+  const bar = document.getElementById("replay-progress");
+  if (p.mode === "live") {
+    el.innerHTML = `Live<small>What's on the network right now</small>`;
+    bar.hidden = true;
+    return;
+  }
+  el.innerHTML = `Replay: ${p.label}<small>Showing ${sydneyTime(p.t)} · ${p.speed === 1 ? "real time" : `${p.speed}× speed`} · loops at the end</small>`;
+  bar.hidden = false;
+  bar.firstElementChild.style.width = `${(p.progress * 100).toFixed(1)}%`;
+}
+
+document.getElementById("speed-seg").addEventListener("click", (ev) => {
+  const b = ev.target.closest("button[data-speed]");
+  if (b) sendControl({ playback: { speed: Number(b.dataset.speed) } });
 });
 
 // --- Team PIN ----------------------------------------------------------------
@@ -575,6 +655,8 @@ async function boot() {
   const start = location.hash.slice(1);
   showTab(["display", "team", "stats"].includes(start) ? start : "display");
   connect();
+  refreshSessions();
+  setInterval(refreshSessions, 60000);
   setInterval(refreshStats, 3000);
   setInterval(refreshHealth, 3000);
 }

@@ -37,6 +37,11 @@ LENSES = ("adherence", "congestion", "crowding")
 LINE_LAYERS = ("none", "congestion", "crowding")
 
 IDENTITY_NUDGE = {"dx": 0.0, "dy": 0.0, "scale": 1.0}
+
+# Playback: "live", or a recording session id from engine/sources/replay.py
+# (the server checks it exists). Speed only matters for replays.
+REPLAY_SPEED_LIMITS = (1.0, 100.0)
+DEFAULT_REPLAY_SPEED = 25.0  # a 2h10m peak in ~5 minutes: the showcase default
 _NUDGE_LIMITS = {"dx": (-2000.0, 2000.0), "dy": (-2000.0, 2000.0), "scale": (0.5, 2.0)}
 
 DEFAULT_STATE: dict[str, Any] = {
@@ -47,6 +52,7 @@ DEFAULT_STATE: dict[str, Any] = {
     "interchanges": True,
     "lens": "adherence",
     "line_layer": "none",
+    "playback": {"session": "live", "speed": DEFAULT_REPLAY_SPEED},
     "modes": {group: True for group in MODE_GROUPS},
     "nudge": dict(IDENTITY_NUDGE),
 }
@@ -102,6 +108,20 @@ class ControlState:
                     if not isinstance(on, bool):
                         raise ControlError(f"modes.{group} must be true/false")
                     updated["modes"][group] = on
+            elif key == "playback":
+                if not isinstance(value, dict):
+                    raise ControlError("playback must be an object")
+                for field, item in value.items():
+                    if field == "session":
+                        if not isinstance(item, str) or not item:
+                            raise ControlError("playback.session must be 'live' or a recording id")
+                        updated["playback"]["session"] = item
+                    elif field == "speed":
+                        if isinstance(item, bool) or not isinstance(item, (int, float)):
+                            raise ControlError("playback.speed must be a number")
+                        updated["playback"]["speed"] = _clamp(float(item), REPLAY_SPEED_LIMITS)
+                    else:
+                        raise ControlError(f"unknown playback field {field!r}")
             elif key == "nudge":
                 if not isinstance(value, dict):
                     raise ControlError("nudge must be an object")
