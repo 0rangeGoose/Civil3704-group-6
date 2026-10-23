@@ -112,6 +112,7 @@ const AREA_COLOR = {
   jobs: ["#2a2f6b", "#43449e", "#6a56c9", "#9d6be3", "#d892ff"],
   service_gap: ["#2f7bff", "#86b4ff", "#62666e", "#ffb066", "#ff6a00"],
   opal: ["#123f3b", "#16716a", "#1fa89e", "#4fd8ca", "#b0fff6"],
+  pressure: ["#3a2a12", "#6b3d0f", "#a4520c", "#e0610c", "#ff3b1f"],
 };
 const AREA_ALPHA = { dark: 0.55, light: 0.45 };
 // While an area layer is on, vehicles go neutral so they don't compete with it.
@@ -143,7 +144,7 @@ let theme = "dark";
 // ever one source of truth.
 let control = {
   theme: "dark", verify: false, hud: false, calibrate: false, interchanges: true,
-  lens: "adherence", line_layer: "none", area_layer: "none", area_unit: "zones", modes: {}, nudge: { dx: 0, dy: 0, scale: 1 },
+  lens: "adherence", line_layer: "none", area_layer: "none", area_unit: "zones", weights: {}, modes: {}, nudge: { dx: 0, dy: 0, scale: 1 },
 };
 let modeToGroup = {}; // feed mode -> controller group, from /config
 
@@ -158,6 +159,29 @@ const SEGMENT_POLL_MS = 10000;
 let areas = null;
 let areaLayerCanvas = null;
 
+// The combined pressure layer is live: its bins come from /pressure (scores
+// per area for the current unit and weights) and are written onto the same
+// unit objects as bins.pressure, then the layer is redrawn.
+let lastPressurePoll = 0;
+async function pollPressure() {
+  if (control.area_layer !== "pressure" || !areas) return;
+  lastPressurePoll = performance.now();
+  const unitType = control.area_unit;
+  try {
+    const resp = await fetch(`/pressure?unit=${unitType}`, { cache: "no-store" });
+    if (!resp.ok) return;
+    const scores = await resp.json();
+    for (const unit of areas[unitType] || []) {
+      unit.bins.pressure = scores[unit.id] ? scores[unit.id].bin : null;
+    }
+    if (control.area_layer === "pressure" && control.area_unit === unitType) areaLayerCanvas = drawAreaLayer();
+  } catch (_) { /* keep the last drawing; the next poll retries */ }
+}
+setInterval(() => {
+  const due = Math.max(2000, 10000 / (playback.speed || 1));
+  if (performance.now() - lastPressurePoll >= due) pollPressure();
+}, 1000);
+
 // Live or replay, from each vehicle frame. During a time-lapse, positions
 // arrive `speed` times faster, so interpolation and fade-out timing shrink to
 // match; a new epoch (source switched, or a replay looped) clears the screen.
@@ -168,6 +192,7 @@ function staleAfterMs() { return ((cfg.stale_after_seconds || 90) * 1000) / (pla
 
 function applyControl(next) {
   const areaChanged = next.area_layer !== control.area_layer || next.area_unit !== control.area_unit;
+  const weightsChanged = JSON.stringify(next.weights) !== JSON.stringify(control.weights);
   const layoutChanged =
     next.theme !== control.theme ||
     next.calibrate !== control.calibrate ||
@@ -181,6 +206,7 @@ function applyControl(next) {
   if (!control.calibrate && calibrateMode) exitCalibrateMode();
   if (layoutChanged) rebuildLayers();
   else if (areaChanged) areaLayerCanvas = drawAreaLayer();
+  if (control.area_layer === "pressure" && (areaChanged || weightsChanged)) pollPressure();
   if (control.line_layer !== "none" && !segments.length) pollSegments();
 }
 
@@ -748,13 +774,13 @@ document.getElementById("cal-save").addEventListener("click", async () => {
 // directly, so the tablet shows the same state.
 //   C calibrate   V verification overlay   H status line   T theme   P pulses
 //   L dot colour (schedule / congestion / crowding)   K street lines (off / congestion / crowding)
-//   A areas (off / jobs / service gap / Opal 2016)   G areas on travel zones / 150m grid
+//   A areas (off / jobs / service gap / Opal 2016 / pressure)   G areas on travel zones / 150m grid
 //   1-5 trains / metro / light rail / buses / ferries
 //   arrows nudge (shift = x10)   [ ] scale   0 reset nudge
 const KEY_MODE_GROUPS = ["trains", "metro", "lightrail", "buses", "ferries"];
 const LENSES = ["adherence", "congestion", "crowding"];
 const LINE_LAYERS = ["none", "congestion", "crowding"];
-const AREA_LAYERS = ["none", "jobs", "service_gap", "opal"];
+const AREA_LAYERS = ["none", "jobs", "service_gap", "opal", "pressure"];
 const nextOf = (list, current) => list[(list.indexOf(current) + 1) % list.length];
 const NUDGE_STEP_PX = 2;
 const SCALE_STEP = 0.002;

@@ -59,7 +59,7 @@ JOBS_YEAR_COLUMN = "EMP_2026"
 OPAL_DAYS = {"20161121", "20161122", "20161123", "20161124", "20161125"}  # Mon-Fri
 GAP_BANDS = (-0.4, -0.15, 0.15, 0.4)  # -> bins 0 (well served) .. 4 (underserved)
 SIMPLIFY_M = 4.0
-CACHE_VERSION = 1
+CACHE_VERSION = 2
 
 
 def _metric(geom):
@@ -344,7 +344,10 @@ def _build(cfg, conn, day, zones_path, jobs_path, postcodes_path, opal_path) -> 
     zone_opal = {z: opal_in(g) for z, g in zone_geoms.items()}
     cell_opal = {c: opal_in(g) for c, g in cells.items()}
 
-    available = {"jobs": bool(zone_jobs), "service_gap": bool(zone_jobs), "opal": bool(opal_points)}
+    # The combined layer (engine/demand/pressure.py) adds live inputs on top,
+    # so it only needs one of these to be meaningful.
+    available = {"jobs": bool(zone_jobs), "service_gap": bool(zone_jobs), "opal": bool(opal_points),
+                 "pressure": bool(zone_jobs or opal_points)}
 
     def assemble(geoms, jobs, deps, opal, names=None, simplify=True):
         gaps = service_gap(jobs, deps)

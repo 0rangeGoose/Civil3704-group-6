@@ -158,7 +158,9 @@ Real, TfNSW-specific data quirks the engine has to tolerate rather than choke on
 Static area layers, chosen on the tablet (Display → Colour the areas by), on either
 TfNSW travel zones or a 150 m grid (Area shape) so you can compare them on the model:
 **jobs** (TZP24, 2026), **service gap** (jobs vs scheduled departures within 200 m,
-7–9am on a weekday) and **Opal 2016** (tap-ons/offs 7–9am, 21–25 Nov 2016). Vehicles
+7–9am on a weekday), **Opal 2016** (tap-ons/offs 7–9am, 21–25 Nov 2016) and
+**pressure**, a live combined score of traffic, crowding, service gap and Opal 2016 whose
+weights are set in Team → Pressure weights. Vehicles
 turn white while one is on. How each is calculated: `engine/demand/areas.py`.
 
 The source files aren't in git (`data/` is ignored). To set them up:
@@ -283,7 +285,7 @@ projector) and the `/control` URL the server prints on the tablet.
 **Keyboard backup** on the projector page (each key goes through the server, so the
 tablet stays in sync): **C** calibrate, **V** verification overlay, **H** status line,
 **T** theme, **P** interchange pulses, **L** dot colour (schedule / traffic / crowding),
-**K** street lines (off / traffic / crowding), **A** areas (off / jobs / service gap / Opal 2016),
+**K** street lines (off / traffic / crowding), **A** areas (off / jobs / service gap / Opal 2016 / pressure),
 **G** areas on travel zones / grid, **1–5** trains / metro / light rail / buses /
 ferries, **arrows** nudge (shift ×10), **[ ]** scale, **0** reset nudge.
 
@@ -298,7 +300,7 @@ python scripts/run_phase3.py --cycles 7            # + map matching/adherence + 
 **Tests**:
 
 ```bash
-pytest        # 116 tests, ~1s, no network required
+pytest        # 122 tests, ~1s, no network required
 ```
 
 ### Calibrating onto a physical model (once one exists)

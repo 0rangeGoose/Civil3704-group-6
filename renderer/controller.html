@@ -93,6 +93,7 @@
   .nudge button { font-size: 22px; }
   .nudge-wrap { display: flex; flex-wrap: wrap; gap: 20px; align-items: center; }
   .nudge-side { display: flex; flex-direction: column; gap: 8px; }
+  .nudge-side .seg { align-self: flex-start; }
   #nudge-readout { font: 13px ui-monospace, monospace; color: var(--muted); }
 
   #pin-gate input {
@@ -100,6 +101,9 @@
     background: var(--track-bg); color: var(--fg); border: 1px solid var(--panel-border); border-radius: 8px;
   }
   #pin-error { color: var(--bad); font-size: 14px; min-height: 20px; margin-top: 8px; }
+  .weight-row { display: grid; grid-template-columns: 140px 1fr 48px; gap: 12px; align-items: center; min-height: 48px; }
+  .weight-row input[type=range] { width: 100%; height: 32px; accent-color: var(--on-bg); }
+  .weight-row .num { font-variant-numeric: tabular-nums; }
   .health-grid { display: grid; grid-template-columns: 1fr auto auto; gap: 4px 16px; font-size: 14px; }
   .health-grid .head { color: var(--muted); font-size: 12px; text-transform: uppercase; }
   .num { text-align: right; font-variant-numeric: tabular-nums; }
@@ -191,6 +195,7 @@
         <button class="toggle" data-area="jobs">Jobs</button>
         <button class="toggle" data-area="service_gap">Service gap</button>
         <button class="toggle" data-area="opal">Opal 2016</button>
+        <button class="toggle" data-area="pressure">Pressure (combined)</button>
       </div>
       <div class="row">
         <div class="label">Area shape<small>Compare which reads better on the model</small></div>
@@ -259,6 +264,12 @@
           <div class="label">Crosshair calibration<small>Drag crosshairs on the laptop; saving resets the nudge</small></div>
           <button class="btn warn" id="calibrate-toggle">Start</button>
         </div>
+      </section>
+
+      <section>
+        <h2>Pressure weights</h2>
+        <div id="weights"></div>
+        <p class="note">How much each input counts in the combined pressure layer. 0 leaves it out.</p>
       </section>
 
       <section>
@@ -343,6 +354,17 @@ const AREA_LEGENDS = {
     colors: ["#2f7bff", "#86b4ff", "#62666e", "#ffb066", "#ff6a00"],
     labels: ["Much more service than jobs", "More service", "Balanced", "More jobs", "Much more jobs than service"],
     note: (m) => `Jobs compared with scheduled departures within ${m.walk_m} m, ${m.peak} on a weekday (${m.service_day}). Orange areas have many workers and little service.`,
+  },
+  pressure: {
+    title: "Network pressure (combined score)",
+    colors: ["#3a2a12", "#6b3d0f", "#a4520c", "#e0610c", "#ff3b1f"],
+    labels: ["Lowest fifth", "", "", "", "Highest fifth"],
+    note: () => {
+      const w = control.weights;
+      const parts = [["traffic now", w.congestion], ["crowding now", w.crowding], ["service gap", w.service_gap], ["Opal 2016", w.opal]]
+        .filter(([, x]) => x > 0).map(([n, x]) => (x === 1 ? n : `${n} ×${x}`));
+      return `Combines ${parts.join(", ")}, each ranked across the areas that have it. Areas with no vehicles right now count as average for traffic and crowding. Relative to the footprint, updated every few seconds.`;
+    },
   },
   opal: {
     title: "Opal taps, November 2016",
@@ -468,6 +490,7 @@ function render(next) {
   });
   document.querySelectorAll("[data-unit]").forEach((b) => b.setAttribute("aria-pressed", String(b.dataset.unit === control.area_unit)));
   renderLegend();
+  renderWeights();
   renderSessions();
   document.querySelectorAll("#speed-seg button").forEach((b) => {
     b.setAttribute("aria-pressed", String(Number(b.dataset.speed) === control.playback.speed));
@@ -593,6 +616,38 @@ document.getElementById("speed-seg").addEventListener("click", (ev) => {
   const b = ev.target.closest("button[data-speed]");
   if (b) sendControl({ playback: { speed: Number(b.dataset.speed) } });
 });
+
+// --- Pressure weights ---------------------------------------------------------
+
+const WEIGHT_LABEL = { congestion: "Traffic", crowding: "Crowding", service_gap: "Service gap", opal: "Opal 2016" };
+
+function buildWeights() {
+  const box = document.getElementById("weights");
+  box.innerHTML = "";
+  for (const [name, label] of Object.entries(WEIGHT_LABEL)) {
+    const row = document.createElement("div");
+    row.className = "weight-row";
+    row.innerHTML = `<div>${label}</div><input type="range" min="0" max="3" step="0.5" data-weight="${name}"><div class="num" data-weight-value="${name}"></div>`;
+    box.appendChild(row);
+  }
+  box.addEventListener("change", (ev) => {
+    const input = ev.target.closest("[data-weight]");
+    if (input) sendControl({ weights: { [input.dataset.weight]: Number(input.value) } });
+  });
+  box.addEventListener("input", (ev) => {
+    const input = ev.target.closest("[data-weight]");
+    if (input) box.querySelector(`[data-weight-value="${input.dataset.weight}"]`).textContent = `×${input.value}`;
+  });
+}
+
+function renderWeights() {
+  for (const [name, w] of Object.entries(control.weights || {})) {
+    const input = document.querySelector(`[data-weight="${name}"]`);
+    if (input && document.activeElement !== input) input.value = w;
+    const label = document.querySelector(`[data-weight-value="${name}"]`);
+    if (label) label.textContent = `×${w}`;
+  }
+}
 
 // --- Team PIN ----------------------------------------------------------------
 // Keeps visitors out of alignment and calibration. Not a security boundary.
@@ -728,6 +783,7 @@ async function refreshStats() {
 async function boot() {
   cfg = await (await fetch("/config")).json();
   buildModeToggles();
+  buildWeights();
   let unlocked = false;
   try { unlocked = sessionStorage.getItem(UNLOCK_KEY) === "1"; } catch (_) {}
   if (unlocked) unlockTeam();
