@@ -36,7 +36,10 @@ MODE_GROUPS: dict[str, list[str]] = {
 LENSES = ("adherence", "congestion", "crowding")
 LINE_LAYERS = ("none", "congestion", "crowding")
 # Static area layers (engine/demand/areas.py) and the unit they're drawn on.
-AREA_LAYERS = ("none", "jobs", "service_gap", "opal")
+AREA_LAYERS = ("none", "jobs", "service_gap", "opal", "pressure")
+# Weights for the combined pressure layer (engine/demand/pressure.py).
+PRESSURE_INPUTS = ("congestion", "crowding", "service_gap", "opal")
+WEIGHT_LIMITS = (0.0, 3.0)
 AREA_UNITS = ("zones", "grid")
 
 IDENTITY_NUDGE = {"dx": 0.0, "dy": 0.0, "scale": 1.0}
@@ -57,6 +60,7 @@ DEFAULT_STATE: dict[str, Any] = {
     "line_layer": "none",
     "area_layer": "none",
     "area_unit": "zones",
+    "weights": {name: 1.0 for name in PRESSURE_INPUTS},
     "playback": {"session": "live", "speed": DEFAULT_REPLAY_SPEED},
     "modes": {group: True for group in MODE_GROUPS},
     "nudge": dict(IDENTITY_NUDGE),
@@ -108,6 +112,15 @@ class ControlState:
                 if value not in AREA_UNITS:
                     raise ControlError(f"area_unit must be one of {', '.join(AREA_UNITS)}")
                 updated["area_unit"] = value
+            elif key == "weights":
+                if not isinstance(value, dict):
+                    raise ControlError("weights must be an object")
+                for name, w in value.items():
+                    if name not in PRESSURE_INPUTS:
+                        raise ControlError(f"unknown pressure input {name!r}")
+                    if isinstance(w, bool) or not isinstance(w, (int, float)):
+                        raise ControlError(f"weights.{name} must be a number")
+                    updated["weights"][name] = _clamp(float(w), WEIGHT_LIMITS)
             elif key in ("verify", "hud", "calibrate", "interchanges"):
                 if not isinstance(value, bool):
                     raise ControlError(f"{key} must be true/false")

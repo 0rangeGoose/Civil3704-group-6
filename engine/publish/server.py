@@ -28,6 +28,7 @@ from engine.publish.feed import LiveVehicleFeed
 from engine.publish.homography import HomographyError
 from engine.publish.shapes_export import build_render_shapes
 from engine.demand.areas import build_area_layers
+from engine.demand.pressure import PressureModel
 from engine.sources.replay import RecordingIndex, ReplaySource
 
 logger = logging.getLogger("pulse_cbd.publish_server")
@@ -146,6 +147,18 @@ async def areas_handler(request: web.Request) -> web.Response:
     if request.query.get("meta"):  # the tablet only needs what's available and how it was built
         return web.json_response({"available": layers["available"], "meta": layers["meta"]})
     return web.json_response(layers)
+
+
+async def pressure_handler(request: web.Request) -> web.Response:
+    """Live combined score per area for the current unit and weights:
+    {unit_id: {score, bin, inputs}}."""
+    model: PressureModel | None = request.app["pressure_model"]
+    if model is None:
+        return web.json_response({})
+    unit = request.query.get("unit", "zones")
+    feed: LiveVehicleFeed = request.app["feed"]
+    weights = request.app["control"].state["weights"]
+    return web.json_response(model.scores(unit, feed.segments.snapshot(feed.clock), weights))
 
 
 async def recordings_handler(request: web.Request) -> web.Response:
@@ -305,6 +318,7 @@ async def _broadcast_loop(app: web.Application) -> None:
 async def _load_areas(app: web.Application) -> None:
     try:
         app["areas"] = await asyncio.to_thread(build_area_layers, app["cfg"])
+        app["pressure_model"] = await asyncio.to_thread(PressureModel, app["areas"])
     except Exception:  # the live map must still come up without them
         logger.exception("area layers failed to build")
 
@@ -328,6 +342,7 @@ def build_app(cfg: Config) -> web.Application:
     app["control"] = ControlState(cfg.root / "data" / "projection_nudge.json")
     app["replay"] = None
     app["areas"] = None
+    app["pressure_model"] = None
     app["feed"] = LiveVehicleFeed(cfg)
     app["shapes"] = build_render_shapes(cfg.path("db_path"), cfg.bounding_box)
     app["replay_index"] = RecordingIndex(app["feed"].recordings_dir)
@@ -342,6 +357,7 @@ def build_app(cfg: Config) -> web.Application:
     app.router.add_get("/segments", segments_handler)
     app.router.add_get("/recordings", recordings_handler)
     app.router.add_get("/areas", areas_handler)
+    app.router.add_get("/pressure", pressure_handler)
     app.router.add_get("/config", config_handler)
     app.router.add_get("/aggregate", aggregate_handler)
     app.router.add_get("/calibration", get_calibration_handler)

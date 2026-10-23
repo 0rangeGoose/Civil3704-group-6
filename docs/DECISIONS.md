@@ -2,6 +2,26 @@
 
 Judgment calls made without stopping to ask, per the project brief. Newest first.
 
+## 2026-10-23 — Step 5: combined pressure layer
+
+As agreed on 25 Sep: inputs traffic, crowding, service gap and Opal 2016 (jobs left out,
+it's already inside the service gap), each percentile-ranked across areas, equal weights
+by default, adjustable from the team panel (0–3, 0 = leave out), score 0–1. Details in
+`engine/demand/pressure.py`. Two calls made while testing it on live data:
+
+- **A missing live reading counts as neutral (rank 0.5), not as "leave it out".** The
+  first version re-weighted each area over only the inputs it had. Live, the top of the
+  ranking was then entirely areas with *no* buses at that moment, scored on two static
+  inputs alone, ahead of areas with real readings. With the neutral fill, 14 of the top
+  20 areas have live readings, and every area is averaged over the same four inputs. The
+  tablet legend says so; `/pressure` reports which inputs were actually measured.
+- **Colours are fifths of the scores, not fixed 0.2 bands.** An average of four ranks
+  bunches around 0.5, so fixed bands only ever used the middle three colours.
+- Live inputs reach an area through the street segments whose midpoint is in it; the
+  score updates every ~10s (faster during a time-lapse). It's relative to the footprint
+  at that moment: "where is it worst right now", not an absolute measure.
+- Checked visually in Chrome: the layer draws in five shades, the weight sliders work.
+
 ## 2026-10-23 — Step 4: jobs, service gap and Opal 2016 on zones and grid
 
 Built in full, as decided (all three layers, on both units). Details in the docstring of
