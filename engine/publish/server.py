@@ -29,6 +29,7 @@ from engine.publish.homography import HomographyError
 from engine.publish.shapes_export import build_render_shapes
 from engine.demand.areas import build_area_layers
 from engine.demand.pressure import PressureModel
+from engine.demand.boam import build_boam_layers
 from engine.sources.replay import RecordingIndex, ReplaySource
 
 logger = logging.getLogger("pulse_cbd.publish_server")
@@ -157,8 +158,17 @@ async def pressure_handler(request: web.Request) -> web.Response:
         return web.json_response({})
     unit = request.query.get("unit", "zones")
     feed: LiveVehicleFeed = request.app["feed"]
-    weights = request.app["control"].state["weights"]
-    return web.json_response(model.scores(unit, feed.segments.snapshot(feed.clock), weights))
+    state = request.app["control"].state
+    return web.json_response(model.scores(unit, feed.segments.snapshot(feed.clock), state["weights"], state["boam_period"]))
+
+
+async def boam_handler(request: web.Request) -> web.Response:
+    """Typical load and time lost per stop-to-stop section (BOAM), both peaks.
+    Empty until built in the background at startup, or if none imported."""
+    boam = request.app["boam"] or {"sections": [], "meta": {"days": []}}
+    if request.query.get("meta"):
+        return web.json_response(boam["meta"])
+    return web.json_response(boam)
 
 
 async def recordings_handler(request: web.Request) -> web.Response:
@@ -318,7 +328,11 @@ async def _broadcast_loop(app: web.Application) -> None:
 async def _load_areas(app: web.Application) -> None:
     try:
         app["areas"] = await asyncio.to_thread(build_area_layers, app["cfg"])
-        app["pressure_model"] = await asyncio.to_thread(PressureModel, app["areas"])
+        try:
+            app["boam"] = await asyncio.to_thread(build_boam_layers, app["cfg"], app["feed"].shapes)
+        except Exception:
+            logger.exception("BOAM layers failed to build")
+        app["pressure_model"] = await asyncio.to_thread(PressureModel, app["areas"], app["boam"])
     except Exception:  # the live map must still come up without them
         logger.exception("area layers failed to build")
 
@@ -343,6 +357,7 @@ def build_app(cfg: Config) -> web.Application:
     app["replay"] = None
     app["areas"] = None
     app["pressure_model"] = None
+    app["boam"] = None
     app["feed"] = LiveVehicleFeed(cfg)
     app["shapes"] = build_render_shapes(cfg.path("db_path"), cfg.bounding_box)
     app["replay_index"] = RecordingIndex(app["feed"].recordings_dir)
@@ -358,6 +373,7 @@ def build_app(cfg: Config) -> web.Application:
     app.router.add_get("/recordings", recordings_handler)
     app.router.add_get("/areas", areas_handler)
     app.router.add_get("/pressure", pressure_handler)
+    app.router.add_get("/boam", boam_handler)
     app.router.add_get("/config", config_handler)
     app.router.add_get("/aggregate", aggregate_handler)
     app.router.add_get("/calibration", get_calibration_handler)

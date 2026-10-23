@@ -181,6 +181,19 @@ python scripts/prepare_demand_data.py --poa-dir /path/to/POA_2021_AUST_GDA2020_S
 The server builds the layers in the background on first start (~5s) and caches them in
 `data/demand/area_layers.json` until an input changes.
 
+### BOAM (typical bus load and time lost)
+
+Download BOAM day files from the TfNSW Open Data Hub (login needed), then:
+
+```bash
+python scripts/import_boam.py --delete-originals ~/Downloads/BOAM_*.txt   # keeps the footprint (~2.5MB/day)
+python scripts/export_boam.py                                              # data/boam/sections.csv for the report
+```
+
+The server picks up every imported weekday on its next start (Display → Colour the streets
+by → Typical bus load / Where buses lose time, with an AM/PM switch), and BOAM load becomes
+a fifth input to the pressure layer.
+
 ## Recording
 
 Raw protobuf payloads are written to
@@ -286,7 +299,7 @@ projector) and the `/control` URL the server prints on the tablet.
 tablet stays in sync): **C** calibrate, **V** verification overlay, **H** status line,
 **T** theme, **P** interchange pulses, **L** dot colour (schedule / traffic / crowding),
 **K** street lines (off / traffic / crowding), **A** areas (off / jobs / service gap / Opal 2016 / pressure),
-**G** areas on travel zones / grid, **1–5** trains / metro / light rail / buses /
+**G** areas on travel zones / grid, **B** BOAM peak AM / PM, **1–5** trains / metro / light rail / buses /
 ferries, **arrows** nudge (shift ×10), **[ ]** scale, **0** reset nudge.
 
 **Headless dev/debug tools** (no rendering, just prove the data pipeline works and
@@ -300,7 +313,7 @@ python scripts/run_phase3.py --cycles 7            # + map matching/adherence + 
 **Tests**:
 
 ```bash
-pytest        # 122 tests, ~1s, no network required
+pytest        # 126 tests, ~1s, no network required
 ```
 
 ### Calibrating onto a physical model (once one exists)

@@ -2,6 +2,40 @@
 
 Judgment calls made without stopping to ask, per the project brief. Newest first.
 
+## 2026-10-23 — BOAM: typical bus load, time lost, and a pressure input
+
+TfNSW's Bus Opal Assignment Model gives every bus trip at every stop: scheduled and actual
+arrival, bus capacity, and an occupancy band (0–20, 21–40, … passengers). Used three ways,
+as decided:
+
+1. **Two street layers**, per stop-to-stop section, for the AM (7–9) or PM (4:30–6:30)
+   weekday peak: **typical bus load** (band midpoint ÷ total capacity, leaving each stop)
+   and **where buses lose time** (change in delay between consecutive stops, per 100m).
+2. **Measured reference for step 6**: the same time-lost figures, exported with
+   `scripts/export_boam.py` to `data/boam/sections.csv`.
+3. **A fifth pressure input**, `boam_load` (typical load of the sections in each area for
+   the chosen peak), weight 1 by default; areas without BOAM sections get the neutral rank.
+
+Calls and caveats:
+
+- **Storage**: day files are 200–370MB; `scripts/import_boam.py` keeps the footprint rows
+  and 14 columns (~2.5MB a day, gzipped) and deletes the original once the extract is
+  read back with the same row count. Five days: 1.56GB → 12MB.
+- **Joins on stop id, not trip id.** BOAM trip ids don't match the timetable's; its stop
+  ids match 100%. Section geometry is the timetable shape of a trip where the two stops
+  are consecutive (5 of 1,430 sections had none and are straight lines).
+- **Weekdays only** in the averages; the weekend files are kept but unused. The first
+  weekdays imported (28–30 Sep 2026) are almost certainly **NSW school holidays**, so
+  loads read low; the legend says so. Adding term-time days is just another import.
+- **Load bands are absolute but narrow** (15/30/45/60% of capacity): averaged over a
+  2-hour peak, section loads rarely pass 50%, so 20%-wide bands left almost every street
+  in the bottom colour.
+- **Time lost isn't fully independent of the live feed**: since March 2026 BOAM's "actual"
+  arrival times are TfNSW's GTFS-Realtime predictions. Step 6 has to say so when it
+  compares against TfNSW's live congestion labels.
+- Load is assumed to be the load *departing* each stop; BOAM's documentation doesn't say.
+- Checked visually in Chrome: both street layers, the AM/PM switch and the legend.
+
 ## 2026-10-23 — Step 5: combined pressure layer
 
 As agreed on 25 Sep: inputs traffic, crowding, service gap and Opal 2016 (jobs left out,

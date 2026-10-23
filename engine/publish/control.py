@@ -34,11 +34,14 @@ MODE_GROUPS: dict[str, list[str]] = {
 # What vehicle-dot colour shows, and which street-segment layer is drawn (at
 # most one line layer at a time; see docs/DECISIONS.md).
 LENSES = ("adherence", "congestion", "crowding")
-LINE_LAYERS = ("none", "congestion", "crowding")
+LINE_LAYERS = ("none", "congestion", "crowding", "boam_load", "boam_lost")
+# Which BOAM peak the typical-load / time-lost streets and the pressure
+# layer's BOAM input use.
+BOAM_PERIODS = ("am", "pm")
 # Static area layers (engine/demand/areas.py) and the unit they're drawn on.
 AREA_LAYERS = ("none", "jobs", "service_gap", "opal", "pressure")
 # Weights for the combined pressure layer (engine/demand/pressure.py).
-PRESSURE_INPUTS = ("congestion", "crowding", "service_gap", "opal")
+PRESSURE_INPUTS = ("congestion", "crowding", "service_gap", "opal", "boam_load")
 WEIGHT_LIMITS = (0.0, 3.0)
 AREA_UNITS = ("zones", "grid")
 
@@ -60,6 +63,7 @@ DEFAULT_STATE: dict[str, Any] = {
     "line_layer": "none",
     "area_layer": "none",
     "area_unit": "zones",
+    "boam_period": "am",
     "weights": {name: 1.0 for name in PRESSURE_INPUTS},
     "playback": {"session": "live", "speed": DEFAULT_REPLAY_SPEED},
     "modes": {group: True for group in MODE_GROUPS},
@@ -112,6 +116,10 @@ class ControlState:
                 if value not in AREA_UNITS:
                     raise ControlError(f"area_unit must be one of {', '.join(AREA_UNITS)}")
                 updated["area_unit"] = value
+            elif key == "boam_period":
+                if value not in BOAM_PERIODS:
+                    raise ControlError("boam_period must be 'am' or 'pm'")
+                updated["boam_period"] = value
             elif key == "weights":
                 if not isinstance(value, dict):
                     raise ControlError("weights must be an object")

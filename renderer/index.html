@@ -105,6 +105,14 @@ const LEVEL_COLOR = {
   },
 };
 
+// BOAM street layers (engine/demand/boam.py), 0-4 bins with fixed bands:
+// typical load (share of capacity) and time lost per 100m, for one peak.
+const BOAM_COLOR = {
+  boam_load: ["#5ec8ff", "#8fa8ff", "#b48cff", "#ff7ad9", "#ff2e4d"],
+  boam_lost: ["#3ddc84", "#c8e04a", "#ffd23f", "#ff8c1a", "#ff2e4d"],
+};
+const BOAM_BIN_FIELD = { boam_load: "load_bin", boam_lost: "lost_bin" };
+
 // Area layers (engine/demand/areas.py): each unit arrives with a 0-4 bin.
 // Jobs and Opal are sequential (brighter = more); the service gap diverges
 // from blue (more service than jobs) through grey to orange (underserved).
@@ -144,7 +152,7 @@ let theme = "dark";
 // ever one source of truth.
 let control = {
   theme: "dark", verify: false, hud: false, calibrate: false, interchanges: true,
-  lens: "adherence", line_layer: "none", area_layer: "none", area_unit: "zones", weights: {}, modes: {}, nudge: { dx: 0, dy: 0, scale: 1 },
+  lens: "adherence", line_layer: "none", area_layer: "none", area_unit: "zones", boam_period: "am", weights: {}, modes: {}, nudge: { dx: 0, dy: 0, scale: 1 },
 };
 let modeToGroup = {}; // feed mode -> controller group, from /config
 
@@ -158,6 +166,52 @@ const SEGMENT_POLL_MS = 10000;
 // into an offscreen canvas per (layer, unit, theme, projection).
 let areas = null;
 let areaLayerCanvas = null;
+
+// BOAM sections from /boam (static), drawn once per layer/period/theme/projection.
+let boam = null;
+let boamCanvas = null;
+
+async function loadBoam() {
+  try {
+    const resp = await fetch("/boam", { cache: "no-store" });
+    const body = resp.ok ? await resp.json() : null;
+    if (body && body.sections.length) {
+      boam = body;
+      boamCanvas = drawBoamLayer();
+      return;
+    }
+  } catch (_) { /* retry below */ }
+  setTimeout(loadBoam, 5000); // still building, or nothing imported yet
+}
+
+function drawBoamLayer() {
+  const layer = control.line_layer;
+  if (!(layer in BOAM_COLOR) || !boam || !projector) return null;
+  const field = BOAM_BIN_FIELD[layer];
+  const period = control.boam_period || "am";
+  const drawable = boam.sections
+    .filter((s) => s[period] && s[period][field] !== null && s[period][field] !== undefined)
+    .sort((a, b) => a[period][field] - b[period][field]); // worst on top
+  const off = document.createElement("canvas");
+  off.width = canvas.width;
+  off.height = canvas.height;
+  const octx = off.getContext("2d");
+  octx.lineCap = "round";
+  octx.lineJoin = "round";
+  for (const pass of [{ width: 9, alpha: 0.25 }, { width: 3.5, alpha: 0.95 }]) {
+    octx.lineWidth = pass.width;
+    for (const sec of drawable) {
+      octx.strokeStyle = withAlpha(BOAM_COLOR[layer][sec[period][field]], pass.alpha);
+      octx.beginPath();
+      sec.pts.forEach(([lat, lon], i) => {
+        const [x, y] = projector.project(lat, lon);
+        if (i === 0) octx.moveTo(x, y); else octx.lineTo(x, y);
+      });
+      octx.stroke();
+    }
+  }
+  return off;
+}
 
 // The combined pressure layer is live: its bins come from /pressure (scores
 // per area for the current unit and weights) and are written onto the same
@@ -193,6 +247,7 @@ function staleAfterMs() { return ((cfg.stale_after_seconds || 90) * 1000) / (pla
 function applyControl(next) {
   const areaChanged = next.area_layer !== control.area_layer || next.area_unit !== control.area_unit;
   const weightsChanged = JSON.stringify(next.weights) !== JSON.stringify(control.weights);
+  const boamChanged = next.line_layer !== control.line_layer || next.boam_period !== control.boam_period;
   const layoutChanged =
     next.theme !== control.theme ||
     next.calibrate !== control.calibrate ||
@@ -206,13 +261,14 @@ function applyControl(next) {
   if (!control.calibrate && calibrateMode) exitCalibrateMode();
   if (layoutChanged) rebuildLayers();
   else if (areaChanged) areaLayerCanvas = drawAreaLayer();
-  if (control.area_layer === "pressure" && (areaChanged || weightsChanged)) pollPressure();
-  if (control.line_layer !== "none" && !segments.length) pollSegments();
+  if (control.area_layer === "pressure" && (areaChanged || weightsChanged || boamChanged)) pollPressure();
+  if (boamChanged && !layoutChanged) boamCanvas = drawBoamLayer();
+  if ((control.line_layer === "congestion" || control.line_layer === "crowding") && !segments.length) pollSegments();
 }
 
 let lastSegmentPoll = 0;
 async function pollSegments() {
-  if (control.line_layer === "none") return;
+  if (control.line_layer !== "congestion" && control.line_layer !== "crowding") return;
   lastSegmentPoll = performance.now();
   try {
     const resp = await fetch("/segments", { cache: "no-store" });
@@ -244,6 +300,10 @@ function dotColor(entry) {
 // (or crowded) reading is the one you see.
 function drawSegments() {
   const layer = control.line_layer;
+  if (layer in BOAM_COLOR) {
+    if (boamCanvas) ctx.drawImage(boamCanvas, 0, 0);
+    return;
+  }
   if (layer === "none" || !segments.length) return;
   const drawable = segments
     .filter((s) => s[layer] !== null && s.pts.length >= 2)
@@ -305,6 +365,7 @@ function rebuildLayers() {
   corridorLayerDim = drawCorridorLayer(CANVAS_THEME[theme].corridorDim, 1);
   corridorLayerBright = drawCorridorLayer(CANVAS_THEME[theme].corridorBright, 1.6);
   areaLayerCanvas = drawAreaLayer();
+  boamCanvas = drawBoamLayer();
 }
 
 function clipToFootprint() {
@@ -775,11 +836,12 @@ document.getElementById("cal-save").addEventListener("click", async () => {
 //   C calibrate   V verification overlay   H status line   T theme   P pulses
 //   L dot colour (schedule / congestion / crowding)   K street lines (off / congestion / crowding)
 //   A areas (off / jobs / service gap / Opal 2016 / pressure)   G areas on travel zones / 150m grid
+//   K also reaches the BOAM streets (typical load / time lost)   B BOAM peak: AM / PM
 //   1-5 trains / metro / light rail / buses / ferries
 //   arrows nudge (shift = x10)   [ ] scale   0 reset nudge
 const KEY_MODE_GROUPS = ["trains", "metro", "lightrail", "buses", "ferries"];
 const LENSES = ["adherence", "congestion", "crowding"];
-const LINE_LAYERS = ["none", "congestion", "crowding"];
+const LINE_LAYERS = ["none", "congestion", "crowding", "boam_load", "boam_lost"];
 const AREA_LAYERS = ["none", "jobs", "service_gap", "opal", "pressure"];
 const nextOf = (list, current) => list[(list.indexOf(current) + 1) % list.length];
 const NUDGE_STEP_PX = 2;
@@ -799,6 +861,7 @@ document.addEventListener("keydown", (ev) => {
   else if (key === "k") sendControl({ line_layer: nextOf(LINE_LAYERS, control.line_layer) });
   else if (key === "a") sendControl({ area_layer: nextOf(AREA_LAYERS, control.area_layer) });
   else if (key === "g") sendControl({ area_unit: control.area_unit === "zones" ? "grid" : "zones" });
+  else if (key === "b") sendControl({ boam_period: control.boam_period === "am" ? "pm" : "am" });
   else if (key >= "1" && key <= "5") {
     const group = KEY_MODE_GROUPS[Number(key) - 1];
     sendControl({ modes: { [group]: control.modes[group] === false } });
@@ -851,6 +914,7 @@ async function boot() {
   calibration = await calResp.json(); // null if none saved yet -- Phase 4's linear fit is used
   resize();
   loadAreas();
+  loadBoam();
   connectWebSocket();
   requestAnimationFrame(render);
 }
