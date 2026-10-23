@@ -63,14 +63,14 @@ def test_areas_without_vehicles_get_a_neutral_live_rank():
     # because a has a live reading and c doesn't.
     model = PressureModel(AREAS)
     scores = model.scores("zones", [_segment("s1", -33.897, 151.203, congestion=3, crowding=3)], DEFAULT_WEIGHTS)
-    # c: congestion 0.5, crowding 0.5, gap rank 0.5, opal rank 0.0 -> 0.375
-    assert scores["c"]["score"] == pytest.approx(0.375)
+    # c: congestion 0.5, crowding 0.5, gap rank 0.5, opal rank 0.0, BOAM load 0.5 -> 0.4
+    assert scores["c"]["score"] == pytest.approx(0.4)
     assert scores["a"]["score"] > scores["c"]["score"]
 
 
 def test_weights_control():
     c = ControlState()
-    assert c.state["weights"] == {"congestion": 1.0, "crowding": 1.0, "service_gap": 1.0, "opal": 1.0}
+    assert c.state["weights"] == {"congestion": 1.0, "crowding": 1.0, "service_gap": 1.0, "opal": 1.0, "boam_load": 1.0}
     c.apply({"weights": {"opal": 0, "congestion": 9}})
     assert c.state["weights"]["opal"] == 0.0 and c.state["weights"]["congestion"] == 3.0
     for bad in ({"jobs": 1}, {"opal": "high"}):
@@ -79,3 +79,16 @@ def test_weights_control():
     with pytest.raises(ControlError):
         c.apply({"area_layer": "demand"})
     c.apply({"area_layer": "pressure"})
+
+
+def test_boam_load_counts_for_the_area_its_sections_are_in():
+    boam = {"sections": [
+        {"id": "x>y", "pts": [[-33.897, 151.243], [-33.896, 151.244], [-33.895, 151.245]], "am": {"load": 0.9}},
+        {"id": "p>q", "pts": [[-33.897, 151.223], [-33.896, 151.224], [-33.895, 151.225]], "am": {"load": 0.1}},
+    ]}
+    model = PressureModel(AREAS, boam)
+    only_boam = {"congestion": 0, "crowding": 0, "service_gap": 0, "opal": 0, "boam_load": 1}
+    scores = model.scores("zones", [], only_boam, period="am")
+    assert scores["c"]["inputs"]["boam_load"] == 1.0 and scores["b"]["inputs"]["boam_load"] == 0.0
+    assert "boam_load" not in scores["a"]["inputs"]  # no BOAM section in a: neutral, not reported
+    assert model.scores("zones", [], only_boam, period="pm")["c"]["score"] == 0.5  # no PM data: neutral

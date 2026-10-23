@@ -72,7 +72,7 @@
   #session-choices .toggle { font-size: 14px; min-height: 56px; padding: 4px 8px; }
   #session-choices .toggle small { display: block; font-weight: 400; font-size: 12px; opacity: 0.8; }
   #legend h3 { font-size: 14px; font-weight: 600; margin: 0 0 8px; }
-  #legend .legend + h3 { margin-top: 16px; }
+  #legend .legend + h3, #legend .note + h3 { margin-top: 16px; }
   .note { color: var(--muted); font-size: 14px; margin: 10px 0 0; }
 
   .row { display: flex; align-items: center; justify-content: space-between; gap: 12px; padding: 6px 0; }
@@ -183,6 +183,15 @@
         <button class="toggle" data-line="none">Off</button>
         <button class="toggle" data-line="congestion">Traffic</button>
         <button class="toggle" data-line="crowding">Crowding</button>
+        <button class="toggle" data-line="boam_load">Typical bus load</button>
+        <button class="toggle" data-line="boam_lost">Where buses lose time</button>
+      </div>
+      <div class="row" id="boam-period-row">
+        <div class="label">Typical weekday peak<small>For the bus load and time-lost streets, and pressure</small></div>
+        <div class="seg" id="boam-period-seg">
+          <button data-boam-period="am">AM peak</button>
+          <button data-boam-period="pm">PM peak</button>
+        </div>
       </div>
       <div class="toggles" style="margin-top:10px">
         <button class="toggle" data-control="interchanges" aria-pressed="true">Interchange pulses</button>
@@ -341,6 +350,32 @@ const LEGENDS = {
 };
 
 let areaMeta = null; // {available, meta} from /areas?meta=1
+let boamMeta = null; // {days, periods, note} from /boam?meta=1
+
+const BOAM_LEGENDS = {
+  boam_load: {
+    title: "Typical bus load (TfNSW BOAM)",
+    colors: ["#5ec8ff", "#8fa8ff", "#b48cff", "#ff7ad9", "#ff2e4d"],
+    labels: ["Under 15% full", "15–30%", "30–45%", "45–60%", "Over 60% full"],
+    note: "How full buses typically are leaving each stop, as a share of the bus's capacity, averaged over the peak. From Opal tap data, so passengers who don't tap aren't counted.",
+  },
+  boam_lost: {
+    title: "Where buses lose time (TfNSW BOAM)",
+    colors: ["#3ddc84", "#c8e04a", "#ffd23f", "#ff8c1a", "#ff2e4d"],
+    labels: ["Held or gained time", "Up to 3 s per 100 m", "3–8 s", "8–15 s", "Over 15 s per 100 m"],
+    note: "How much further behind timetable buses typically fall between stops, per 100 m of street.",
+  },
+};
+
+function boamLegend(key) {
+  const def = BOAM_LEGENDS[key];
+  const items = def.colors.map((c, i) => `<div><span class="swatch" style="background:${c}"></span>${def.labels[i]}</div>`).join("");
+  const period = control.boam_period === "pm" ? "PM peak (4:30–6:30pm)" : "AM peak (7–9am)";
+  const days = boamMeta && boamMeta.days && boamMeta.days.length
+    ? ` Average of ${boamMeta.days.length} weekday(s): ${boamMeta.days.map((d) => `${d.slice(6)}/${d.slice(4, 6)}`).join(", ")}. ${boamMeta.note || ""}`
+    : "";
+  return `<h3>Streets: ${def.title}, ${period}</h3><div class="legend">${items}</div><p class="note">${def.note}${days}</p>`;
+}
 
 const AREA_LEGENDS = {
   jobs: {
@@ -361,9 +396,10 @@ const AREA_LEGENDS = {
     labels: ["Lowest fifth", "", "", "", "Highest fifth"],
     note: () => {
       const w = control.weights;
-      const parts = [["traffic now", w.congestion], ["crowding now", w.crowding], ["service gap", w.service_gap], ["Opal 2016", w.opal]]
+      const peak = control.boam_period === "pm" ? "PM" : "AM";
+      const parts = [["traffic now", w.congestion], ["crowding now", w.crowding], ["service gap", w.service_gap], ["Opal 2016", w.opal], [`typical ${peak}-peak bus load`, w.boam_load]]
         .filter(([, x]) => x > 0).map(([n, x]) => (x === 1 ? n : `${n} ×${x}`));
-      return `Combines ${parts.join(", ")}, each ranked across the areas that have it. Areas with no vehicles right now count as average for traffic and crowding. Relative to the footprint, updated every few seconds.`;
+      return `Combines ${parts.join(", ")}, each ranked across the areas that have it. Areas with no vehicles right now (or no BOAM bus sections) count as average for those inputs. Relative to the footprint, updated every few seconds.`;
     },
   },
   opal: {
@@ -394,7 +430,9 @@ function renderLegend() {
   if (control.area_layer !== "none") parts.push(areaLegend(control.area_layer));
   const lens = control.lens;
   if (control.area_layer === "none") parts.push(`<h3>${LEGENDS[lens].title}</h3><div class="legend">${legendItems(lens)}</div><p class="note">${LEGENDS[lens].note}</p>`);
-  if (control.line_layer !== "none" && control.line_layer !== lens) {
+  if (control.line_layer in BOAM_LEGENDS) {
+    parts.push(boamLegend(control.line_layer));
+  } else if (control.line_layer !== "none" && control.line_layer !== lens) {
     const line = control.line_layer;
     parts.push(`<h3>Streets: ${LEGENDS[line].title.toLowerCase()}</h3><div class="legend">${legendItems(line)}</div><p class="note">${LEGENDS[line].note}</p>`);
   }
@@ -489,6 +527,10 @@ function render(next) {
     if (b.dataset.area !== "none") b.disabled = !(areaMeta && areaMeta.available[b.dataset.area]);
   });
   document.querySelectorAll("[data-unit]").forEach((b) => b.setAttribute("aria-pressed", String(b.dataset.unit === control.area_unit)));
+  document.querySelectorAll("[data-boam-period]").forEach((b) => b.setAttribute("aria-pressed", String(b.dataset.boamPeriod === control.boam_period)));
+  document.getElementById("boam-period-row").hidden = !(control.line_layer in BOAM_LEGENDS || control.area_layer === "pressure");
+  const hasBoam = !!(boamMeta && boamMeta.days && boamMeta.days.length);
+  document.querySelectorAll("[data-line^='boam_']").forEach((b) => { b.disabled = !hasBoam; });
   renderLegend();
   renderWeights();
   renderSessions();
@@ -518,6 +560,24 @@ document.getElementById("area-choices").addEventListener("click", (ev) => {
   const b = ev.target.closest("[data-area]");
   if (b && !b.disabled) sendControl({ area_layer: b.dataset.area });
 });
+document.getElementById("boam-period-seg").addEventListener("click", (ev) => {
+  const b = ev.target.closest("[data-boam-period]");
+  if (b) sendControl({ boam_period: b.dataset.boamPeriod });
+});
+
+async function loadBoamMeta() {
+  try {
+    const resp = await fetch("/boam?meta=1", { cache: "no-store" });
+    const body = resp.ok ? await resp.json() : null;
+    if (body && body.days && body.days.length) {
+      boamMeta = body;
+      if (control) render(control);
+      return;
+    }
+  } catch (_) { /* retry below */ }
+  setTimeout(loadBoamMeta, 5000);
+}
+
 document.getElementById("unit-seg").addEventListener("click", (ev) => {
   const b = ev.target.closest("[data-unit]");
   if (b) sendControl({ area_unit: b.dataset.unit });
@@ -619,7 +679,7 @@ document.getElementById("speed-seg").addEventListener("click", (ev) => {
 
 // --- Pressure weights ---------------------------------------------------------
 
-const WEIGHT_LABEL = { congestion: "Traffic", crowding: "Crowding", service_gap: "Service gap", opal: "Opal 2016" };
+const WEIGHT_LABEL = { congestion: "Traffic", crowding: "Crowding", service_gap: "Service gap", opal: "Opal 2016", boam_load: "Bus load (BOAM)" };
 
 function buildWeights() {
   const box = document.getElementById("weights");
@@ -792,6 +852,7 @@ async function boot() {
   connect();
   refreshSessions();
   loadAreaMeta();
+  loadBoamMeta();
   setInterval(refreshSessions, 60000);
   setInterval(refreshStats, 3000);
   setInterval(refreshHealth, 3000);

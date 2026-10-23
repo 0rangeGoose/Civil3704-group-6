@@ -6,7 +6,10 @@ Inputs, each turned into a 0-1 percentile rank across the areas that have it:
   area (engine/normalise/segments.py, last 10 minutes);
 - **crowding** -- mean live crowding level of those segments;
 - **service_gap** -- the static jobs-vs-service gap (engine/demand/areas.py);
-- **opal** -- Opal 2016 AM-peak taps (areas with none rank lowest).
+- **opal** -- Opal 2016 AM-peak taps (areas with none rank lowest);
+- **boam_load** -- typical bus load (share of capacity) on the BOAM sections in
+  the area, for the chosen peak (engine/demand/boam.py). Areas with no BOAM
+  sections get the neutral rank, like the live inputs.
 
 Jobs is deliberately not an input: it's already inside the service gap, and
 counting it twice would tilt the score towards wherever offices are.
@@ -32,9 +35,10 @@ from shapely.strtree import STRtree
 
 from engine.demand.areas import percentile_ranks
 
-INPUTS = ("congestion", "crowding", "service_gap", "opal")
+INPUTS = ("congestion", "crowding", "service_gap", "opal", "boam_load")
 DEFAULT_WEIGHTS = {name: 1.0 for name in INPUTS}
 LIVE_INPUTS = ("congestion", "crowding")
+NEUTRAL_FILL_INPUTS = ("congestion", "crowding", "boam_load")
 NEUTRAL_RANK = 0.5
 
 
@@ -61,7 +65,7 @@ def score_bins(scores: dict[str, float]) -> dict[str, int]:
 
 
 class PressureModel:
-    def __init__(self, areas: dict):
+    def __init__(self, areas: dict, boam: dict | None = None):
         self._units: dict[str, list[str]] = {}
         self._trees: dict[str, STRtree] = {}
         self._static: dict[str, dict[str, dict[str, float]]] = {}
@@ -83,6 +87,18 @@ class PressureModel:
                 "opal": percentile_ranks({u["id"]: u["opal"] for u in units}),
             }
         self._segment_unit: dict[tuple[str, str], str | None] = {}
+        # BOAM typical load per unit and period, ranked once: it's static.
+        self._boam: dict[tuple[str, str], dict[str, float]] = {}
+        for unit_type in ("zones", "grid"):
+            for period in ("am", "pm"):
+                loads: dict[str, list[float]] = defaultdict(list)
+                for section in (boam or {}).get("sections", []):
+                    value = (section.get(period) or {}).get("load")
+                    unit = self._unit_of(unit_type, section) if value is not None else None
+                    if unit is not None:
+                        loads[unit].append(value)
+                self._boam[(unit_type, period)] = percentile_ranks(
+                    {u: sum(v) / len(v) for u, v in loads.items()})
 
     def _unit_of(self, unit_type: str, segment: dict) -> str | None:
         key = (unit_type, segment["id"])
@@ -98,7 +114,8 @@ class PressureModel:
             self._segment_unit[key] = unit
         return self._segment_unit[key]
 
-    def scores(self, unit_type: str, segments: list[dict], weights: dict[str, float]) -> dict[str, dict]:
+    def scores(self, unit_type: str, segments: list[dict], weights: dict[str, float],
+               period: str = "am") -> dict[str, dict]:
         """{unit_id: {"score", "bin", "inputs": {input: rank}}} for every unit
         with at least one weighted input."""
         live: dict[str, dict[str, list[float]]] = {"congestion": defaultdict(list), "crowding": defaultdict(list)}
@@ -113,8 +130,9 @@ class PressureModel:
             name: percentile_ranks({u: sum(v) / len(v) for u, v in by_unit.items()})
             for name, by_unit in live.items()
         }
+        ranks["boam_load"] = dict(self._boam.get((unit_type, period), {}))
         measured = {name: set(r) for name, r in ranks.items()}
-        for name in LIVE_INPUTS:
+        for name in NEUTRAL_FILL_INPUTS:
             for unit in self._all_ids.get(unit_type, []):
                 ranks[name].setdefault(unit, NEUTRAL_RANK)
         ranks.update(self._static.get(unit_type, {}))

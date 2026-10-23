@@ -71,6 +71,10 @@ class LiveVehicleFeed:
         self._trip_update_index_by_mode: dict[str, dict] = {}
         self.epoch += 1
 
+    @property
+    def shapes(self) -> ShapeIndex:
+        return self._shapes
+
     def live_source(self) -> RecordingSource:
         footprint = FootprintFilter(self._cfg.bounding_box, self._cbd_stop_ids)
         return RecordingSource(LiveSource(self._cfg), self.recordings_dir, footprint, tag="serve")
