@@ -21,6 +21,7 @@ sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
 
 from engine.config import load_config
 from engine.normalise.aggregate import load_cbd_ids
+from engine.sources.budget import budget_from_config
 from engine.sources.footprint import FootprintFilter
 from engine.sources.live import LiveSource
 from engine.sources.recorder import RecordingSource
@@ -32,8 +33,11 @@ async def record(minutes: float) -> int:
     if not db_path.exists():
         raise SystemExit(f"error: {db_path} not found -- run scripts/run_phase1.py first")
     _, stop_ids = load_cbd_ids(db_path)
+    # Shares the day's request budget with the server, and stands aside while
+    # the server is polling (it records the same feeds), taking over if it stops.
+    budget, server_heartbeat = budget_from_config(cfg)
     source = RecordingSource(
-        LiveSource(cfg),
+        LiveSource(cfg, budget=budget, defer_to=server_heartbeat),
         cfg.root / "data" / "recordings",
         FootprintFilter(cfg.bounding_box, stop_ids),
         tag="rec",

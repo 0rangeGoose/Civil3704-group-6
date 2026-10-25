@@ -203,6 +203,8 @@ async def switch_source(app: web.Application) -> None:
     except asyncio.CancelledError:
         pass
     feed.reset()
+    if feed.heartbeat is not None:
+        feed.heartbeat.clear()  # replaying: the scheduled recorder may poll again
     if session_id == "live":
         app["replay"] = None
         app["feed_task"] = asyncio.create_task(feed.run_forever())
@@ -346,6 +348,8 @@ async def _start_background_tasks(app: web.Application) -> None:
 async def _cleanup_background_tasks(app: web.Application) -> None:
     app["feed_task"].cancel()
     app["broadcast_task"].cancel()
+    if app["feed"].heartbeat is not None:
+        app["feed"].heartbeat.clear()  # let the scheduled recorder take over at once
     app["feed"].close()
 
 

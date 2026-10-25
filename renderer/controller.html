@@ -745,9 +745,12 @@ async function refreshHealth() {
       const cls = age === undefined || age > staleAfter ? "num stale" : "num";
       rows += `<div>${MODE_LABEL[m] || m}</div><div class="num">${h.vehicles_by_mode[m] || 0}</div><div class="${cls}">${ageText}</div>`;
     }
+    const api = h.api
+      ? `<p class="note">TfNSW requests today: ${h.api.used_today.toLocaleString()} of ${h.api.daily_limit.toLocaleString()} · polling every ${Math.round(h.api.cycle_interval_seconds)} s${h.api.in_peak ? " (peak: full rate)" : ""}</p>`
+      : "";
     box.innerHTML = `
       <div class="health-grid">${rows}</div>
-      <p class="note">${h.vehicles_total} vehicles on the model · ${h.connected_pages} page(s) connected</p>`;
+      <p class="note">${h.vehicles_total} vehicles on the model · ${h.connected_pages} page(s) connected</p>${api}`;
   } catch (e) {
     box.innerHTML = `<p class="note stale">Can't reach the server (${e.message})</p>`;
   }

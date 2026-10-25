@@ -2,6 +2,30 @@
 
 Judgment calls made without stopping to ask, per the project brief. Newest first.
 
+## 2026-10-26 — Polling adapts to TfNSW's daily quota
+
+Left running all weekend, the server was refused (429) from 7:06pm Sunday until midnight
+and recorded almost nothing. The log shows why: **59,964 requests** from midnight to the
+first refusal, and acceptance again just after the next midnight, i.e. a quota of
+~60,000 requests a day per key, resetting at midnight Sydney time. Polling all 15
+endpoints every 15s costs ~86,000 a day, so any full day would lose its evening, and a
+weekday's PM peak with it.
+
+- **One shared budget per key** (`engine/sources/budget.py`, `data/api_usage.json` under
+  a file lock): the server and the scheduled recorder add to the same daily count.
+  Budget 57,000 (5% margin), configurable under `api_budget`.
+- **Peaks always at full rate** (weekdays 6:55–9:05 and 16:25–18:35, matching the
+  recording schedule). Outside them, what the rest of today's peaks will need is held
+  back and the remainder is spread evenly until midnight: e.g. Monday 1:30am → one cycle
+  every ~34s. Budget spent → one cycle every 600s, so the live view thins out instead of
+  going dark.
+- **No double polling in peaks**: the server touches a heartbeat file each cycle; the
+  scheduled recorder idles while it's fresh (< 60s) and takes over if the server stops
+  (the server clears it on shutdown and when switching to a replay). Checked: with the
+  server up, a recorder run received 0 payloads.
+- **Network errors back off at most 30s** (was up to 300s, the same as a 429), so a
+  dropped Wi-Fi connection costs about half a minute after it returns, not five.
+
 ## 2026-10-23 — BOAM: typical bus load, time lost, and a pressure input
 
 TfNSW's Bus Opal Assignment Model gives every bus trip at every stop: scheduled and actual

@@ -31,6 +31,7 @@ from engine.normalise.segments import SegmentAggregator
 from engine.normalise.static_lookup import StaticLookup
 from engine.normalise.trip_updates import build_trip_update_index
 from engine.normalise.vehicle import VehicleRecord
+from engine.sources.budget import budget_from_config
 from engine.sources.footprint import FootprintFilter
 from engine.sources.live import LiveSource
 from engine.sources.recorder import RecordingSource
@@ -53,6 +54,7 @@ class LiveVehicleFeed:
         self.interchanges: list[Interchange] = load_interchanges(db_path, cfg.raw["interchanges"])
         self._interchange_radius_m = cfg.raw.get("interchange_radius_m", 300)
         self.recordings_dir = cfg.root / "data" / "recordings"
+        self.api_budget, self.heartbeat = budget_from_config(cfg)
 
         self.epoch = 0  # bumped on every reset, so pages know to drop what they're showing
         self.reset()
@@ -77,7 +79,8 @@ class LiveVehicleFeed:
 
     def live_source(self) -> RecordingSource:
         footprint = FootprintFilter(self._cfg.bounding_box, self._cbd_stop_ids)
-        return RecordingSource(LiveSource(self._cfg), self.recordings_dir, footprint, tag="serve")
+        source = LiveSource(self._cfg, budget=self.api_budget, heartbeat=self.heartbeat)
+        return RecordingSource(source, self.recordings_dir, footprint, tag="serve")
 
     async def run_forever(self, source=None) -> None:
         bbox = self._cfg.bounding_box
@@ -146,6 +149,7 @@ class LiveVehicleFeed:
             "vehicles_total": len(self.snapshot),
             "vehicles_by_mode": by_mode,
             "feed_age_seconds": {mode: round(now - t, 1) for mode, t in self.last_positions_at.items()},
+            "api": self.api_budget.status() if self.api_budget else None,
         }
 
     def _prune_stale(self, now: float) -> None:
