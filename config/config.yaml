@@ -115,3 +115,17 @@ controller:
   # Keeps visitors out of the team panel on the tablet. Not a security
   # boundary: it's sent to every page that loads /config.
   team_pin: "3704"
+
+# TfNSW's daily request quota for our API key: measured 25 Oct 2026, refused
+# after 59,964 requests counted from midnight Sydney time, reset at midnight.
+# Every process that polls shares one count (usage_path); outside the peak
+# windows polling slows down to keep today's remaining peaks affordable.
+# See engine/sources/budget.py.
+api_budget:
+  daily_limit: 57000          # ~5% under the measured quota, as a margin
+  peaks:                      # weekdays, Sydney time: always polled at full rate
+    - ["06:55", "09:05"]
+    - ["16:25", "18:35"]
+  max_interval_seconds: 600   # slowest pace when the budget is spent
+  usage_path: "data/api_usage.json"
+  heartbeat_path: "data/recordings/.server_polling"

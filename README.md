@@ -213,6 +213,11 @@ Recordings replay from the tablet (Display → Time): any recorded AM/PM peak, o
 latest two hours, in real time or as a 10× / 25× / 50× time-lapse that loops. Live
 polling pauses while a replay plays.
 
+Polling stays inside TfNSW's daily quota (~60,000 requests per key, reset at midnight)
+automatically: full rate during the weekday peaks, slower in between so the peaks stay
+affordable, and the scheduled recorder stands aside while the server is already polling.
+Today's usage and the current pace are under Team → System health and `/health`.
+
 The schedule is a launchd agent (`~/Library/LaunchAgents/com.pulsecbd.recorder.plist`,
 log in `data/recordings/recorder.log`). The Mac must be on power for scheduled wakes.
 
@@ -313,7 +318,7 @@ python scripts/run_phase3.py --cycles 7            # + map matching/adherence + 
 **Tests**:
 
 ```bash
-pytest        # 126 tests, ~1s, no network required
+pytest        # 132 tests, ~1s, no network required
 ```
 
 ### Calibrating onto a physical model (once one exists)
