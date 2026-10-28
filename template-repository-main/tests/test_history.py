@@ -99,3 +99,126 @@ def test_log_and_query_round_trip_for_a_route():
     assert line["route_short_name"] == "M10"
     assert line["score"] == pytest.approx(0.5)
     assert line["vehicle_count"] == 4
+
+
+def test_log_stop_occupancy_is_a_noop_for_an_empty_list():
+    history.log_stop_occupancy([], now=_at_hour(8))  # must not raise or create rows
+
+    assert history.query_stop_occupancy_peaks() == {}
+
+
+def test_query_stop_occupancy_peaks_tracks_the_worst_reading_per_stop():
+    history.log_stop_occupancy(
+        [
+            {"stop_id": "200035", "vehicle_id": "bus1", "route_short_name": "B1", "mode": "buses", "occupancy": "MANY_SEATS_AVAILABLE"},
+            {"stop_id": "200035", "vehicle_id": "bus2", "route_short_name": "B1", "mode": "buses", "occupancy": "FULL"},
+            {"stop_id": "200035", "vehicle_id": "bus3", "route_short_name": "B1", "mode": "buses", "occupancy": "FEW_SEATS_AVAILABLE"},
+            {"stop_id": "200036", "vehicle_id": "bus4", "route_short_name": "M10", "mode": "buses", "occupancy": "EMPTY"},
+        ],
+        now=_at_hour(8),
+    )
+
+    peaks = history.query_stop_occupancy_peaks()
+
+    assert peaks["200035"] == {"peak_rank": 5, "visit_count": 3}  # FULL (rank 5) is the worst of the three
+    assert peaks["200036"] == {"peak_rank": 0, "visit_count": 1}
+
+
+def test_query_stop_occupancy_peaks_ignores_not_boardable_readings():
+    history.log_stop_occupancy(
+        [{"stop_id": "200035", "vehicle_id": "bus1", "route_short_name": None, "mode": "buses", "occupancy": "NOT_BOARDABLE"}],
+        now=_at_hour(8),
+    )
+
+    assert history.query_stop_occupancy_peaks() == {}
+
+
+def test_query_stop_occupancy_peaks_uses_only_the_most_recent_day():
+    history.log_stop_occupancy(
+        [{"stop_id": "200035", "vehicle_id": "bus1", "route_short_name": "B1", "mode": "buses", "occupancy": "FULL"}],
+        now=_at_hour(8, "2026-01-04"),
+    )
+    history.log_stop_occupancy(
+        [{"stop_id": "200035", "vehicle_id": "bus2", "route_short_name": "B1", "mode": "buses", "occupancy": "EMPTY"}],
+        now=_at_hour(8, "2026-01-05"),
+    )
+
+    peaks = history.query_stop_occupancy_peaks()  # no day given -> most recent
+
+    assert peaks["200035"] == {"peak_rank": 0, "visit_count": 1}  # only the 05th's EMPTY reading
+
+
+def test_query_stop_occupancy_peaks_can_target_a_specific_day():
+    history.log_stop_occupancy(
+        [{"stop_id": "200035", "vehicle_id": "bus1", "route_short_name": "B1", "mode": "buses", "occupancy": "FULL"}],
+        now=_at_hour(8, "2026-01-04"),
+    )
+    history.log_stop_occupancy(
+        [{"stop_id": "200035", "vehicle_id": "bus2", "route_short_name": "B1", "mode": "buses", "occupancy": "EMPTY"}],
+        now=_at_hour(8, "2026-01-05"),
+    )
+
+    peaks = history.query_stop_occupancy_peaks(day="2026-01-04")
+
+    assert peaks["200035"] == {"peak_rank": 5, "visit_count": 1}
+
+
+def test_log_stop_occupancy_accepts_delay_seconds_optionally():
+    # No delay_seconds key at all (older-style call) must not raise.
+    history.log_stop_occupancy(
+        [{"stop_id": "200035", "vehicle_id": "bus1", "route_short_name": "B1", "mode": "buses", "occupancy": "FULL"}],
+        now=_at_hour(8),
+    )
+
+    assert history.query_stop_lateness_by_occupancy() == {}  # excluded - no delay_seconds logged
+
+
+def test_query_stop_lateness_by_occupancy_breaks_down_by_rank():
+    history.log_stop_occupancy(
+        [
+            {"stop_id": "200035", "vehicle_id": "bus1", "route_short_name": "B1", "mode": "buses",
+             "occupancy": "STANDING_ROOM_ONLY", "delay_seconds": 300},
+            {"stop_id": "200035", "vehicle_id": "bus2", "route_short_name": "B1", "mode": "buses",
+             "occupancy": "STANDING_ROOM_ONLY", "delay_seconds": 180},
+            {"stop_id": "200035", "vehicle_id": "bus3", "route_short_name": "B1", "mode": "buses",
+             "occupancy": "MANY_SEATS_AVAILABLE", "delay_seconds": 20},
+        ],
+        now=_at_hour(8),
+    )
+
+    result = history.query_stop_lateness_by_occupancy()
+
+    assert result["200035"][3] == {"avg_delay_seconds": 240.0, "visit_count": 2}  # STANDING_ROOM_ONLY (rank 3)
+    assert result["200035"][1] == {"avg_delay_seconds": 20.0, "visit_count": 1}   # MANY_SEATS_AVAILABLE (rank 1)
+
+
+def test_query_stop_lateness_by_occupancy_excludes_visits_with_no_delay():
+    history.log_stop_occupancy(
+        [
+            {"stop_id": "200035", "vehicle_id": "bus1", "route_short_name": "B1", "mode": "buses",
+             "occupancy": "FULL", "delay_seconds": None},
+            {"stop_id": "200035", "vehicle_id": "bus2", "route_short_name": "B1", "mode": "buses",
+             "occupancy": "FULL", "delay_seconds": 100},
+        ],
+        now=_at_hour(8),
+    )
+
+    result = history.query_stop_lateness_by_occupancy()
+
+    assert result["200035"][5] == {"avg_delay_seconds": 100.0, "visit_count": 1}  # only bus2 counted
+
+
+def test_query_stop_lateness_by_occupancy_can_filter_to_one_stop():
+    history.log_stop_occupancy(
+        [
+            {"stop_id": "200035", "vehicle_id": "bus1", "route_short_name": "B1", "mode": "buses",
+             "occupancy": "FULL", "delay_seconds": 100},
+            {"stop_id": "200036", "vehicle_id": "bus2", "route_short_name": "M10", "mode": "buses",
+             "occupancy": "EMPTY", "delay_seconds": 0},
+        ],
+        now=_at_hour(8),
+    )
+
+    result = history.query_stop_lateness_by_occupancy(stop_id="200035")
+
+    assert set(result.keys()) == {"200035"}

@@ -34,25 +34,33 @@ L.tileLayer(`https://{s}.basemaps.cartocdn.com/rastertiles/voyager/{z}/{x}/{y}{r
 //                cells, covering genuine coverage gaps too) - built ONCE
 //                from /demand_grid and never redrawn, since demand data
 //                doesn't change during a run
-//   opal       - real observed Opal tap on/off activity per travel zone,
-//                z-scored against the other zones in view (see
-//                ingestion.opal_importance) rather than demand's [0,1] job
-//                density - built ONCE from /opal_grid, same lifecycle as
-//                demand
+//   boam       - real per-STOP peak bus occupancy for one day (see
+//                ingestion.boam_stops) - point markers at each stop's own
+//                coordinate, not a rasterized grid like demand, since
+//                there's no travel-zone polygon in the way here. Built ONCE
+//                from /boam_stops, same lifecycle as demand.
 //   routes     - each active route (bus, train, metro) drawn as its real street-shaped
 //                line, coloured by that route's current average
 //                congestion - an alternative to the grid that isn't cut up
 //                by arbitrary square boundaries. Geometry is fetched once
 //                per shape (from /route_shapes, a growing cache) and
 //                reused; only the score is refreshed every poll.
-// Demand/Opal are added first/stay visually underneath so the live
+// Demand/BOAM are added first/stay visually underneath so the live
 // congestion cells read as being "on top of" the wash.
+//
+// There used to be a 5th layer here ("Importance" - real Opal tap on/off
+// activity per travel zone, z-scored; see ingestion.opal_importance).
+// Pulled out for now: none of the layers were showcasing real-time data,
+// and that one was the least live of the three enrichment layers (a single
+// 2020 snapshot week, vs. BOAM's one real day and demand's structural
+// job-density data). The backend module/tests are untouched - importanceColor()
+// below went with it since nothing else used it.
 const demandLayer = L.layerGroup();
-const opalLayer = L.layerGroup();
+const boamLayer = L.layerGroup();
 const congestionLayer = L.layerGroup().addTo(map); // on by default
 const routesLayer = L.layerGroup();
 let demandGridLoaded = false;
-let opalGridLoaded = false;
+let boamStopsLoaded = false;
 const shapeGeometry = new Map(); // shape_id -> [[lat, lon], ...]
 
 // vehicle_id -> { marker, missed }. `missed` is a grace counter, not just
@@ -86,8 +94,8 @@ let lastServerCongestion = { cells: [], hotspot_count: 0, cell_metres: 150 }; //
 let lastVehicles = []; // so toggleMode() can re-filter instantly, without waiting for the next poll
 let lastRouteLines = {};
 
-const LAYER_GROUPS = { congestion: congestionLayer, demand: demandLayer, opal: opalLayer, routes: routesLayer };
-const layerVisible = { congestion: true, demand: false, opal: false, routes: false };
+const LAYER_GROUPS = { congestion: congestionLayer, demand: demandLayer, boam: boamLayer, routes: routesLayer };
+const layerVisible = { congestion: true, demand: false, boam: false, routes: false };
 
 // Which vehicle modes actually get drawn - independent of the layer toggles
 // above (those pick which analytics layer shows; this picks which vehicles
@@ -264,46 +272,48 @@ export async function loadDemandGrid() {
   }
 }
 
-export function hasOpalData() {
-  return opalGridLoaded;
+export function hasBoamData() {
+  return boamStopsLoaded;
 }
 
-// Fetch and draw the Opal tap on/off importance grid once - same shape and
-// caveats as loadDemandGrid() above, just a different endpoint/field and a
-// diverging (not sequential) colour scale, since a z-score has a sign.
-export async function loadOpalGrid() {
-  if (opalGridLoaded) return true;
+// Fetch and draw the BOAM peak-occupancy stop markers once. Unlike
+// demand (a rasterized grid), every stop already has its own exact
+// coordinate, so these are plain circle markers, not rectangles - coloured
+// with the same sequential congestionColor ramp congestion uses, since
+// "how crowded has this stop gotten" is a magnitude, not a signed
+// deviation from an average.
+export async function loadBoamStops() {
+  if (boamStopsLoaded) return true;
   try {
-    const response = await fetch("/opal_grid", { cache: "no-store" });
+    const response = await fetch("/boam_stops", { cache: "no-store" });
     if (!response.ok) throw new Error(`HTTP ${response.status}`);
-    const grid = await response.json();
-    const cells = grid.cells || [];
-    cells.forEach((cell) => {
-      const b = cell.bounds;
-      if (!b) return;
-      const value = cell.importance_score;
-      const hasValue = typeof value === "number";
-      const color = hasValue ? importanceColor(value) : "#9aa39d";
-      L.rectangle([[b.min_lat, b.min_lon], [b.max_lat, b.max_lon]], {
-        stroke: false,
+    const data = await response.json();
+    const stops = data.stops || [];
+    stops.forEach((stop) => {
+      const color = congestionColor(stop.peak_rank / 5);
+      L.circleMarker([stop.lat, stop.lon], {
+        radius: 5,
+        weight: 1,
+        color: "#fff",
         fillColor: color,
-        fillOpacity: hasValue ? 0.15 + Math.min(0.4, Math.abs(value) * 0.15) : 0.04
+        fillOpacity: 0.85
       })
         .bindPopup(
-          `<strong>Block ${cell.cell_id}</strong><br>` +
-          `Importance: ${hasValue ? `${value.toFixed(1)}σ` : "no data"}<br>` +
-          `~${grid.cell_metres || 150} m square<br>` +
-          `<span class="muted">Opal tap on/off activity, z-scored against other zones in view (not raw volume).</span>`
+          `<strong>${stop.description || stop.stop_id}</strong><br>` +
+          `${stop.suburb || ""}<br>` +
+          `Peak occupancy: ${stop.peak_label}% of capacity<br>` +
+          `${stop.visit_count} bus visit${stop.visit_count === 1 ? "" : "s"} logged that day<br>` +
+          `<span class="muted">Worst single reading that day, not an average - see the Importance layer for zone-level activity.</span>`
         )
-        .addTo(opalLayer);
+        .addTo(boamLayer);
     });
-    opalGridLoaded = cells.length > 0;
-    if (opalGridLoaded && layerVisible.opal && !map.hasLayer(opalLayer)) {
-      map.addLayer(opalLayer);
+    boamStopsLoaded = stops.length > 0;
+    if (boamStopsLoaded && layerVisible.boam && !map.hasLayer(boamLayer)) {
+      map.addLayer(boamLayer);
     }
-    return opalGridLoaded;
+    return boamStopsLoaded;
   } catch (error) {
-    console.warn("Could not load /opal_grid:", error.message);
+    console.warn("Could not load /boam_stops:", error.message);
     return false;
   }
 }
@@ -419,21 +429,6 @@ export function congestionColor(value) {
   return "#087f74";
 }
 
-// Opal importance score (a z-score, unbounded, signed) -> diverging colour
-// ramp: this is a polarity signal ("busier/quieter than the other zones in
-// view"), not a magnitude like congestion, so it gets two hues either side
-// of a neutral grey midpoint rather than one hue ramped light-to-dark.
-// Built from the dashboard's own --blue/--red/--line tokens (style.css) so
-// it reads as a deliberately different *kind* of layer from the
-// teal-amber-red congestion ramp, not just a recolour of it.
-export function importanceColor(value) {
-  if (value >= 1.5) return "#cf5445";   // --red: well above average
-  if (value >= 0.5) return "#d59b91";   // mild hotspot
-  if (value > -0.5) return "#dce3dd";   // --line: near the model-area average
-  if (value > -1.5) return "#86b0c6";   // mild coldspot
-  return "#2874a6";                     // --blue: well below average
-}
-
 export function formatTime(seconds) {
   if (!seconds) return "No update";
   return new Date(seconds * 1000).toLocaleTimeString([], { hour: "2-digit", minute: "2-digit", second: "2-digit" });
@@ -489,6 +484,18 @@ export function updateCongestion(congestion) {
 const MODE_SHAPE_CLASS = { buses: "mode-bus", sydneytrains: "mode-train", metro: "mode-metro" };
 const MODE_LABEL = { buses: "Bus", sydneytrains: "Train", metro: "Metro" };
 
+// Human-readable form of normalise.OCCUPANCY_LABELS' enum names.
+const OCCUPANCY_LABEL = {
+  EMPTY: "Empty",
+  MANY_SEATS_AVAILABLE: "Many seats available",
+  FEW_SEATS_AVAILABLE: "Few seats available",
+  STANDING_ROOM_ONLY: "Standing room only",
+  CRUSHED_STANDING_ROOM_ONLY: "Crushed standing room only",
+  FULL: "Full",
+  NOT_ACCEPTING_PASSENGERS: "Not accepting passengers",
+  NOT_BOARDABLE: "Not boardable",
+};
+
 export function updateMarkers(vehicles) {
   lastVehicles = vehicles;
   const active = new Set();
@@ -517,12 +524,18 @@ export function updateMarkers(vehicles) {
     const bunchingLine = vehicle.bunching_score == null
       ? "no nearby vehicle on this route"
       : `${Math.round(vehicle.bunching_score * 100)}%`;
+    // Live occupancy, straight from the feed's own occupancy_status - not
+    // derived like the three lines above. OCCUPANCY_LABEL covers every
+    // value VehicleRecord can carry (see normalise.OCCUPANCY_LABELS on the
+    // backend); "unavailable" means the feed left it unset for this vehicle.
+    const occupancyLine = OCCUPANCY_LABEL[vehicle.occupancy] || "unavailable";
     const popup =
       `<strong>${vehicle.route_short_name || vehicle.route_id || "Unassigned route"}</strong><br>` +
       `${modeLabel} / ${label}<br>` +
       `Speed: ${speedLine}<br>` +
       `Lateness: ${latenessLine}<br>` +
       `Bunching: ${bunchingLine}<br>` +
+      `Occupancy: ${occupancyLine}<br>` +
       `Congestion: ${congestionPct}`;
     const entry = markers.get(vehicle.vehicle_id);
     if (entry) {

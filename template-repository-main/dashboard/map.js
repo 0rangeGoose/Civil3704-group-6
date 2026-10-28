@@ -1,13 +1,21 @@
 // Bare map-only view for the projector - no header/metrics/table, just the
 // map. Layer switching is keyboard-only (no visible buttons to keep the
 // projected output clean): 1/2/3/4 each independently TOGGLE Congestion/
-// Demand/Importance/Routes on or off - any combination can be showing at
+// Demand/Stop Crowding/Routes on or off - any combination can be showing at
 // once. 5/6/7 independently toggle which vehicle modes are drawn
 // (Bus/Train/Metro). Left/Right arrows cycle through time periods (Now /
 // AM Peak / Midday / PM Peak / Evening).
+//
+// There used to be a 5th layer here ("Importance", an Opal tap on/off
+// z-score by travel zone - see pipeline.ingestion.opal_importance). Pulled
+// out for now since none of the layers were showcasing real-time data and
+// that one was the least live of the three enrichment layers (a single
+// 2020 snapshot week). The ingestion module/tests are untouched, so
+// re-adding the layer here is just restoring this file's opal_* lines.
 import {
   map, setZoomBoost, isLayerVisible, toggleLayer, renderSnapshot, fetchSnapshot,
-  loadDemandGrid, hasDemandData, loadOpalGrid, hasOpalData, loadRouteShapes,
+  loadDemandGrid, hasDemandData,
+  loadBoamStops, hasBoamData, loadRouteShapes,
   PERIODS, setPeriod, getActivePeriod,
   MODES, isModeVisible, toggleMode
 } from "./map-core.js";
@@ -34,13 +42,13 @@ setZoomBoost(0);
 const LAYERS = [
   { key: "1", name: "congestion", label: "Congestion" },
   { key: "2", name: "demand", label: "Demand" },
-  { key: "3", name: "opal", label: "Importance" },
+  { key: "3", name: "boam", label: "Stop Crowding" },
   { key: "4", name: "routes", label: "Routes" }
 ];
 const KEY_TO_LAYER = Object.fromEntries(LAYERS.map((l) => [l.key, l.name]));
-// routes doesn't depend on any pre-loaded grid at all.
+// routes doesn't depend on any pre-loaded grid/marker data at all.
 const NEEDS_DEMAND_DATA = new Set(["demand"]);
-const NEEDS_OPAL_DATA = new Set(["opal"]);
+const NEEDS_BOAM_DATA = new Set(["boam"]);
 
 // Mode toggles pick up where the layer keys leave off (5/6/7), same
 // independent on/off pattern as 1/2/3/4 - just a different axis (which
@@ -59,7 +67,7 @@ function updateHint(note) {
   const periodLabel = PERIODS.find((p) => p.key === getActivePeriod())?.label || "Now";
   const missing = [];
   if (!hasDemandData()) missing.push("demand");
-  if (!hasOpalData()) missing.push("Opal importance");
+  if (!hasBoamData()) missing.push("BOAM stop crowding");
   const unavailable = missing.length ? ` (${missing.join(", ")} data not loaded)` : "";
   hint.innerHTML =
     `${layerStates}&nbsp;&nbsp;&nbsp;&nbsp;${modeStates}&nbsp;&nbsp;&nbsp;&nbsp;[←/→] ${periodLabel}` +
@@ -84,7 +92,7 @@ window.addEventListener("keydown", (event) => {
   const layer = KEY_TO_LAYER[event.key];
   if (!layer) return;
   if (NEEDS_DEMAND_DATA.has(layer) && !hasDemandData()) return; // nothing to show, ignore the key
-  if (NEEDS_OPAL_DATA.has(layer) && !hasOpalData()) return;
+  if (NEEDS_BOAM_DATA.has(layer) && !hasBoamData()) return;
   toggleLayer(layer);
   updateHint();
 });
@@ -101,7 +109,7 @@ async function refresh() {
 
 updateHint();
 loadDemandGrid().then(() => updateHint());
-loadOpalGrid().then(() => updateHint());
+loadBoamStops().then(() => updateHint());
 
 // Route geometry accumulates as new routes are seen through the day - poll
 // it far less often than the 5s /snapshot cycle.

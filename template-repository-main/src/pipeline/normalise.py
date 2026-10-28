@@ -24,6 +24,43 @@ logger = logging.getLogger(__name__)
 
 CANCELED = gtfs_realtime_pb2.TripDescriptor.CANCELED
 
+# GTFS-RT's own OccupancyStatus enum - a STANDARD field, despite an earlier
+# version of this project's README claiming it needed a custom TfNSW
+# protobuf extension to decode. Checked directly against the live feed:
+# TfNSW populates it for 100% of buses and metro, ~40% of Sydney Trains
+# vehicles in a given poll. NO_DATA_AVAILABLE (7) is deliberately left out -
+# it means the same thing as the field being unset at all, so both map to
+# occupancy=None rather than a confusing extra label.
+OCCUPANCY_LABELS: Dict[int, str] = {
+    0: "EMPTY",
+    1: "MANY_SEATS_AVAILABLE",
+    2: "FEW_SEATS_AVAILABLE",
+    3: "STANDING_ROOM_ONLY",
+    4: "CRUSHED_STANDING_ROOM_ONLY",
+    5: "FULL",
+    6: "NOT_ACCEPTING_PASSENGERS",
+    8: "NOT_BOARDABLE",
+}
+
+# Ordinal crowding severity, 0 (emptiest) to 5 (fullest) - how analytics.py's
+# congestion scoring and history.py's stop-visit logging both turn the label
+# above into a number, so there's exactly one ranking to keep in sync rather
+# than two. NOT_BOARDABLE is deliberately excluded (.get() returns None): it
+# means the vehicle isn't carrying revenue passengers at all (e.g.
+# deadheading to depot), not that it's empty of them - a different thing
+# from every other label here, which all describe an in-service vehicle's
+# fullness.
+OCCUPANCY_RANK: Dict[str, int] = {
+    "EMPTY": 0,
+    "MANY_SEATS_AVAILABLE": 1,
+    "FEW_SEATS_AVAILABLE": 2,
+    "STANDING_ROOM_ONLY": 3,
+    "CRUSHED_STANDING_ROOM_ONLY": 4,
+    "FULL": 5,
+    "NOT_ACCEPTING_PASSENGERS": 5,
+}
+MAX_OCCUPANCY_RANK = max(OCCUPANCY_RANK.values())
+
 
 @dataclass
 class VehicleRecord:
@@ -40,6 +77,10 @@ class VehicleRecord:
     timestamp: int
     delay_seconds: Optional[int]
     cancelled: bool
+    # Set directly from the live feed's own occupancy_status during
+    # normalise() - unlike congestion_score/bunching_score below, this
+    # isn't derived by analytics, it's a straight read of what TfNSW sends.
+    occupancy: Optional[str] = None
     # Filled in by the analytics layer (analytics.score_vehicles); left None
     # by normalisation so this stage stays purely about cleaning/joining.
     congestion_score: Optional[float] = None
@@ -158,6 +199,7 @@ def normalise(
                 timestamp=timestamp,
                 delay_seconds=delay_info.get("delay_seconds"),
                 cancelled=delay_info.get("cancelled", False),
+                occupancy=OCCUPANCY_LABELS.get(v.occupancy_status) if v.HasField("occupancy_status") else None,
             )
 
     return list(seen.values())

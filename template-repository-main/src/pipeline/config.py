@@ -127,12 +127,13 @@ ROLLING_WINDOW_SIZE = 50
 # ---------------------------------------------------------------------------
 # Congestion scoring (prototype heuristic)
 #
-# Per-vehicle congestion score in [0, 1], blending three signals: how slowly
-# the bus is moving, how far behind schedule it is, and how bunched up it is
-# with the nearest bus on the same route shape. Aggregated onto a grid over
-# the model footprint so the projector/dashboard can paint "where congestion
-# is worst". This is a first-pass proxy, not a validated model - tune the
-# constants against observed data.
+# Per-vehicle congestion score in [0, 1], blending four signals: how crowded
+# the bus's live occupancy reading is, how slowly it's moving, how far
+# behind schedule it is, and how bunched up it is with the nearest bus on
+# the same route shape. Aggregated onto a grid over the model footprint so
+# the projector/dashboard can paint "where congestion is worst". This is a
+# first-pass proxy, not a validated model - tune the constants against
+# observed data.
 # ---------------------------------------------------------------------------
 FREE_FLOW_SPEED_MPS = 8.3            # ~30 km/h: CBD bus free-flow reference
 CONGESTION_DELAY_CAP_SECONDS = 600   # delay at which the delay term saturates
@@ -154,11 +155,18 @@ BUNCHING_FAR_METRES = 800
 # not calibrated against real stop dwell zones.
 NEAR_STOP_THRESHOLD_METRES = 25.0
 
-# Weights when all three signals are available (they're re-normalised when
-# one or more is missing - see vehicle_congestion_score).
-CONGESTION_SPEED_WEIGHT = 0.4
-CONGESTION_DELAY_WEIGHT = 0.3
-CONGESTION_BUNCHING_WEIGHT = 0.3
+# Weights when all four signals are available (they're re-normalised when
+# one or more is missing - see vehicle_congestion_score). Occupancy is the
+# main indicator: a bus that's actually full of people is more directly
+# "congestion that matters" than one that's merely moving slowly or
+# running late, which can both have causes unrelated to crowding (traffic
+# lights, a long diversion). The other three stay as supporting signals
+# rather than dropping out, since occupancy alone can't tell you where the
+# bus got stuck.
+CONGESTION_OCCUPANCY_WEIGHT = 0.5
+CONGESTION_SPEED_WEIGHT = 0.2
+CONGESTION_DELAY_WEIGHT = 0.15
+CONGESTION_BUNCHING_WEIGHT = 0.15
 
 # 150m: closer to an actual Sydney CBD block (~100-200m) than a flat 300m,
 # which was blurring adjacent streets with different conditions together.

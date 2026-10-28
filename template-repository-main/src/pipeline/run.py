@@ -15,12 +15,12 @@ from __future__ import annotations
 import logging
 import threading
 import time
-from typing import Optional
+from typing import Dict, Optional
 
 from . import config, history
-from .analytics import RollingAggregator, congestion_grid, route_line_scores, score_vehicles
+from .analytics import RollingAggregator, congestion_grid, nearest_stop_id, route_line_scores, score_vehicles
+from .ingestion import boam_stops
 from .ingestion import demand as demand_ingestion
-from .ingestion import opal_importance
 from .ingestion import realtime_gtfs, static_gtfs
 from .normalise import normalise
 from .publish import SnapshotStore, run_server
@@ -71,7 +71,7 @@ def run_with_server(api_key: str) -> None:
     """Run ingestion in a background thread; serve the live snapshot on the main thread."""
     static = static_gtfs.load_static_gtfs(api_key)
     demand = demand_ingestion.load_demand_zones()
-    opal = opal_importance.load_opal_importance()
+    boam = boam_stops.load_boam_stops()
     aggregator = RollingAggregator()
     store = SnapshotStore()
 
@@ -82,18 +82,25 @@ def run_with_server(api_key: str) -> None:
         store.set_demand_grid(demand_cells, config.CONGESTION_GRID_CELL_METRES)
         logger.info(f"Demand grid built: {len(demand_cells)} cells (independent of bus positions)")
 
-    if opal is not None:
-        # Same lifecycle as the demand grid - real tap on/off activity
-        # doesn't change during a run either.
-        opal_cells = opal.build_grid(config.CONGESTION_GRID_CELL_METRES)
-        store.set_opal_grid(opal_cells, config.CONGESTION_GRID_CELL_METRES)
-        logger.info(f"Opal importance grid built: {len(opal_cells)} cells (independent of bus positions)")
+    if boam is not None:
+        # Point markers, not a grid - every stop already has its own exact
+        # coordinate. Same lifecycle as the other two: a day's peak
+        # occupancy reading doesn't change during a run.
+        boam_markers = boam.to_markers()
+        store.set_boam_stops(boam_markers)
+        logger.info(f"BOAM stop markers built: {len(boam_markers)} stops (independent of bus positions)")
 
     seen_shape_ids = set()
     last_history_log = 0.0
+    # vehicle_id -> stop_id of the visit already logged for it - lets the
+    # stop-occupancy logging below be edge-triggered ("just arrived at this
+    # stop") instead of firing again every cycle a vehicle is still parked
+    # there.
+    last_stop_seen: Dict[str, str] = {}
 
     def on_update(raw):
         nonlocal last_history_log
+        now = time.time()
         records = score_vehicles(normalise(raw, static), static)
         aggregator.update(records)
         grid = congestion_grid(records, demand=demand)
@@ -124,10 +131,50 @@ def run_with_server(api_key: str) -> None:
             f"{len(route_lines)} route line(s)"
         )
 
+        # Live stop-occupancy logging - this project's own, continuously
+        # self-built equivalent of TfNSW's day-after BOAM export (see
+        # history.log_stop_occupancy / ingestion.boam_stops). Edge-triggered
+        # on "just arrived at this stop", not every cycle a vehicle happens
+        # to still be sitting there - EVERY poll cycle, unlike the slow
+        # snapshot logging below, since a real arrival is a discrete event
+        # that would otherwise be missed between samples. delay_seconds is
+        # logged alongside occupancy (not derived from it) so
+        # history.query_stop_lateness_by_occupancy can compare the two at
+        # this exact stop, over time.
+        new_visits = []
+        seen_vehicle_ids = set()
+        for record in records:
+            seen_vehicle_ids.add(record.vehicle_id)
+            if record.occupancy is None:
+                continue
+            stop_id = nearest_stop_id(record.latitude, record.longitude, static.stops)
+            if stop_id is None:
+                last_stop_seen.pop(record.vehicle_id, None)
+                continue
+            if last_stop_seen.get(record.vehicle_id) == stop_id:
+                continue  # already logged this visit on an earlier cycle
+            last_stop_seen[record.vehicle_id] = stop_id
+            new_visits.append(
+                {
+                    "stop_id": stop_id,
+                    "vehicle_id": record.vehicle_id,
+                    "route_short_name": record.route_short_name,
+                    "mode": record.mode,
+                    "occupancy": record.occupancy,
+                    "delay_seconds": record.delay_seconds,
+                }
+            )
+        # Vehicles that dropped off the feed entirely (ghost-trail timeout,
+        # trip ended) shouldn't keep stale state forever.
+        for vehicle_id in list(last_stop_seen):
+            if vehicle_id not in seen_vehicle_ids:
+                last_stop_seen.pop(vehicle_id, None)
+        if new_visits:
+            history.log_stop_occupancy(new_visits, now=now)
+
         # Coarse, slow-interval logging for the historical/trend view (see
         # pipeline/history.py) - not every poll cycle, this data only needs
         # hour-of-day resolution.
-        now = time.time()
         if now - last_history_log >= config.HISTORY_LOG_INTERVAL_SECONDS:
             history.log_snapshot(grid["cells"], route_lines, now=now)
             last_history_log = now

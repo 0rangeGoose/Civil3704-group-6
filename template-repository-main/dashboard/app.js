@@ -1,6 +1,6 @@
 import {
   formatTime, renderSnapshot, toggleLayer, isLayerVisible, fetchSnapshot,
-  loadDemandGrid, loadOpalGrid, loadRouteShapes, setPeriod, getActivePeriod,
+  loadDemandGrid, loadBoamStops, loadRouteShapes, setPeriod, getActivePeriod,
   toggleMode, isModeVisible
 } from "./map-core.js";
 
@@ -30,10 +30,10 @@ loadDemandGrid().then((loaded) => {
   });
 });
 
-loadOpalGrid().then((loaded) => {
-  document.querySelectorAll('.layer-btn[data-layer="opal"]').forEach((btn) => {
+loadBoamStops().then((loaded) => {
+  document.querySelectorAll('.layer-btn[data-layer="boam"]').forEach((btn) => {
     btn.disabled = !loaded;
-    btn.title = loaded ? "" : "No Opal tap on/off data loaded - see data/opal/ in the README";
+    btn.title = loaded ? "" : "No BOAM stop data loaded - see data/boam/ in the README";
   });
 });
 

@@ -77,6 +77,11 @@ data/cache/*
 *.csv
 *.geojson
 
+# BOAM daily exports (data/boam/BOAM_<date>.txt) are pipe-delimited .txt,
+# not .csv, so they aren't covered by the *.csv rule above - and at ~400MB
+# per day's statewide export, one is already 4x GitHub's 100MB hard limit.
+data/boam/*.txt
+
 # Raw TfNSW TZP24/TZ21 downloads kept locally for reference - the two files
 # the pipeline actually reads are already copied into data/demand/ (which
 # the *.csv/*.geojson rules above cover). This folder's original download

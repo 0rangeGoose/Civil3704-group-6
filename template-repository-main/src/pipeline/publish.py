@@ -44,6 +44,7 @@ class SnapshotStore:
         self._congestion: dict = {"cells": [], "hotspot_count": 0}
         self._demand_grid: dict = {"cells": [], "cell_metres": config.CONGESTION_GRID_CELL_METRES}
         self._opal_grid: dict = {"cells": [], "cell_metres": config.CONGESTION_GRID_CELL_METRES}
+        self._boam_stops: List[dict] = []
         self._route_lines: Dict[str, dict] = {}
         self._route_shapes: Dict[str, dict] = {}
         self._updated_at: float = 0.0
@@ -69,6 +70,18 @@ class SnapshotStore:
     def opal_grid(self) -> dict:
         with self._lock:
             return self._opal_grid
+
+    def set_boam_stops(self, stops: List[dict]) -> None:
+        """Per-stop peak occupancy markers (see
+        ingestion.boam_stops.BoamStops.to_markers) - set once at startup,
+        same lifecycle as the demand/opal grids. Point data, not a grid:
+        each stop already has its own exact coordinate."""
+        with self._lock:
+            self._boam_stops = stops
+
+    def boam_stops(self) -> List[dict]:
+        with self._lock:
+            return self._boam_stops
 
     def add_route_shapes(self, shapes: Dict[str, dict]) -> None:
         """Accumulate route-line geometry (shape_id -> {points, route_id,
@@ -145,6 +158,14 @@ def build_app(store: SnapshotStore):
         travel zone) - fetched once by the frontend on load, same lifecycle
         as /demand_grid."""
         return store.opal_grid()
+
+    @app.get("/boam_stops")
+    def get_boam_stops():
+        """Per-stop peak bus occupancy for the day loaded (see
+        ingestion.boam_stops) - fetched once by the frontend on load, same
+        lifecycle as /demand_grid and /opal_grid. A flat list of point
+        markers, not a grid - every stop already has its own coordinate."""
+        return {"stops": store.boam_stops()}
 
     @app.get("/route_shapes")
     def get_route_shapes():

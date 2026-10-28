@@ -16,7 +16,7 @@ from typing import Dict, List, Optional, Tuple
 from . import config, gridmath
 from .ingestion.demand import DemandZones
 from .ingestion.static_gtfs import StaticGTFS
-from .normalise import VehicleRecord
+from .normalise import MAX_OCCUPANCY_RANK, OCCUPANCY_RANK, VehicleRecord
 
 EARTH_RADIUS_M = 6_371_000
 
@@ -158,8 +158,14 @@ def vehicle_congestion_score(
     speed_mps: Optional[float],
     delay_seconds: Optional[int],
     bunching_score: Optional[float] = None,
+    occupancy: Optional[str] = None,
 ) -> Optional[float]:
-    """A [0, 1] congestion proxy for one bus, blending up to three signals:
+    """A [0, 1] congestion proxy for one bus, blending up to four signals:
+      - "crowded": the bus's live occupancy reading (see normalise.OCCUPANCY_RANK)
+        - the MAIN signal (config.CONGESTION_OCCUPANCY_WEIGHT is the largest
+        weight): a bus genuinely full of people is congestion that matters
+        directly, where slowness/lateness/bunching can each have causes
+        unrelated to crowding at all.
       - "moving slowly": how far below free-flow speed the bus is
       - "behind schedule": how large its delay is (delays cascade in congestion)
       - "bunched": how close it is to its nearest same-shape neighbour
@@ -169,6 +175,11 @@ def vehicle_congestion_score(
     the score is just the delay term. Returns None if none are available.
     """
     components: List[Tuple[float, float]] = []  # (value, weight)
+
+    if occupancy is not None:
+        rank = OCCUPANCY_RANK.get(occupancy)
+        if rank is not None:  # excludes NOT_BOARDABLE - not a crowding reading at all
+            components.append((rank / MAX_OCCUPANCY_RANK, config.CONGESTION_OCCUPANCY_WEIGHT))
 
     if speed_mps is not None and speed_mps >= 0:
         slowness = max(0.0, min(1.0, (config.FREE_FLOW_SPEED_MPS - speed_mps) / config.FREE_FLOW_SPEED_MPS))
@@ -189,19 +200,30 @@ def vehicle_congestion_score(
     return round(score, 3)
 
 
-def _near_any_stop(lat: float, lon: float, stops: Dict[str, Tuple[float, float]],
-                    threshold_metres: float = config.NEAR_STOP_THRESHOLD_METRES) -> bool:
-    """True if (lat, lon) is within `threshold_metres` of any static GTFS
-    stop - see config.NEAR_STOP_THRESHOLD_METRES for why this exists (TfNSW's
-    live feed doesn't say whether a stopped vehicle is boarding or stuck)."""
+def nearest_stop_id(lat: float, lon: float, stops: Dict[str, Tuple[float, float]],
+                     threshold_metres: float = config.NEAR_STOP_THRESHOLD_METRES) -> Optional[str]:
+    """The closest static GTFS stop to (lat, lon), if any is within
+    `threshold_metres` - see config.NEAR_STOP_THRESHOLD_METRES for why this
+    proximity check exists at all (TfNSW's live feed doesn't say whether a
+    stopped vehicle is boarding or stuck). None if every stop is further
+    than that.
+
+    Public (not score_vehicles-only) since pipeline.run also needs it, to
+    log which stop a vehicle's live occupancy reading belongs to - see
+    history.log_stop_occupancy.
+    """
     ref_lat = gridmath.GRID_REF_LAT
     lon_scale = 111_320.0 * math.cos(math.radians(ref_lat))
-    for stop_lat, stop_lon in stops.values():
+    best_id = None
+    best_dist = threshold_metres
+    for stop_id, (stop_lat, stop_lon) in stops.items():
         lat_m = (lat - stop_lat) * 111_320.0
         lon_m = (lon - stop_lon) * lon_scale
-        if math.hypot(lat_m, lon_m) <= threshold_metres:
-            return True
-    return False
+        dist = math.hypot(lat_m, lon_m)
+        if dist <= best_dist:
+            best_dist = dist
+            best_id = stop_id
+    return best_id
 
 
 def score_vehicles(records: List[VehicleRecord], static: StaticGTFS) -> List[VehicleRecord]:
@@ -214,10 +236,10 @@ def score_vehicles(records: List[VehicleRecord], static: StaticGTFS) -> List[Veh
         # adjusted, and only when it's plausibly a scheduled stop rather than
         # congestion: 0 km/h right next to a real stop.
         speed_for_scoring = record.speed
-        if speed_for_scoring == 0 and _near_any_stop(record.latitude, record.longitude, static.stops):
+        if speed_for_scoring == 0 and nearest_stop_id(record.latitude, record.longitude, static.stops) is not None:
             speed_for_scoring = None
         record.congestion_score = vehicle_congestion_score(
-            speed_for_scoring, record.delay_seconds, record.bunching_score
+            speed_for_scoring, record.delay_seconds, record.bunching_score, record.occupancy
         )
     return records
 
