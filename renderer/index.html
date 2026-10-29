@@ -178,7 +178,7 @@ let theme = "dark";
 // the server first and comes back here via applyControl, so there is only
 // ever one source of truth.
 let control = {
-  theme: "dark", verify: false, hud: false, calibrate: false, interchanges: true, stops: false,
+  theme: "dark", verify: false, hud: false, calibrate: false, interchanges: true, stops: false, stop_history: false,
   lens: "adherence", line_layer: "none", area_layer: "none", area_unit: "zones", boam_period: "am", weights: {}, modes: {}, nudge: { dx: 0, dy: 0, scale: 1 },
 };
 let modeToGroup = {}; // feed mode -> controller group, from /config
@@ -205,6 +205,14 @@ let boamCanvas = null;
 let stops = [];
 let stopsLayerCanvas = null;
 let stopScreenPositions = [];
+
+// Stop history from /stop_history (engine/history/store.py stop_summaries),
+// refreshed every minute while the layer is on. Same projection-cached
+// pattern as the plain markers; positions carry each stop's summary for hover.
+let stopHistory = null;
+let stopHistoryCanvas = null;
+let stopHistoryPositions = [];
+let lastStopHistoryPoll = 0;
 
 async function loadBoam() {
   try {
@@ -283,6 +291,7 @@ function applyControl(next) {
   const areaChanged = next.area_layer !== control.area_layer || next.area_unit !== control.area_unit;
   const weightsChanged = JSON.stringify(next.weights) !== JSON.stringify(control.weights);
   const boamChanged = next.line_layer !== control.line_layer || next.boam_period !== control.boam_period;
+  const stopHistoryChanged = next.stop_history !== control.stop_history || next.lens !== control.lens;
   const layoutChanged =
     next.theme !== control.theme ||
     next.calibrate !== control.calibrate ||
@@ -298,6 +307,10 @@ function applyControl(next) {
   else if (areaChanged) areaLayerCanvas = drawAreaLayer();
   if (control.area_layer === "pressure" && (areaChanged || weightsChanged || boamChanged)) pollPressure();
   if (boamChanged && !layoutChanged) boamCanvas = drawBoamLayer();
+  if (stopHistoryChanged && control.stop_history) {
+    if (!stopHistory) pollStopHistory();
+    else if (!layoutChanged) stopHistoryCanvas = drawStopHistoryLayer();
+  }
   if ((control.line_layer === "congestion" || control.line_layer === "crowding") && !segments.length) pollSegments();
 }
 
@@ -409,6 +422,7 @@ function rebuildLayers() {
   areaLayerCanvas = drawAreaLayer();
   boamCanvas = drawBoamLayer();
   stopsLayerCanvas = drawStopsLayer();
+  stopHistoryCanvas = drawStopHistoryLayer();
 }
 
 function clipToFootprint() {
@@ -593,6 +607,87 @@ function drawStopsLayer() {
   return off;
 }
 
+// Fixed bands, chosen from the first ~56k recorded visits so stops actually
+// spread across them -- the vehicle cut-offs (late = 5+ min) would paint
+// nearly every stop the same, since a stop's *typical* delay is far smaller
+// than one late bus. Delay: under 1, 1-2, 2-4, over 4 min. Crowding: share
+// of arrivals with few seats or fuller -- under 10%, 10-25%, 25-50%, over 50%.
+const STOP_HISTORY_MIN_VISITS = 20;
+const STOP_DELAY_BANDS_S = [60, 120, 240];
+const STOP_CROWDED_BANDS = [0.1, 0.25, 0.5];
+const STOP_DELAY_COLOR = {
+  dark: ["#39ff6a", "#ffd23f", "#ff8c1a", "#c81c2e"],
+  light: ["#1a7f37", "#9a6700", "#bc4c00", "#cf222e"],
+};
+const STOP_HISTORY_RADIUS = 4;
+
+function bandIndex(value, bands) {
+  let i = 0;
+  while (i < bands.length && value >= bands[i]) i++;
+  return i;
+}
+
+// Crowding lens shows crowding; schedule and traffic both show delay, since
+// stops have no traffic reading of their own.
+function stopHistoryColor(h) {
+  if (h.visits < STOP_HISTORY_MIN_VISITS) return null;
+  if (control.lens === "crowding") {
+    if (h.crowded_share === null) return null;
+    return LEVEL_COLOR.crowding[theme][bandIndex(h.crowded_share, STOP_CROWDED_BANDS)];
+  }
+  return STOP_DELAY_COLOR[theme][bandIndex(h.median_delay_s, STOP_DELAY_BANDS_S)];
+}
+
+async function pollStopHistory() {
+  if (!control.stop_history) return;
+  lastStopHistoryPoll = performance.now();
+  try {
+    const resp = await fetch("/stop_history", { cache: "no-store" });
+    if (!resp.ok) return;
+    stopHistory = await resp.json();
+    stopHistoryCanvas = drawStopHistoryLayer();
+  } catch (_) { /* keep the last drawing; the next poll retries */ }
+}
+setInterval(() => {
+  if (performance.now() - lastStopHistoryPoll >= 60000) pollStopHistory();
+}, 5000);
+
+function drawStopHistoryLayer() {
+  if (!stopHistory || !projector) return null;
+  const off = document.createElement("canvas");
+  off.width = canvas.width;
+  off.height = canvas.height;
+  const octx = off.getContext("2d");
+  const graded = [];
+  const thin = [];
+  stopHistoryPositions = [];
+  for (const s of stops) {
+    const h = stopHistory[s.id];
+    if (!h) continue;
+    const [x, y] = projector.project(s.lat, s.lon);
+    const color = stopHistoryColor(h);
+    const pos = { name: s.name, x, y, history: h, color };
+    (color ? graded : thin).push(pos);
+    stopHistoryPositions.push(pos);
+  }
+  octx.fillStyle = withAlpha(ADHERENCE_COLOR[theme].unknown, 0.5);
+  for (const p of thin) {
+    octx.beginPath();
+    octx.arc(p.x, p.y, STOP_MARKER_RADIUS, 0, Math.PI * 2);
+    octx.fill();
+  }
+  octx.strokeStyle = CANVAS_THEME[theme].bg;
+  octx.lineWidth = 1;
+  for (const p of graded) {
+    octx.fillStyle = p.color;
+    octx.beginPath();
+    octx.arc(p.x, p.y, STOP_HISTORY_RADIUS, 0, Math.PI * 2);
+    octx.fill();
+    octx.stroke();
+  }
+  return off;
+}
+
 function applyFrame(frameVehicles) {
   const seen = new Set();
   for (const v of frameVehicles) {
@@ -606,6 +701,7 @@ function applyFrame(frameVehicles) {
     entry.route_color = v.rc;
     entry.route_short_name = v.rsn;
     entry.adherence = v.adh;
+    entry.deviation = v.dev;
     entry.cg = v.cg;
     entry.oc = v.oc;
     entry.bearing = v.b;
@@ -686,6 +782,7 @@ function render() {
   if (areaLayerCanvas && !verificationMode) ctx.drawImage(areaLayerCanvas, 0, 0);
   ctx.drawImage(verificationMode ? corridorLayerBright : corridorLayerDim, 0, 0);
   if (control.stops && stopsLayerCanvas) ctx.drawImage(stopsLayerCanvas, 0, 0);
+  if (control.stop_history && stopHistoryCanvas) ctx.drawImage(stopHistoryCanvas, 0, 0);
 
   drawSegments();
   if (control.interchanges) drawInterchangePulses(performance.now());
@@ -769,11 +866,16 @@ function render() {
   // when the layer is actually on -- no point hit-testing ~2,900 points for
   // a tooltip on an invisible layer.
   let hoveredStop = null;
-  if (hoveredKey === null && hoverActive && control.stops) {
+  if (hoveredKey === null && hoverActive && (control.stops || control.stop_history)) {
     let dist2 = Infinity;
-    for (const s of stopScreenPositions) {
-      const d = Math.hypot(s.x - hoverX, s.y - hoverY);
-      if (d <= STOP_MARKER_RADIUS + 5 && d < dist2) { hoveredStop = s; dist2 = d; }
+    const lists = [];
+    if (control.stop_history) lists.push(stopHistoryPositions); // first, so its entries win ties
+    if (control.stops) lists.push(stopScreenPositions);
+    for (const list of lists) {
+      for (const s of list) {
+        const d = Math.hypot(s.x - hoverX, s.y - hoverY);
+        if (d <= STOP_HISTORY_RADIUS + 5 && d < dist2) { hoveredStop = s; dist2 = d; }
+      }
     }
   }
   updateHoverTooltip(hoveredKey, hoveredStop);
@@ -946,6 +1048,16 @@ canvas.addEventListener("mouseleave", () => {
   hoverY = null;
 });
 
+// TfNSW's predicted delay at the vehicle's next stop, in seconds (+ = late).
+function formatDelay(sec) {
+  if (sec === null || sec === undefined) return null;
+  if (sec === 0) return "on schedule";
+  const abs = Math.abs(sec);
+  const m = Math.floor(abs / 60);
+  const s = abs % 60;
+  return `${m ? `${m} min ` : ""}${s}s ${sec > 0 ? "late" : "early"}`;
+}
+
 function updateHoverTooltip(key, stop) {
   const entry = key !== null ? vehicles.get(key) : null;
   if (!entry && !stop) {
@@ -957,6 +1069,8 @@ function updateHoverTooltip(key, stop) {
     const route = entry.route_short_name || entry.mode;
     parts = [`<div class="route">${route}</div>`, `<div class="muted">${entry.mode}</div>`];
     parts.push(`<div>${ADHERENCE_LABEL[entry.adherence] || "No schedule data"}</div>`);
+    const delayText = formatDelay(entry.deviation);
+    if (delayText) parts.push(`<div>Delay: ${delayText}</div>`);
     if (entry.cg !== null && entry.cg !== undefined) {
       parts.push(`<div>Traffic: ${CONGESTION_LABEL[Math.round(entry.cg)] || "?"}</div>`);
     }
@@ -964,11 +1078,21 @@ function updateHoverTooltip(key, stop) {
       parts.push(`<div>Crowding: ${CROWDING_LABEL[Math.round(entry.oc)] || "?"}</div>`);
     }
   } else {
-    // Markers-only for now -- no occupancy/lateness history wired in yet
-    // (that'd read from engine/history/store.py's stop_breakdown(), a
-    // separate on-demand fetch, not something to precompute for all 2,900
-    // stops up front).
     parts = [`<div class="route">${stop.name}</div>`];
+    const h = stop.history;
+    if (h && h.visits < STOP_HISTORY_MIN_VISITS) {
+      parts.push(`<div class="muted">${h.visits} visits recorded, not enough to colour yet</div>`);
+    } else if (h) {
+      parts.push(`<div class="muted">${h.visits} vehicle visits recorded</div>`);
+      parts.push(`<div>Typical delay on arrival: ${formatDelay(h.median_delay_s)}</div>`);
+      if (h.crowded_share !== null) {
+        parts.push(`<div>Arrive with few seats or fuller: ${Math.round(h.crowded_share * 100)}%</div>`);
+      }
+      if (h.median_delay_seated_s !== null && h.median_delay_crowded_s !== null) {
+        parts.push(`<div>Delay when seats available: ${formatDelay(h.median_delay_seated_s)}</div>`);
+        parts.push(`<div>Delay when crowded: ${formatDelay(h.median_delay_crowded_s)}</div>`);
+      }
+    }
   }
   hoverTooltipEl.innerHTML = parts.join("");
   hoverTooltipEl.hidden = false;
@@ -1047,6 +1171,7 @@ document.addEventListener("keydown", (ev) => {
   else if (key === "t") sendControl({ theme: control.theme === "dark" ? "light" : "dark" });
   else if (key === "p") sendControl({ interchanges: !control.interchanges });
   else if (key === "s") sendControl({ stops: !control.stops });
+  else if (key === "o") sendControl({ stop_history: !control.stop_history });
   else if (key === "l") sendControl({ lens: nextOf(LENSES, control.lens) });
   else if (key === "k") sendControl({ line_layer: nextOf(LINE_LAYERS, control.line_layer) });
   else if (key === "a") sendControl({ area_layer: nextOf(AREA_LAYERS, control.area_layer) });

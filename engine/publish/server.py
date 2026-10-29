@@ -30,6 +30,7 @@ from engine.publish.shapes_export import build_render_shapes
 from engine.demand.areas import build_area_layers
 from engine.demand.pressure import PressureModel
 from engine.demand.boam import build_boam_layers
+from engine.history import store as stop_visit_store
 from engine.sources.replay import RecordingIndex, ReplaySource
 
 logger = logging.getLogger("pulse_cbd.publish_server")
@@ -51,6 +52,7 @@ def _vehicle_frame(record) -> dict:
         "rc": record.route_color,
         "rsn": record.route_short_name,
         "adh": record.adherence_state,
+        "dev": record.schedule_deviation_seconds,
         "cg": congestion_level(record.congestion_level) if record.mode in CONGESTION_MODES else None,
         "oc": crowding_level(record.occupancy_status),
         "ts": record.position_timestamp,
@@ -240,6 +242,21 @@ async def stops_handler(request: web.Request) -> web.Response:
     ])
 
 
+STOP_HISTORY_CACHE_S = 60.0
+
+
+async def stop_history_handler(request: web.Request) -> web.Response:
+    """Per-stop delay and crowding summaries from the stop-visit history.
+    Rescanning the whole table is ~100ms, so it runs off the event loop and
+    is cached -- the history only grows by a few rows a second anyway."""
+    cache = request.app["stop_history_cache"]
+    if time.monotonic() - cache["at"] > STOP_HISTORY_CACHE_S:
+        feed: LiveVehicleFeed = request.app["feed"]
+        cache["body"] = await asyncio.to_thread(stop_visit_store.stop_summaries, feed.stop_visits_db_path)
+        cache["at"] = time.monotonic()
+    return web.json_response(cache["body"])
+
+
 async def config_handler(request: web.Request) -> web.Response:
     cfg: Config = request.app["cfg"]
     bbox = cfg.bounding_box
@@ -372,6 +389,7 @@ def build_app(cfg: Config) -> web.Application:
     app = web.Application()
     app["cfg"] = cfg
     app["websockets"] = set()
+    app["stop_history_cache"] = {"at": float("-inf"), "body": {}}
     app["control"] = ControlState(cfg.root / "data" / "projection_nudge.json")
     app["replay"] = None
     app["areas"] = None
@@ -389,6 +407,7 @@ def build_app(cfg: Config) -> web.Application:
     app.router.add_get("/snapshot", snapshot_handler)
     app.router.add_get("/shapes", shapes_handler)
     app.router.add_get("/stops", stops_handler)
+    app.router.add_get("/stop_history", stop_history_handler)
     app.router.add_get("/segments", segments_handler)
     app.router.add_get("/recordings", recordings_handler)
     app.router.add_get("/areas", areas_handler)

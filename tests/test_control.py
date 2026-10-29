@@ -14,12 +14,14 @@ def test_defaults_are_the_safe_showcase_state():
     assert s["nudge"] == {"dx": 0.0, "dy": 0.0, "scale": 1.0}
 
 
-def test_stops_toggle_validates_like_the_other_boolean_flags():
+@pytest.mark.parametrize("key", ["stops", "stop_history"])
+def test_stop_toggles_validate_like_the_other_boolean_flags(key):
     c = ControlState()
-    c.apply({"stops": True})
-    assert c.state["stops"] is True
+    assert c.state[key] is False
+    c.apply({key: True})
+    assert c.state[key] is True
     with pytest.raises(ControlError):
-        c.apply({"stops": "yes"})
+        c.apply({key: "yes"})
 
 
 def test_patch_merges_nested_fields():

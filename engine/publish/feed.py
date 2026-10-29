@@ -60,7 +60,7 @@ class LiveVehicleFeed:
         self.stops: list[Stop] = load_stops(db_path)
         self.recordings_dir = cfg.root / "data" / "recordings"
         self.api_budget, self.heartbeat = budget_from_config(cfg)
-        self._stop_visits_db_path = stop_visit_store.default_db_path(cfg)
+        self.stop_visits_db_path = stop_visit_store.default_db_path(cfg)
 
         self.epoch = 0  # bumped on every reset, so pages know to drop what they're showing
         self.reset()
@@ -122,7 +122,7 @@ class LiveVehicleFeed:
                 next_stop_id = trip_update_info.next_stop_id if trip_update_info else None
                 visit = self.stop_visits.record(enriched, next_stop_id)
                 if visit is not None:
-                    stop_visit_store.record_stop_visit(self._stop_visits_db_path, **visit, recorded_at=now)
+                    stop_visit_store.record_stop_visit(self.stop_visits_db_path,**visit, recorded_at=now)
 
                 position_lat = enriched.matched_lat if enriched.matched_lat is not None else enriched.lat
                 position_lon = enriched.matched_lon if enriched.matched_lon is not None else enriched.lon
