@@ -608,6 +608,7 @@ function applyFrame(frameVehicles) {
     entry.adherence = v.adh;
     entry.cg = v.cg;
     entry.oc = v.oc;
+    entry.bearing = v.b;
 
     const sample = { lat: v.lat, lon: v.lon, ts: v.ts };
     if (!entry.curr || entry.curr.ts !== sample.ts) {
@@ -622,6 +623,29 @@ function applyFrame(frameVehicles) {
 }
 
 function lerp(a, b, t) { return a + (b - a) * t; }
+
+// GTFS-RT bearing is degrees clockwise from true north. Projecting a point a
+// few metres along it (rather than assuming north = screen-up) keeps arrows
+// correct under the calibration's rotation/skew.
+function screenHeading(lat, lon, bearingDeg, x, y) {
+  const rad = (bearingDeg * Math.PI) / 180;
+  const step = 1e-4;
+  const [x2, y2] = projector.project(
+    lat + Math.cos(rad) * step,
+    lon + (Math.sin(rad) * step) / Math.cos((lat * Math.PI) / 180),
+  );
+  return Math.atan2(y2 - y, x2 - x);
+}
+
+// Notched arrowhead centred on (x, y), sized off the mode's dot radius.
+function traceArrow(x, y, angle, r) {
+  const c = Math.cos(angle), s = Math.sin(angle);
+  const pt = (fx, fy) => [x + fx * c - fy * s, y + fx * s + fy * c];
+  const pts = [pt(1.8 * r, 0), pt(-1.2 * r, 1.2 * r), pt(-0.5 * r, 0), pt(-1.2 * r, -1.2 * r)];
+  ctx.moveTo(pts[0][0], pts[0][1]);
+  for (let i = 1; i < pts.length; i++) ctx.lineTo(pts[i][0], pts[i][1]);
+  ctx.closePath();
+}
 
 function currentRenderPosition(entry, nowMs) {
   const pollMs = pollIntervalMs();
@@ -701,10 +725,15 @@ function render() {
 
     const [x, y] = projector.project(lat, lon);
 
-    // Solid dot -- no glow gradient.
+    // Solid shape -- no glow gradient. Buses are arrows pointing along the
+    // feed's own bearing; everything else (or a bus with no bearing) is a dot.
     ctx.fillStyle = withAlpha(color, opacity);
     ctx.beginPath();
-    ctx.arc(x, y, radius, 0, Math.PI * 2);
+    if (entry.mode === "buses" && entry.bearing != null) {
+      traceArrow(x, y, screenHeading(lat, lon, entry.bearing, x, y), radius);
+    } else {
+      ctx.arc(x, y, radius, 0, Math.PI * 2);
+    }
     ctx.fill();
 
     if (hoverActive) {
