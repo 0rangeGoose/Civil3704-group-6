@@ -60,6 +60,7 @@ DEFAULT_STATE: dict[str, Any] = {
     "calibrate": False,
     "interchanges": True,
     "stops": False,
+    "stop_history": False,
     "lens": "adherence",
     "line_layer": "none",
     "area_layer": "none",
@@ -130,7 +131,7 @@ class ControlState:
                     if isinstance(w, bool) or not isinstance(w, (int, float)):
                         raise ControlError(f"weights.{name} must be a number")
                     updated["weights"][name] = _clamp(float(w), WEIGHT_LIMITS)
-            elif key in ("verify", "hud", "calibrate", "interchanges", "stops"):
+            elif key in ("verify", "hud", "calibrate", "interchanges", "stops", "stop_history"):
                 if not isinstance(value, bool):
                     raise ControlError(f"{key} must be true/false")
                 updated[key] = value

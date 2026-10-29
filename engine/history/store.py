@@ -20,12 +20,14 @@ path once, the same way callers already do for engine.demand.boam's cache.
 from __future__ import annotations
 
 import sqlite3
+import statistics
 import time
 from datetime import datetime
 from pathlib import Path
 from zoneinfo import ZoneInfo
 
 from engine.config import Config
+from engine.normalise.levels import crowding_level
 
 SYDNEY = ZoneInfo("Australia/Sydney")
 
@@ -114,3 +116,52 @@ def stop_breakdown(db_path: Path, stop_id: str | None = None, day: str | None = 
         }
         for s, by_status in totals.items()
     }
+
+
+def stop_summaries(db_path: Path, min_split_visits: int = 5) -> dict[str, dict]:
+    """Per stop, over everything recorded: typical delay on arrival, how often
+    vehicles arrive with few seats or worse, and typical delay split by
+    whether they arrived seated or crowded -- kept as separate numbers, per the
+    module docstring.
+
+    Medians, not means: a handful of feed glitches (trips "75 min late")
+    would drag a mean. A seated/crowded split needs `min_split_visits` on
+    each side, else it's None rather than a median of two readings.
+    """
+    if not db_path.exists():
+        return {}
+
+    conn = _connect(db_path)
+    try:
+        rows = conn.execute(
+            "SELECT stop_id, occupancy_status, delay_seconds FROM stop_visits WHERE delay_seconds IS NOT NULL"
+        ).fetchall()
+    finally:
+        conn.close()
+
+    delays: dict[str, list[int]] = {}
+    seated: dict[str, list[int]] = {}
+    crowded: dict[str, list[int]] = {}
+    for stop_id, occupancy_status, delay_seconds in rows:
+        delays.setdefault(stop_id, []).append(delay_seconds)
+        level = crowding_level(occupancy_status)
+        if level is None:
+            continue
+        (crowded if level >= 1 else seated).setdefault(stop_id, []).append(delay_seconds)
+
+    def split_median(values: list[int] | None) -> int | None:
+        return round(statistics.median(values)) if values and len(values) >= min_split_visits else None
+
+    result = {}
+    for stop_id, stop_delays in delays.items():
+        n_seated = len(seated.get(stop_id, []))
+        n_crowded = len(crowded.get(stop_id, []))
+        n_known = n_seated + n_crowded
+        result[stop_id] = {
+            "visits": len(stop_delays),
+            "median_delay_s": round(statistics.median(stop_delays)),
+            "crowded_share": round(n_crowded / n_known, 3) if n_known else None,
+            "median_delay_seated_s": split_median(seated.get(stop_id)),
+            "median_delay_crowded_s": split_median(crowded.get(stop_id)),
+        }
+    return result
