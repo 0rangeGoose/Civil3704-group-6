@@ -38,6 +38,7 @@ LINE_LAYERS = ("none", "congestion", "crowding", "boam_load", "boam_lost")
 # Which BOAM peak the typical-load / time-lost streets and the pressure
 # layer's BOAM input use.
 BOAM_PERIODS = ("am", "pm")
+STOP_METRICS = ("median", "mean")
 # Static area layers (engine/demand/areas.py) and the unit they're drawn on.
 AREA_LAYERS = ("none", "jobs", "service_gap", "opal", "pressure")
 # Weights for the combined pressure layer (engine/demand/pressure.py).
@@ -61,6 +62,7 @@ DEFAULT_STATE: dict[str, Any] = {
     "interchanges": True,
     "stops": False,
     "stop_history": False,
+    "stop_metric": "median",
     "lens": "adherence",
     "line_layer": "none",
     "area_layer": "none",
@@ -122,6 +124,10 @@ class ControlState:
                 if value not in BOAM_PERIODS:
                     raise ControlError("boam_period must be 'am' or 'pm'")
                 updated["boam_period"] = value
+            elif key == "stop_metric":
+                if value not in STOP_METRICS:
+                    raise ControlError("stop_metric must be 'median' or 'mean'")
+                updated["stop_metric"] = value
             elif key == "weights":
                 if not isinstance(value, dict):
                     raise ControlError("weights must be an object")

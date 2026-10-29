@@ -24,6 +24,15 @@ def test_stop_toggles_validate_like_the_other_boolean_flags(key):
         c.apply({key: "yes"})
 
 
+def test_stop_metric_defaults_to_median_and_accepts_mean():
+    c = ControlState()
+    assert c.state["stop_metric"] == "median"
+    c.apply({"stop_metric": "mean"})
+    assert c.state["stop_metric"] == "mean"
+    with pytest.raises(ControlError):
+        c.apply({"stop_metric": "average"})
+
+
 def test_patch_merges_nested_fields():
     c = ControlState()
     c.apply({"modes": {"buses": False}, "nudge": {"dx": 4}})

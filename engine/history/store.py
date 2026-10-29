@@ -118,6 +118,12 @@ def stop_breakdown(db_path: Path, stop_id: str | None = None, day: str | None = 
     }
 
 
+# Outside this, a delay is a feed glitch, not lateness (checked 2026-10-30:
+# Inner West light rail readings ~41.7h late; the worst plausible readings
+# are long-distance trains ~2.6h late). Dropped before medians and means.
+DELAY_VALID_RANGE_S = (-1800, 10800)
+
+
 def stop_summaries(db_path: Path, min_split_visits: int = 5) -> dict[str, dict]:
     """Per stop, over everything recorded: typical delay on arrival, how often
     vehicles arrive with few seats or worse, and typical delay split by
@@ -128,9 +134,11 @@ def stop_summaries(db_path: Path, min_split_visits: int = 5) -> dict[str, dict]:
     `crowding_visits`): a visit with no live delay prediction still says how
     full the vehicle was.
 
-    Medians, not means: a handful of feed glitches (trips "75 min late")
-    would drag a mean. A seated/crowded split needs `min_split_visits` on
-    each side, else it's None rather than a median of two readings.
+    Both medians (the typical vehicle) and means (which also carry how bad
+    the occasional very late one is) are given; a big gap between them is an
+    unreliable stop. Glitch readings outside DELAY_VALID_RANGE_S are treated
+    as no reading. A seated/crowded split needs `min_split_visits` on each
+    side, else it's None rather than a statistic of two readings.
     """
     if not db_path.exists():
         return {}
@@ -147,8 +155,11 @@ def stop_summaries(db_path: Path, min_split_visits: int = 5) -> dict[str, dict]:
     n_crowded: dict[str, int] = {}
     seated_delays: dict[str, list[int]] = {}
     crowded_delays: dict[str, list[int]] = {}
+    lo, hi = DELAY_VALID_RANGE_S
     for stop_id, occupancy_status, delay_seconds in rows:
         visits[stop_id] = visits.get(stop_id, 0) + 1
+        if delay_seconds is not None and not lo <= delay_seconds <= hi:
+            delay_seconds = None
         if delay_seconds is not None:
             delays.setdefault(stop_id, []).append(delay_seconds)
         level = crowding_level(occupancy_status)
@@ -159,8 +170,8 @@ def stop_summaries(db_path: Path, min_split_visits: int = 5) -> dict[str, dict]:
         if delay_seconds is not None:
             split.setdefault(stop_id, []).append(delay_seconds)
 
-    def split_median(values: list[int] | None) -> int | None:
-        return round(statistics.median(values)) if values and len(values) >= min_split_visits else None
+    def split(stat, values: list[int] | None) -> int | None:
+        return round(stat(values)) if values and len(values) >= min_split_visits else None
 
     result = {}
     for stop_id, n in visits.items():
@@ -170,9 +181,12 @@ def stop_summaries(db_path: Path, min_split_visits: int = 5) -> dict[str, dict]:
             "visits": n,
             "delay_visits": len(stop_delays),
             "median_delay_s": round(statistics.median(stop_delays)) if stop_delays else None,
+            "mean_delay_s": round(statistics.mean(stop_delays)) if stop_delays else None,
             "crowding_visits": n_known,
             "crowded_share": round(n_crowded.get(stop_id, 0) / n_known, 3) if n_known else None,
-            "median_delay_seated_s": split_median(seated_delays.get(stop_id)),
-            "median_delay_crowded_s": split_median(crowded_delays.get(stop_id)),
+            "median_delay_seated_s": split(statistics.median, seated_delays.get(stop_id)),
+            "median_delay_crowded_s": split(statistics.median, crowded_delays.get(stop_id)),
+            "mean_delay_seated_s": split(statistics.mean, seated_delays.get(stop_id)),
+            "mean_delay_crowded_s": split(statistics.mean, crowded_delays.get(stop_id)),
         }
     return result

@@ -198,6 +198,13 @@
         <button class="toggle" data-control="stops" aria-pressed="false">Stop markers</button>
         <button class="toggle" data-control="stop_history" aria-pressed="false">Stop history</button>
       </div>
+      <div class="row" style="margin-top:10px">
+        <div class="label">Stop delay<small>Median: the typical vehicle. Average: also counts the occasional very late one</small></div>
+        <div class="seg" id="stop-metric-seg">
+          <button data-stop-metric="median">Median</button>
+          <button data-stop-metric="mean">Average</button>
+        </div>
+      </div>
     </section>
     <section>
       <h2>Colour the areas by</h2>
@@ -530,6 +537,7 @@ function render(next) {
   });
   document.querySelectorAll("[data-unit]").forEach((b) => b.setAttribute("aria-pressed", String(b.dataset.unit === control.area_unit)));
   document.querySelectorAll("[data-boam-period]").forEach((b) => b.setAttribute("aria-pressed", String(b.dataset.boamPeriod === control.boam_period)));
+  document.querySelectorAll("[data-stop-metric]").forEach((b) => b.setAttribute("aria-pressed", String(b.dataset.stopMetric === control.stop_metric)));
   document.getElementById("boam-period-row").hidden = !(control.line_layer in BOAM_LEGENDS || control.area_layer === "pressure");
   const hasBoam = !!(boamMeta && boamMeta.days && boamMeta.days.length);
   document.querySelectorAll("[data-line^='boam_']").forEach((b) => { b.disabled = !hasBoam; });
@@ -565,6 +573,10 @@ document.getElementById("area-choices").addEventListener("click", (ev) => {
 document.getElementById("boam-period-seg").addEventListener("click", (ev) => {
   const b = ev.target.closest("[data-boam-period]");
   if (b) sendControl({ boam_period: b.dataset.boamPeriod });
+});
+document.getElementById("stop-metric-seg").addEventListener("click", (ev) => {
+  const b = ev.target.closest("[data-stop-metric]");
+  if (b) sendControl({ stop_metric: b.dataset.stopMetric });
 });
 
 async function loadBoamMeta() {
