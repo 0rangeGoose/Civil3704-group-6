@@ -21,9 +21,11 @@ from engine.normalise.aggregate import (
     Interchange,
     RollingAdherence,
     RollingInterchangeActivity,
+    Stop,
     count_active_alerts,
     load_cbd_ids,
     load_interchanges,
+    load_stops,
     nearby_interchanges,
 )
 from engine.normalise.build import build_vehicle_records
@@ -55,6 +57,7 @@ class LiveVehicleFeed:
 
         self.interchanges: list[Interchange] = load_interchanges(db_path, cfg.raw["interchanges"])
         self._interchange_radius_m = cfg.raw.get("interchange_radius_m", 300)
+        self.stops: list[Stop] = load_stops(db_path)
         self.recordings_dir = cfg.root / "data" / "recordings"
         self.api_budget, self.heartbeat = budget_from_config(cfg)
         self._stop_visits_db_path = stop_visit_store.default_db_path(cfg)

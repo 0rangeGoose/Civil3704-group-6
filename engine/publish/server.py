@@ -229,6 +229,16 @@ async def shapes_handler(request: web.Request) -> web.Response:
     return web.json_response(request.app["shapes"])
 
 
+async def stops_handler(request: web.Request) -> web.Response:
+    """Every stop in the footprint, for the optional stop-markers layer --
+    static for the life of a run (loaded once in LiveVehicleFeed.__init__),
+    same fetch-once-and-cache pattern as /shapes."""
+    feed: LiveVehicleFeed = request.app["feed"]
+    return web.json_response([
+        {"id": s.stop_id, "name": s.name, "lat": s.lat, "lon": s.lon} for s in feed.stops
+    ])
+
+
 async def config_handler(request: web.Request) -> web.Response:
     cfg: Config = request.app["cfg"]
     bbox = cfg.bounding_box
@@ -377,6 +387,7 @@ def build_app(cfg: Config) -> web.Application:
     app.router.add_get("/ws", websocket_handler)
     app.router.add_get("/snapshot", snapshot_handler)
     app.router.add_get("/shapes", shapes_handler)
+    app.router.add_get("/stops", stops_handler)
     app.router.add_get("/segments", segments_handler)
     app.router.add_get("/recordings", recordings_handler)
     app.router.add_get("/areas", areas_handler)
