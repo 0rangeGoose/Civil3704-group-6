@@ -168,8 +168,8 @@ const TAIL_WINDOW_MS = 30000; // "last 30 seconds of travel"
 // comes from the server's control state (see applyControl), so the tablet
 // controller and this page stay in sync.
 const CANVAS_THEME = {
-  dark: { bg: "#000", corridorDim: "rgba(220,228,238,0.55)", corridorBright: "rgba(255,255,255,0.95)", interchange: "#bfe8ff" },
-  light: { bg: "#f4f6f8", corridorDim: "rgba(60,80,110,0.28)", corridorBright: "rgba(9,105,218,0.85)", interchange: "#0969da" },
+  dark: { bg: "#000", corridorDim: "rgba(220,228,238,0.55)", corridorBright: "rgba(255,255,255,0.95)", interchange: "#bfe8ff", stop: "rgba(180,196,214,0.65)" },
+  light: { bg: "#f4f6f8", corridorDim: "rgba(60,80,110,0.28)", corridorBright: "rgba(9,105,218,0.85)", interchange: "#0969da", stop: "rgba(60,90,130,0.55)" },
 };
 let theme = "dark";
 
@@ -178,7 +178,7 @@ let theme = "dark";
 // the server first and comes back here via applyControl, so there is only
 // ever one source of truth.
 let control = {
-  theme: "dark", verify: false, hud: false, calibrate: false, interchanges: true,
+  theme: "dark", verify: false, hud: false, calibrate: false, interchanges: true, stops: false,
   lens: "adherence", line_layer: "none", area_layer: "none", area_unit: "zones", boam_period: "am", weights: {}, modes: {}, nudge: { dx: 0, dy: 0, scale: 1 },
 };
 let modeToGroup = {}; // feed mode -> controller group, from /config
@@ -197,6 +197,14 @@ let areaLayerCanvas = null;
 // BOAM sections from /boam (static), drawn once per layer/period/theme/projection.
 let boam = null;
 let boamCanvas = null;
+
+// Stop markers from /stops (static for the life of a run, like shapes).
+// stopScreenPositions is a parallel [{name, x, y}, ...] in the SAME
+// projection as stopsLayerCanvas, kept alongside it so hover hit-testing
+// doesn't need to re-run projector.project() on ~2,900 points every frame.
+let stops = [];
+let stopsLayerCanvas = null;
+let stopScreenPositions = [];
 
 async function loadBoam() {
   try {
@@ -400,6 +408,7 @@ function rebuildLayers() {
   corridorLayerBright = drawCorridorLayer(CANVAS_THEME[theme].corridorBright, 1.6);
   areaLayerCanvas = drawAreaLayer();
   boamCanvas = drawBoamLayer();
+  stopsLayerCanvas = drawStopsLayer();
 }
 
 function clipToFootprint() {
@@ -565,6 +574,25 @@ function drawCorridorLayer(strokeStyle, lineWidth) {
   return off;
 }
 
+const STOP_MARKER_RADIUS = 2.5;
+
+function drawStopsLayer() {
+  const off = document.createElement("canvas");
+  off.width = canvas.width;
+  off.height = canvas.height;
+  const octx = off.getContext("2d");
+  octx.fillStyle = CANVAS_THEME[theme].stop;
+  stopScreenPositions = [];
+  for (const s of stops) {
+    const [x, y] = projector.project(s.lat, s.lon);
+    octx.beginPath();
+    octx.arc(x, y, STOP_MARKER_RADIUS, 0, Math.PI * 2);
+    octx.fill();
+    stopScreenPositions.push({ name: s.name, x, y });
+  }
+  return off;
+}
+
 function applyFrame(frameVehicles) {
   const seen = new Set();
   for (const v of frameVehicles) {
@@ -619,6 +647,7 @@ function render() {
   if (!calibrateMode) clipToFootprint();
   if (areaLayerCanvas && !verificationMode) ctx.drawImage(areaLayerCanvas, 0, 0);
   ctx.drawImage(verificationMode ? corridorLayerBright : corridorLayerDim, 0, 0);
+  if (control.stops && stopsLayerCanvas) ctx.drawImage(stopsLayerCanvas, 0, 0);
 
   drawSegments();
   if (control.interchanges) drawInterchangePulses(performance.now());
@@ -689,7 +718,20 @@ function render() {
 
   ctx.restore();
   for (const key of toDelete) vehicles.delete(key);
-  updateHoverTooltip(hoveredKey);
+
+  // Stops are checked only when no vehicle was hit (vehicles take priority
+  // when a comet tail and a tiny stop marker happen to overlap) and only
+  // when the layer is actually on -- no point hit-testing ~2,900 points for
+  // a tooltip on an invisible layer.
+  let hoveredStop = null;
+  if (hoveredKey === null && hoverActive && control.stops) {
+    let dist2 = Infinity;
+    for (const s of stopScreenPositions) {
+      const d = Math.hypot(s.x - hoverX, s.y - hoverY);
+      if (d <= STOP_MARKER_RADIUS + 5 && d < dist2) { hoveredStop = s; dist2 = d; }
+    }
+  }
+  updateHoverTooltip(hoveredKey, hoveredStop);
 
   if (control.hud) {
     const n = control.nudge;
@@ -859,20 +901,29 @@ canvas.addEventListener("mouseleave", () => {
   hoverY = null;
 });
 
-function updateHoverTooltip(key) {
+function updateHoverTooltip(key, stop) {
   const entry = key !== null ? vehicles.get(key) : null;
-  if (!entry) {
+  if (!entry && !stop) {
     hoverTooltipEl.hidden = true;
     return;
   }
-  const route = entry.route_short_name || entry.mode;
-  const parts = [`<div class="route">${route}</div>`, `<div class="muted">${entry.mode}</div>`];
-  parts.push(`<div>${ADHERENCE_LABEL[entry.adherence] || "No schedule data"}</div>`);
-  if (entry.cg !== null && entry.cg !== undefined) {
-    parts.push(`<div>Traffic: ${CONGESTION_LABEL[Math.round(entry.cg)] || "?"}</div>`);
-  }
-  if (entry.oc !== null && entry.oc !== undefined) {
-    parts.push(`<div>Crowding: ${CROWDING_LABEL[Math.round(entry.oc)] || "?"}</div>`);
+  let parts;
+  if (entry) {
+    const route = entry.route_short_name || entry.mode;
+    parts = [`<div class="route">${route}</div>`, `<div class="muted">${entry.mode}</div>`];
+    parts.push(`<div>${ADHERENCE_LABEL[entry.adherence] || "No schedule data"}</div>`);
+    if (entry.cg !== null && entry.cg !== undefined) {
+      parts.push(`<div>Traffic: ${CONGESTION_LABEL[Math.round(entry.cg)] || "?"}</div>`);
+    }
+    if (entry.oc !== null && entry.oc !== undefined) {
+      parts.push(`<div>Crowding: ${CROWDING_LABEL[Math.round(entry.oc)] || "?"}</div>`);
+    }
+  } else {
+    // Markers-only for now -- no occupancy/lateness history wired in yet
+    // (that'd read from engine/history/store.py's stop_breakdown(), a
+    // separate on-demand fetch, not something to precompute for all 2,900
+    // stops up front).
+    parts = [`<div class="route">${stop.name}</div>`];
   }
   hoverTooltipEl.innerHTML = parts.join("");
   hoverTooltipEl.hidden = false;
@@ -950,6 +1001,7 @@ document.addEventListener("keydown", (ev) => {
   else if (key === "h") sendControl({ hud: !control.hud });
   else if (key === "t") sendControl({ theme: control.theme === "dark" ? "light" : "dark" });
   else if (key === "p") sendControl({ interchanges: !control.interchanges });
+  else if (key === "s") sendControl({ stops: !control.stops });
   else if (key === "l") sendControl({ lens: nextOf(LENSES, control.lens) });
   else if (key === "k") sendControl({ line_layer: nextOf(LINE_LAYERS, control.line_layer) });
   else if (key === "a") sendControl({ area_layer: nextOf(AREA_LAYERS, control.area_layer) });
@@ -996,8 +1048,8 @@ function connectWebSocket() {
 }
 
 async function boot() {
-  const [cfgResp, shapesResp, calResp] = await Promise.all([
-    fetch("/config"), fetch("/shapes"), fetch("/calibration"),
+  const [cfgResp, shapesResp, calResp, stopsResp] = await Promise.all([
+    fetch("/config"), fetch("/shapes"), fetch("/calibration"), fetch("/stops"),
   ]);
   cfg = await cfgResp.json();
   for (const [group, modes] of Object.entries(cfg.mode_groups || {})) {
@@ -1005,6 +1057,7 @@ async function boot() {
   }
   shapes = await shapesResp.json();
   calibration = await calResp.json(); // null if none saved yet -- Phase 4's linear fit is used
+  stops = await stopsResp.json();
   resize();
   loadAreas();
   loadBoam();
