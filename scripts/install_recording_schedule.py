@@ -94,7 +94,7 @@ def _write_wake_script(until: date) -> None:
                 if wake > now:
                     lines.append(f'pmset schedule wake "{wake:%m/%d/%y %H:%M:%S}"')
         day += timedelta(days=1)
-    WAKE_SCRIPT.write_text("\n".join(lines) + "\n")
+    WAKE_SCRIPT.write_text("\n".join(lines) + "\n", encoding="utf-8")
 
 
 def uninstall() -> None:

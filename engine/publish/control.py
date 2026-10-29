@@ -85,7 +85,7 @@ class ControlState:
         self.state: dict[str, Any] = copy.deepcopy(DEFAULT_STATE)
         if nudge_path is not None and nudge_path.exists():
             try:
-                self.apply({"nudge": json.loads(nudge_path.read_text())})
+                self.apply({"nudge": json.loads(nudge_path.read_text(encoding="utf-8"))})
             except (ControlError, ValueError) as exc:
                 logger.warning("ignoring unreadable nudge file %s: %s", nudge_path, exc)
 
@@ -181,4 +181,4 @@ class ControlState:
         if self._nudge_path is None:
             return
         self._nudge_path.parent.mkdir(parents=True, exist_ok=True)
-        self._nudge_path.write_text(json.dumps(self.state["nudge"]))
+        self._nudge_path.write_text(json.dumps(self.state["nudge"]), encoding="utf-8")
