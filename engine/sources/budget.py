@@ -25,10 +25,10 @@ polling, and take over if the server stops.
 """
 from __future__ import annotations
 
-import fcntl
 import json
 import logging
 import os
+import sys
 import time
 from contextlib import contextmanager
 from datetime import datetime, timedelta
@@ -38,6 +38,37 @@ from zoneinfo import ZoneInfo
 logger = logging.getLogger("pulse_cbd.budget")
 
 SYDNEY = ZoneInfo("Australia/Sydney")
+
+# Whole-file exclusive lock around data/api_usage.json, so the server and the
+# scheduled recorder (two separate OS processes) can't race on the shared
+# daily count. fcntl.flock has no Windows equivalent; msvcrt.locking is the
+# nearest match but locks a *byte range* from the current file position, not
+# the whole file, and needs at least one byte there to lock -- an empty file
+# (first run) gets a one-byte placeholder so locking doesn't fail on it. The
+# placeholder isn't valid JSON, but the read path below already falls back to
+# {} on anything that doesn't parse, so that's harmless.
+if sys.platform == "win32":
+    import msvcrt
+
+    def _lock_file(f) -> None:
+        f.seek(0, os.SEEK_END)
+        if f.tell() == 0:
+            f.write(" ")
+            f.flush()
+        f.seek(0)
+        msvcrt.locking(f.fileno(), msvcrt.LK_LOCK, 1)
+
+    def _unlock_file(f) -> None:
+        f.seek(0)
+        msvcrt.locking(f.fileno(), msvcrt.LK_UNLCK, 1)
+else:
+    import fcntl
+
+    def _lock_file(f) -> None:
+        fcntl.flock(f, fcntl.LOCK_EX)
+
+    def _unlock_file(f) -> None:
+        fcntl.flock(f, fcntl.LOCK_UN)
 
 
 def _parse_hhmm(text: str) -> tuple[int, int]:
@@ -69,8 +100,8 @@ class ApiBudget:
     @contextmanager
     def _locked(self):
         self._path.parent.mkdir(parents=True, exist_ok=True)
-        with open(self._path, "a+") as f:
-            fcntl.flock(f, fcntl.LOCK_EX)
+        with open(self._path, "a+", encoding="utf-8") as f:
+            _lock_file(f)
             try:
                 f.seek(0)
                 text = f.read()
@@ -83,7 +114,7 @@ class ApiBudget:
                 f.truncate()
                 f.write(json.dumps(data))
             finally:
-                fcntl.flock(f, fcntl.LOCK_UN)
+                _unlock_file(f)
 
     def _day(self, now: datetime) -> str:
         return now.astimezone(self._tz).date().isoformat()

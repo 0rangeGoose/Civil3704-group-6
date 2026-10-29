@@ -66,7 +66,11 @@ def _interchange_frame(feed: "LiveVehicleFeed") -> list[dict]:
 
 
 async def index_handler(request: web.Request) -> web.Response:
-    return web.Response(text=RENDERER_INDEX.read_text(), content_type="text/html")
+    # encoding="utf-8" explicitly -- Path.read_text()'s default is the OS
+    # locale encoding, which is UTF-8 on macOS/Linux but cp1252 on Windows;
+    # these templates have real non-ASCII characters (e.g. "·"), so reading
+    # them with the Windows default raises UnicodeDecodeError.
+    return web.Response(text=RENDERER_INDEX.read_text(encoding="utf-8"), content_type="text/html")
 
 
 async def controller_handler(request: web.Request) -> web.Response:
@@ -74,7 +78,7 @@ async def controller_handler(request: web.Request) -> web.Response:
     that used to be /stats -- per the brief, text never renders onto the
     model surface itself, and the projector mirrors the laptop screen, so
     every control lives here instead."""
-    return web.Response(text=CONTROLLER_INDEX.read_text(), content_type="text/html")
+    return web.Response(text=CONTROLLER_INDEX.read_text(encoding="utf-8"), content_type="text/html")
 
 
 async def stats_redirect_handler(request: web.Request) -> web.Response:

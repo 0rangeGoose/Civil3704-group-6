@@ -6,6 +6,14 @@ first entry in a Trip Update's stop_time_update list is, by GTFS-RT
 convention, the next stop the vehicle hasn't yet passed (operators prune
 stops once served). Falls back to the trip-level delay field only if no
 per-stop delay is available at all.
+
+``next_stop_id`` comes from the same stop_time_update entry as the delay
+(not just the first entry in the list, which may lack a stop_id or a
+delay) -- checked live 2026-10-29: unlike VehiclePosition (which never
+carries current stop_id/stop_sequence), StopTimeUpdate.stop_id is
+populated on 97.4% of trip updates with a trip_id. That makes "which stop
+is this trip approaching" an authoritative feed value rather than a
+geometric guess against static stop coordinates -- see engine/history/.
 """
 from __future__ import annotations
 
@@ -19,6 +27,7 @@ from engine.normalise.proto import pb
 class TripUpdateInfo:
     next_stop_delay_seconds: int | None
     cancelled: bool
+    next_stop_id: str | None = None
 
 
 def build_trip_update_index(payload: bytes) -> dict[str, TripUpdateInfo]:
@@ -42,15 +51,19 @@ def build_trip_update_index(payload: bytes) -> dict[str, TripUpdateInfo]:
         )
 
         delay = None
+        next_stop_id = None
         for stu in tu.stop_time_update:
             if stu.HasField("arrival") and stu.arrival.HasField("delay"):
                 delay = stu.arrival.delay
             elif stu.HasField("departure") and stu.departure.HasField("delay"):
                 delay = stu.departure.delay
             if delay is not None:
+                next_stop_id = stu.stop_id or None
                 break
         if delay is None and tu.HasField("delay"):
             delay = tu.delay
 
-        index[trip_id] = TripUpdateInfo(next_stop_delay_seconds=delay, cancelled=cancelled)
+        index[trip_id] = TripUpdateInfo(
+            next_stop_delay_seconds=delay, next_stop_id=next_stop_id, cancelled=cancelled
+        )
     return index

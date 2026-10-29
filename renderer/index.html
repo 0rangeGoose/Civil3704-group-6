@@ -28,8 +28,11 @@
   }
   html, body { margin: 0; padding: 0; background: var(--canvas-bg); overflow: hidden; height: 100%; }
   /* The projector mirrors this screen, so the cursor would land on the model.
-     It only comes back while calibrating, when crosshairs are dragged. */
-  body { cursor: none; }
+     It only comes back while calibrating, when crosshairs are dragged.
+     TEMPORARILY disabled for dev/testing on a regular screen (no physical
+     projector attached here) -- restore `cursor: none;` before the real rig
+     is used, or the mouse will show up on the projected model. */
+  /* body { cursor: none; } */
   body.calibrating { cursor: crosshair; }
   canvas { display: block; }
   #status[hidden] { display: none; }
@@ -56,10 +59,24 @@
   #cal-message { margin-top: 6px; min-height: 14px; }
   #cal-message.error { color: var(--error-color); }
   #cal-message.ok { color: var(--ok-color); }
+  /* Dev/testing aid, not part of the real projection -- a hovered vehicle's
+     own data is never drawn onto the model, only shown here on whatever
+     screen this page happens to be open on. pointer-events:none so the
+     tooltip itself can never block the hover it's reporting on. */
+  #hover-tooltip {
+    position: fixed; z-index: 20; pointer-events: none;
+    font: 11px/1.5 ui-monospace, monospace; color: var(--panel-text);
+    background: var(--panel-bg); border: 1px solid var(--panel-border); border-radius: 4px;
+    padding: 6px 9px; white-space: nowrap;
+  }
+  #hover-tooltip[hidden] { display: none; }
+  #hover-tooltip .route { color: var(--panel-heading); font-weight: 600; }
+  #hover-tooltip .muted { color: var(--panel-muted); }
 </style>
 </head>
 <body>
 <div id="status" hidden>connecting...</div>
+<div id="hover-tooltip" hidden></div>
 <div id="calibration-panel">
   <h3>Calibration mode (C or the tablet to exit)</h3>
   <div id="calibration-points"></div>
@@ -88,6 +105,16 @@ const ADHERENCE_COLOR = {
     cancelled: "#cf222e", unknown: "#57606a",
   },
 };
+
+// Same wording as the controller's legends (renderer/controller.html's
+// LEGENDS) and the engine's own labels (engine/normalise/levels.py), so the
+// hover tooltip never says something different from what the legend says.
+const ADHERENCE_LABEL = {
+  on_time: "On time", late: "Running late", very_late: "Very late",
+  cancelled: "Cancelled", unknown: "No schedule data",
+};
+const CONGESTION_LABEL = ["Running smoothly", "Stop and go", "Congested", "Severely congested"];
+const CROWDING_LABEL = ["Seats available", "Few seats", "Standing room", "Crowded / full"];
 
 // Congestion and crowding are ordinal levels from TfNSW's own feed fields
 // (engine/normalise/levels.py): congestion 0 running smoothly .. 3 severe,
@@ -348,6 +375,13 @@ let projector = null;
 //                 route_color, adherence, mode, history: [{lat,lon,ts}] }
 const vehicles = new Map();
 
+// Dev/testing hover tooltip state -- see the #hover-tooltip CSS comment.
+// Screen-space mouse position (canvas-relative), or null when the pointer
+// isn't over the canvas at all.
+let hoverX = null;
+let hoverY = null;
+const hoverTooltipEl = document.getElementById("hover-tooltip");
+
 // [{name, lat, lon, count}, ...] -- "services passing through in the last
 // few minutes" per interchange, from the same WS frame as vehicles.
 let interchanges = [];
@@ -542,6 +576,7 @@ function applyFrame(frameVehicles) {
     }
     entry.mode = v.m;
     entry.route_color = v.rc;
+    entry.route_short_name = v.rsn;
     entry.adherence = v.adh;
     entry.cg = v.cg;
     entry.oc = v.oc;
@@ -595,6 +630,15 @@ function render() {
   const pollMs = pollIntervalMs();
   const toDelete = [];
 
+  // Dev-only hover hit-test: whichever drawn dot is nearest the pointer,
+  // within a few px of its own radius so small (bus) and large (train) dots
+  // don't need the same fixed tolerance. Computed inline in the same loop
+  // that draws the dots, so it's always testing exactly what's on screen
+  // this frame, not a stale copy of it.
+  let hoveredKey = null;
+  let hoveredDist = Infinity;
+  const hoverActive = !calibrateMode && hoverX !== null && hoverY !== null;
+
   for (const [key, entry] of vehicles) {
     if (!modeVisible(entry.mode)) continue;
     const pos = currentRenderPosition(entry, nowMs);
@@ -633,10 +677,19 @@ function render() {
     ctx.beginPath();
     ctx.arc(x, y, radius, 0, Math.PI * 2);
     ctx.fill();
+
+    if (hoverActive) {
+      const dist = Math.hypot(x - hoverX, y - hoverY);
+      if (dist <= radius + 6 && dist < hoveredDist) {
+        hoveredKey = key;
+        hoveredDist = dist;
+      }
+    }
   }
 
   ctx.restore();
   for (const key of toDelete) vehicles.delete(key);
+  updateHoverTooltip(hoveredKey);
 
   if (control.hud) {
     const n = control.nudge;
@@ -792,6 +845,46 @@ canvas.addEventListener("mousemove", (ev) => {
   calibrationPoints[draggingPointIndex].pixel_y = ev.offsetY;
 });
 window.addEventListener("mouseup", () => { draggingPointIndex = null; });
+
+// Dev-only hover tracking -- separate listener from the calibration one
+// above (both fire independently; this one runs whenever the pointer moves
+// over the canvas at all, calibrating or not, and the render loop itself
+// decides whether to act on it via hoverActive).
+canvas.addEventListener("mousemove", (ev) => {
+  hoverX = ev.offsetX;
+  hoverY = ev.offsetY;
+});
+canvas.addEventListener("mouseleave", () => {
+  hoverX = null;
+  hoverY = null;
+});
+
+function updateHoverTooltip(key) {
+  const entry = key !== null ? vehicles.get(key) : null;
+  if (!entry) {
+    hoverTooltipEl.hidden = true;
+    return;
+  }
+  const route = entry.route_short_name || entry.mode;
+  const parts = [`<div class="route">${route}</div>`, `<div class="muted">${entry.mode}</div>`];
+  parts.push(`<div>${ADHERENCE_LABEL[entry.adherence] || "No schedule data"}</div>`);
+  if (entry.cg !== null && entry.cg !== undefined) {
+    parts.push(`<div>Traffic: ${CONGESTION_LABEL[Math.round(entry.cg)] || "?"}</div>`);
+  }
+  if (entry.oc !== null && entry.oc !== undefined) {
+    parts.push(`<div>Crowding: ${CROWDING_LABEL[Math.round(entry.oc)] || "?"}</div>`);
+  }
+  hoverTooltipEl.innerHTML = parts.join("");
+  hoverTooltipEl.hidden = false;
+  // hoverX/hoverY are canvas-relative (offsetX/offsetY); #hover-tooltip is
+  // position:fixed (viewport-relative), so convert via the canvas's own
+  // rect rather than assuming the canvas starts at the viewport origin.
+  // Offset from the cursor so the tooltip doesn't sit directly under it
+  // (which would immediately re-trigger mousemove/mouseleave churn).
+  const rect = canvas.getBoundingClientRect();
+  hoverTooltipEl.style.left = `${rect.left + hoverX + 14}px`;
+  hoverTooltipEl.style.top = `${rect.top + hoverY + 14}px`;
+}
 
 document.getElementById("cal-add").addEventListener("click", () => {
   calibrationPoints.push({ lat: null, lon: null, pixel_x: canvas.width / 2, pixel_y: canvas.height / 2 });

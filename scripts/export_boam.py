@@ -27,7 +27,7 @@ def main() -> int:
     layers = build_boam_layers(cfg, ShapeIndex(cfg.path("db_path")))
     out = cfg.root / "data" / "boam" / "sections.csv"
     rows = 0
-    with open(out, "w", newline="") as f:
+    with open(out, "w", newline="", encoding="utf-8") as f:
         w = csv.writer(f)
         w.writerow(["from_stop", "to_stop", "period", "trips", "length_m", "load_share",
                     "lost_s_per_100m", "mid_lat", "mid_lon"])

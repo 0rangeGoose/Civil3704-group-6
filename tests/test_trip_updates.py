@@ -59,6 +59,37 @@ def test_cancelled_trip_is_flagged():
     assert index["T1"].next_stop_delay_seconds is None
 
 
+def test_extracts_next_stop_id_from_the_same_entry_as_the_delay():
+    feed = pb.FeedMessage()
+    feed.header.gtfs_realtime_version = "2.0"
+    e = feed.entity.add()
+    e.id = "e1"
+    e.trip_update.trip.trip_id = "T1"
+    skipped = e.trip_update.stop_time_update.add()  # no delay -> skipped, its stop_id ignored
+    skipped.stop_id = "WRONG_STOP"
+    stu = e.trip_update.stop_time_update.add()
+    stu.stop_id = "204421"
+    stu.arrival.delay = 31
+
+    index = build_trip_update_index(feed.SerializeToString())
+
+    assert index["T1"].next_stop_id == "204421"
+    assert index["T1"].next_stop_delay_seconds == 31
+
+
+def test_next_stop_id_is_none_when_falling_back_to_trip_level_delay():
+    feed = pb.FeedMessage()
+    feed.header.gtfs_realtime_version = "2.0"
+    e = feed.entity.add()
+    e.id = "e1"
+    e.trip_update.trip.trip_id = "T1"
+    e.trip_update.delay = 90
+
+    index = build_trip_update_index(feed.SerializeToString())
+
+    assert index["T1"].next_stop_id is None
+
+
 def test_entities_without_trip_update_are_ignored():
     feed = pb.FeedMessage()
     feed.header.gtfs_realtime_version = "2.0"
