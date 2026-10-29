@@ -178,7 +178,7 @@ let theme = "dark";
 // the server first and comes back here via applyControl, so there is only
 // ever one source of truth.
 let control = {
-  theme: "dark", verify: false, hud: false, calibrate: false, interchanges: true, stops: false, stop_history: false,
+  theme: "dark", verify: false, hud: false, calibrate: false, interchanges: true, stops: false, stop_history: false, stop_metric: "median",
   lens: "adherence", line_layer: "none", area_layer: "none", area_unit: "zones", boam_period: "am", weights: {}, modes: {}, nudge: { dx: 0, dy: 0, scale: 1 },
 };
 let modeToGroup = {}; // feed mode -> controller group, from /config
@@ -291,7 +291,8 @@ function applyControl(next) {
   const areaChanged = next.area_layer !== control.area_layer || next.area_unit !== control.area_unit;
   const weightsChanged = JSON.stringify(next.weights) !== JSON.stringify(control.weights);
   const boamChanged = next.line_layer !== control.line_layer || next.boam_period !== control.boam_period;
-  const stopHistoryChanged = next.stop_history !== control.stop_history || next.lens !== control.lens;
+  const stopHistoryChanged =
+    next.stop_history !== control.stop_history || next.lens !== control.lens || next.stop_metric !== control.stop_metric;
   const layoutChanged =
     next.theme !== control.theme ||
     next.calibrate !== control.calibrate ||
@@ -635,7 +636,8 @@ function stopHistoryColor(h) {
     return LEVEL_COLOR.crowding[theme][bandIndex(h.crowded_share, STOP_CROWDED_BANDS)];
   }
   if (h.delay_visits < STOP_HISTORY_MIN_VISITS) return null;
-  return STOP_DELAY_COLOR[theme][bandIndex(h.median_delay_s, STOP_DELAY_BANDS_S)];
+  const delay = control.stop_metric === "mean" ? h.mean_delay_s : h.median_delay_s;
+  return STOP_DELAY_COLOR[theme][bandIndex(delay, STOP_DELAY_BANDS_S)];
 }
 
 async function pollStopHistory() {
@@ -1083,7 +1085,8 @@ function updateHoverTooltip(key, stop) {
     if (h) {
       parts.push(`<div class="muted">${h.visits} vehicle visits recorded</div>`);
       if (h.delay_visits >= STOP_HISTORY_MIN_VISITS) {
-        parts.push(`<div>Typical delay on arrival: ${formatDelay(h.median_delay_s)}</div>`);
+        parts.push(`<div>Median delay on arrival: ${formatDelay(h.median_delay_s)}</div>`);
+        parts.push(`<div>Average delay on arrival: ${formatDelay(h.mean_delay_s)}</div>`);
       } else {
         parts.push(`<div class="muted">Delay: only ${h.delay_visits} visits had a live prediction</div>`);
       }
@@ -1092,9 +1095,13 @@ function updateHoverTooltip(key, stop) {
       } else {
         parts.push(`<div class="muted">Crowding: only ${h.crowding_visits} visits reported it</div>`);
       }
-      if (h.median_delay_seated_s !== null && h.median_delay_crowded_s !== null) {
-        parts.push(`<div>Delay when seats available: ${formatDelay(h.median_delay_seated_s)}</div>`);
-        parts.push(`<div>Delay when crowded: ${formatDelay(h.median_delay_crowded_s)}</div>`);
+      const stat = control.stop_metric === "mean" ? "mean" : "median";
+      const seated = h[`${stat}_delay_seated_s`];
+      const crowded = h[`${stat}_delay_crowded_s`];
+      if (seated !== null && crowded !== null) {
+        const word = stat === "mean" ? "Average" : "Median";
+        parts.push(`<div>${word} delay when seats available: ${formatDelay(seated)}</div>`);
+        parts.push(`<div>${word} delay when crowded: ${formatDelay(crowded)}</div>`);
       }
     }
   }

@@ -82,6 +82,30 @@ def test_stop_summary_uses_medians_so_one_glitch_does_not_drag_it(tmp_path):
     assert summary["median_delay_s"] == 75
 
 
+def test_stop_summary_gives_a_mean_alongside_the_median(tmp_path):
+    db_path = tmp_path / "stop_visits.sqlite"
+    for i, delay in enumerate([30, 60, 90, 1020]):  # one bus 17 min late
+        record_stop_visit(db_path, "STOP_A", f"v{i}", "M10", "buses", "MANY_SEATS_AVAILABLE", delay, recorded_at=_at(2026, 10, 29))
+
+    summary = stop_summaries(db_path)["STOP_A"]
+
+    assert summary["median_delay_s"] == 75
+    assert summary["mean_delay_s"] == 300
+
+
+def test_glitch_delays_are_dropped_before_any_statistic(tmp_path):
+    db_path = tmp_path / "stop_visits.sqlite"
+    for i, delay in enumerate([60, 120, 150_000, -3600]):  # ~41.7h late, 1h early
+        record_stop_visit(db_path, "STOP_A", f"v{i}", "L1", "lightrail_innerwest", "MANY_SEATS_AVAILABLE", delay, recorded_at=_at(2026, 10, 29))
+
+    summary = stop_summaries(db_path)["STOP_A"]
+
+    assert summary["visits"] == 4
+    assert summary["delay_visits"] == 2
+    assert summary["mean_delay_s"] == 90
+    assert summary["crowding_visits"] == 4  # crowding is still a valid reading
+
+
 def test_stop_summary_splits_delay_by_seated_vs_crowded_arrivals(tmp_path):
     db_path = tmp_path / "stop_visits.sqlite"
     for i in range(6):
