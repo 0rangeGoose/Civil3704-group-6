@@ -630,11 +630,11 @@ function bandIndex(value, bands) {
 // Crowding lens shows crowding; schedule and traffic both show delay, since
 // stops have no traffic reading of their own.
 function stopHistoryColor(h) {
-  if (h.visits < STOP_HISTORY_MIN_VISITS) return null;
   if (control.lens === "crowding") {
-    if (h.crowded_share === null) return null;
+    if (h.crowding_visits < STOP_HISTORY_MIN_VISITS) return null;
     return LEVEL_COLOR.crowding[theme][bandIndex(h.crowded_share, STOP_CROWDED_BANDS)];
   }
+  if (h.delay_visits < STOP_HISTORY_MIN_VISITS) return null;
   return STOP_DELAY_COLOR[theme][bandIndex(h.median_delay_s, STOP_DELAY_BANDS_S)];
 }
 
@@ -1080,13 +1080,17 @@ function updateHoverTooltip(key, stop) {
   } else {
     parts = [`<div class="route">${stop.name}</div>`];
     const h = stop.history;
-    if (h && h.visits < STOP_HISTORY_MIN_VISITS) {
-      parts.push(`<div class="muted">${h.visits} visits recorded, not enough to colour yet</div>`);
-    } else if (h) {
+    if (h) {
       parts.push(`<div class="muted">${h.visits} vehicle visits recorded</div>`);
-      parts.push(`<div>Typical delay on arrival: ${formatDelay(h.median_delay_s)}</div>`);
-      if (h.crowded_share !== null) {
+      if (h.delay_visits >= STOP_HISTORY_MIN_VISITS) {
+        parts.push(`<div>Typical delay on arrival: ${formatDelay(h.median_delay_s)}</div>`);
+      } else {
+        parts.push(`<div class="muted">Delay: only ${h.delay_visits} visits had a live prediction</div>`);
+      }
+      if (h.crowding_visits >= STOP_HISTORY_MIN_VISITS) {
         parts.push(`<div>Arrive with few seats or fuller: ${Math.round(h.crowded_share * 100)}%</div>`);
+      } else {
+        parts.push(`<div class="muted">Crowding: only ${h.crowding_visits} visits reported it</div>`);
       }
       if (h.median_delay_seated_s !== null && h.median_delay_crowded_s !== null) {
         parts.push(`<div>Delay when seats available: ${formatDelay(h.median_delay_seated_s)}</div>`);

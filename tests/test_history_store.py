@@ -92,10 +92,32 @@ def test_stop_summary_splits_delay_by_seated_vs_crowded_arrivals(tmp_path):
 
     summary = stop_summaries(db_path)["STOP_A"]
 
-    assert summary["visits"] == 12  # unknown occupancy still counts towards delay
-    assert summary["crowded_share"] == round(5 / 11, 3)  # ...but not towards crowding
+    assert summary["delay_visits"] == 12  # unknown occupancy still counts towards delay
+    assert summary["crowding_visits"] == 11  # ...but not towards crowding
+    assert summary["crowded_share"] == round(5 / 11, 3)
     assert summary["median_delay_seated_s"] == 60
     assert summary["median_delay_crowded_s"] == 300
+
+
+def test_visit_with_no_delay_still_counts_towards_crowding(tmp_path):
+    db_path = tmp_path / "stop_visits.sqlite"
+    record_stop_visit(db_path, "STOP_A", "v1", "T1", "sydneytrains", "STANDING_ROOM_ONLY", None, recorded_at=_at(2026, 10, 29))
+    record_stop_visit(db_path, "STOP_A", "v2", "T1", "sydneytrains", "MANY_SEATS_AVAILABLE", 90, recorded_at=_at(2026, 10, 29))
+
+    summary = stop_summaries(db_path)["STOP_A"]
+
+    assert summary["visits"] == 2
+    assert summary["delay_visits"] == 1
+    assert summary["median_delay_s"] == 90
+    assert summary["crowding_visits"] == 2
+    assert summary["crowded_share"] == 0.5
+
+
+def test_stop_with_no_delay_readings_has_no_median(tmp_path):
+    db_path = tmp_path / "stop_visits.sqlite"
+    record_stop_visit(db_path, "STOP_A", "v1", "T1", "sydneytrains", "FULL", None, recorded_at=_at(2026, 10, 29))
+
+    assert stop_summaries(db_path)["STOP_A"]["median_delay_s"] is None
 
 
 def test_stop_summary_split_needs_enough_visits_on_each_side(tmp_path):
