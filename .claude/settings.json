@@ -6,7 +6,8 @@
       "Bash(python -c ' *)",
       "WebSearch",
       "WebFetch(domain:transitcenter.org)",
-      "WebFetch(domain:mic.comotion.uw.edu)"
+      "WebFetch(domain:mic.comotion.uw.edu)",
+      "Bash(curl -s -m 10 http://127.0.0.1:8765/snapshot)"
     ]
   }
 }

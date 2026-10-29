@@ -54,6 +54,7 @@ def _vehicle_frame(record) -> dict:
         "cg": congestion_level(record.congestion_level) if record.mode in CONGESTION_MODES else None,
         "oc": crowding_level(record.occupancy_status),
         "ts": record.position_timestamp,
+        "b": record.bearing,
     }
 
 
