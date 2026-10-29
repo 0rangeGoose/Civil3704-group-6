@@ -36,6 +36,7 @@ def enrich_vehicle_record(
         shape_id = lookup.shape_for_trip(record.trip_id)
 
     match = None
+    own_trip_shape = bool(shape_id)
     if shape_id:
         match = shapes.snap_to_shape(shape_id, record.lat, record.lon)
     else:
@@ -60,8 +61,16 @@ def enrich_vehicle_record(
     cancelled = trip_update.cancelled if trip_update else False
     adherence_state = classify(deviation, record.mode, cancelled, thresholds, very_late_multiplier)
 
+    # Sydney Trains never send a bearing. A trip's own shape runs in its
+    # direction of travel, so its tangent stands in -- but not a nearest-shape
+    # fallback, which may be the opposite direction's line.
+    bearing = record.bearing
+    if bearing is None and own_trip_shape and match:
+        bearing = shapes.heading_at(shape_id, match.distance_along_shape_m)
+
     return dataclasses.replace(
         record,
+        bearing=bearing,
         shape_id=shape_id if match else None,
         matched_lat=match.matched_lat if match else None,
         matched_lon=match.matched_lon if match else None,
