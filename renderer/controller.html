@@ -107,6 +107,20 @@
   .health-grid { display: grid; grid-template-columns: 1fr auto auto; gap: 4px 16px; font-size: 14px; }
   .health-grid .head { color: var(--muted); font-size: 12px; text-transform: uppercase; }
   .num { text-align: right; font-variant-numeric: tabular-nums; }
+  .route-pick { display: flex; gap: 8px; flex-wrap: wrap; }
+  .route-pick input {
+    flex: 1; min-width: 160px; min-height: 48px; padding: 0 12px; font: inherit; user-select: text;
+    background: var(--track-bg); color: var(--fg); border: 1px solid var(--panel-border); border-radius: 8px;
+  }
+  #route-chips { display: flex; flex-wrap: wrap; gap: 8px; margin-top: 10px; }
+  #route-chips:empty { display: none; }
+  .chip {
+    display: inline-flex; align-items: center; gap: 8px; min-height: 44px; padding: 0 4px 0 12px; cursor: pointer;
+    font: inherit; font-size: 15px; font-weight: 600; color: var(--fg); text-align: left;
+    background: var(--track-bg); border: 2px solid var(--panel-border); border-radius: 22px;
+  }
+  .chip .dot { width: 12px; height: 12px; border-radius: 50%; flex-shrink: 0; }
+  .chip .x { color: var(--muted); font-size: 20px; padding: 0 8px; }
   .stale { color: var(--warn); }
 
   /* Stats tab -- carried over from the old /stats page. */
@@ -205,6 +219,17 @@
           <button data-stop-metric="mean">Average</button>
         </div>
       </div>
+    </section>
+    <section>
+      <h2>Single out routes</h2>
+      <div class="route-pick">
+        <input id="route-input" list="route-list" placeholder="Route, e.g. 333, T1, L2" autocomplete="off" />
+        <datalist id="route-list"></datalist>
+        <button class="btn" id="route-add">Show</button>
+        <button class="btn" id="route-clear">Show all</button>
+      </div>
+      <div id="route-chips"></div>
+      <p class="note" id="route-note">Only these routes' vehicles, line and stops stand out; everything else fades back. Tap a route to remove it.</p>
     </section>
     <section>
       <h2>Colour the areas by</h2>
@@ -538,6 +563,7 @@ function render(next) {
   document.querySelectorAll("[data-unit]").forEach((b) => b.setAttribute("aria-pressed", String(b.dataset.unit === control.area_unit)));
   document.querySelectorAll("[data-boam-period]").forEach((b) => b.setAttribute("aria-pressed", String(b.dataset.boamPeriod === control.boam_period)));
   document.querySelectorAll("[data-stop-metric]").forEach((b) => b.setAttribute("aria-pressed", String(b.dataset.stopMetric === control.stop_metric)));
+  renderRouteChips();
   document.getElementById("boam-period-row").hidden = !(control.line_layer in BOAM_LEGENDS || control.area_layer === "pressure");
   const hasBoam = !!(boamMeta && boamMeta.days && boamMeta.days.length);
   document.querySelectorAll("[data-line^='boam_']").forEach((b) => { b.disabled = !hasBoam; });
@@ -578,6 +604,82 @@ document.getElementById("stop-metric-seg").addEventListener("click", (ev) => {
   const b = ev.target.closest("[data-stop-metric]");
   if (b) sendControl({ stop_metric: b.dataset.stopMetric });
 });
+
+// --- Singling out routes -----------------------------------------------------
+
+const MAX_ROUTES = 8;
+const ROUTE_NOTE = "Only these routes' vehicles, line and stops stand out; everything else fades back. Tap a route to remove it.";
+let routeCatalog = [];
+
+async function loadRouteCatalog() {
+  try {
+    routeCatalog = await (await fetch("/routes")).json();
+  } catch (_) {
+    setTimeout(loadRouteCatalog, 5000);
+    return;
+  }
+  const list = document.getElementById("route-list");
+  list.innerHTML = "";
+  for (const r of routeCatalog) {
+    const o = document.createElement("option");
+    o.value = r.name;
+    o.label = r.long_name;
+    list.appendChild(o);
+  }
+  if (control) renderRouteChips();
+}
+
+// Same palette and slots as the display (renderer/index.html ROUTE_PALETTE).
+const ROUTE_PALETTE = {
+  dark: ["#3987e5", "#d95926", "#199e70", "#c98500", "#d55181", "#008300", "#9085e9", "#e66767"],
+  light: ["#2a78d6", "#eb6834", "#1baf7a", "#eda100", "#e87ba4", "#008300", "#6250d6", "#e34948"],
+};
+
+function routeSwatch(name) {
+  const mode = matchMedia("(prefers-color-scheme: light)").matches ? "light" : "dark";
+  const slot = control.route_slots ? control.route_slots[name] : undefined;
+  return ROUTE_PALETTE[mode][slot ?? 0];
+}
+
+function addRoute() {
+  const input = document.getElementById("route-input");
+  const note = document.getElementById("route-note");
+  const typed = input.value.trim();
+  if (!typed) return;
+  const r = routeCatalog.find((x) => x.name.toLowerCase() === typed.toLowerCase());
+  const current = (control && control.routes) || [];
+  if (!r) { note.textContent = `No route called "${typed}" runs through the model.`; return; }
+  if (current.length >= MAX_ROUTES && !current.includes(r.name)) { note.textContent = `Up to ${MAX_ROUTES} routes at once.`; return; }
+  if (!current.includes(r.name)) sendControl({ routes: [...current, r.name] });
+  input.value = "";
+  note.textContent = ROUTE_NOTE;
+}
+
+function renderRouteChips() {
+  const box = document.getElementById("route-chips");
+  box.innerHTML = "";
+  for (const name of control.routes || []) {
+    const r = routeCatalog.find((x) => x.name === name);
+    const chip = document.createElement("button");
+    chip.className = "chip";
+    chip.setAttribute("aria-label", `Stop singling out route ${name}`);
+    const dot = document.createElement("span");
+    dot.className = "dot";
+    dot.style.background = routeSwatch(name);
+    const label = document.createElement("span");
+    label.textContent = r && r.long_name ? `${name} · ${r.long_name}` : name;
+    const x = document.createElement("span");
+    x.className = "x";
+    x.textContent = "×";
+    chip.append(dot, label, x);
+    chip.addEventListener("click", () => sendControl({ routes: control.routes.filter((n) => n !== name) }));
+    box.appendChild(chip);
+  }
+}
+
+document.getElementById("route-add").addEventListener("click", addRoute);
+document.getElementById("route-input").addEventListener("keydown", (ev) => { if (ev.key === "Enter") addRoute(); });
+document.getElementById("route-clear").addEventListener("click", () => sendControl({ routes: [] }));
 
 async function loadBoamMeta() {
   try {
@@ -870,6 +972,7 @@ async function boot() {
   refreshSessions();
   loadAreaMeta();
   loadBoamMeta();
+  loadRouteCatalog();
   setInterval(refreshSessions, 60000);
   setInterval(refreshStats, 3000);
   setInterval(refreshHealth, 3000);

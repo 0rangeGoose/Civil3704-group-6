@@ -33,6 +33,35 @@ def test_stop_metric_defaults_to_median_and_accepts_mean():
         c.apply({"stop_metric": "average"})
 
 
+def test_routes_default_empty_dedupe_and_validate():
+    c = ControlState()
+    assert c.state["routes"] == []
+    c.apply({"routes": ["333", "T1", "333"]})
+    assert c.state["routes"] == ["333", "T1"]
+    c.apply({"routes": []})
+    assert c.state["routes"] == []
+    for bad in ["333", [333], [""], ["x" * 33], [str(i) for i in range(9)]]:
+        with pytest.raises(ControlError):
+            c.apply({"routes": bad})
+
+
+def test_route_colour_slots_stay_put_when_another_route_is_removed():
+    c = ControlState()
+    c.apply({"routes": ["333", "T1", "L2"]})
+    assert c.state["route_slots"] == {"333": 0, "T1": 1, "L2": 2}
+
+    c.apply({"routes": ["T1", "L2"]})
+    assert c.state["route_slots"] == {"T1": 1, "L2": 2}
+
+    c.apply({"routes": ["T1", "L2", "M50"]})
+    assert c.state["route_slots"]["M50"] == 0  # reuses the freed slot
+
+
+def test_route_slots_cannot_be_set_directly():
+    with pytest.raises(ControlError):
+        ControlState().apply({"route_slots": {"333": 5}})
+
+
 def test_patch_merges_nested_fields():
     c = ControlState()
     c.apply({"modes": {"buses": False}, "nudge": {"dx": 4}})

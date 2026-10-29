@@ -26,6 +26,7 @@ from engine.publish.calibration import CalibrationPoint, compute_and_save_calibr
 from engine.publish.control import MODE_GROUPS, ControlError, ControlState
 from engine.publish.feed import LiveVehicleFeed
 from engine.publish.homography import HomographyError
+from engine.publish.route_focus import load_route_catalog, route_detail
 from engine.publish.shapes_export import build_render_shapes
 from engine.demand.areas import build_area_layers
 from engine.demand.pressure import PressureModel
@@ -242,6 +243,25 @@ async def stops_handler(request: web.Request) -> web.Response:
     ])
 
 
+async def routes_handler(request: web.Request) -> web.Response:
+    """Every route by short name, for the controller's route picker. Static."""
+    cache = request.app["route_cache"]
+    if "catalog" not in cache:
+        cache["catalog"] = load_route_catalog(request.app["cfg"].path("db_path"))
+    return web.json_response(cache["catalog"])
+
+
+async def route_handler(request: web.Request) -> web.Response:
+    """One route's shapes and stops, for singling it out on the model."""
+    name = request.query.get("name", "")
+    cache = request.app["route_cache"].setdefault("detail", {})
+    if name not in cache:
+        cache[name] = route_detail(request.app["cfg"].path("db_path"), name)
+    if cache[name] is None:
+        raise web.HTTPNotFound(text=f"no route named {name!r}")
+    return web.json_response(cache[name])
+
+
 STOP_HISTORY_CACHE_S = 60.0
 
 
@@ -390,6 +410,7 @@ def build_app(cfg: Config) -> web.Application:
     app["cfg"] = cfg
     app["websockets"] = set()
     app["stop_history_cache"] = {"at": float("-inf"), "body": {}}
+    app["route_cache"] = {}
     app["control"] = ControlState(cfg.root / "data" / "projection_nudge.json")
     app["replay"] = None
     app["areas"] = None
@@ -408,6 +429,8 @@ def build_app(cfg: Config) -> web.Application:
     app.router.add_get("/shapes", shapes_handler)
     app.router.add_get("/stops", stops_handler)
     app.router.add_get("/stop_history", stop_history_handler)
+    app.router.add_get("/routes", routes_handler)
+    app.router.add_get("/route", route_handler)
     app.router.add_get("/segments", segments_handler)
     app.router.add_get("/recordings", recordings_handler)
     app.router.add_get("/areas", areas_handler)

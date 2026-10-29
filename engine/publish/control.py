@@ -39,6 +39,7 @@ LINE_LAYERS = ("none", "congestion", "crowding", "boam_load", "boam_lost")
 # layer's BOAM input use.
 BOAM_PERIODS = ("am", "pm")
 STOP_METRICS = ("median", "mean")
+MAX_FOCUSED_ROUTES = 8
 # Static area layers (engine/demand/areas.py) and the unit they're drawn on.
 AREA_LAYERS = ("none", "jobs", "service_gap", "opal", "pressure")
 # Weights for the combined pressure layer (engine/demand/pressure.py).
@@ -63,6 +64,8 @@ DEFAULT_STATE: dict[str, Any] = {
     "stops": False,
     "stop_history": False,
     "stop_metric": "median",
+    "routes": [],  # route short names singled out; empty shows everything
+    "route_slots": {},  # route name -> colour slot 0-7, assigned here, not by clients
     "lens": "adherence",
     "line_layer": "none",
     "area_layer": "none",
@@ -128,6 +131,21 @@ class ControlState:
                 if value not in STOP_METRICS:
                     raise ControlError("stop_metric must be 'median' or 'mean'")
                 updated["stop_metric"] = value
+            elif key == "routes":
+                if not isinstance(value, list) or not all(isinstance(r, str) and 0 < len(r) <= 32 for r in value):
+                    raise ControlError("routes must be a list of route names")
+                routes = list(dict.fromkeys(value))
+                if len(routes) > MAX_FOCUSED_ROUTES:
+                    raise ControlError(f"at most {MAX_FOCUSED_ROUTES} routes at once")
+                # A route keeps its colour while it stays selected, so removing
+                # one never repaints the others; a new one takes the lowest free slot.
+                slots = {n: s for n, s in updated["route_slots"].items() if n in routes}
+                free = [i for i in range(MAX_FOCUSED_ROUTES) if i not in slots.values()]
+                for name in routes:
+                    if name not in slots:
+                        slots[name] = free.pop(0)
+                updated["routes"] = routes
+                updated["route_slots"] = slots
             elif key == "weights":
                 if not isinstance(value, dict):
                     raise ControlError("weights must be an object")

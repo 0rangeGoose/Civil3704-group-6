@@ -178,7 +178,7 @@ let theme = "dark";
 // the server first and comes back here via applyControl, so there is only
 // ever one source of truth.
 let control = {
-  theme: "dark", verify: false, hud: false, calibrate: false, interchanges: true, stops: false, stop_history: false, stop_metric: "median",
+  theme: "dark", verify: false, hud: false, calibrate: false, interchanges: true, stops: false, stop_history: false, stop_metric: "median", routes: [], route_slots: {},
   lens: "adherence", line_layer: "none", area_layer: "none", area_unit: "zones", boam_period: "am", weights: {}, modes: {}, nudge: { dx: 0, dy: 0, scale: 1 },
 };
 let modeToGroup = {}; // feed mode -> controller group, from /config
@@ -213,6 +213,100 @@ let stopHistory = null;
 let stopHistoryCanvas = null;
 let stopHistoryPositions = [];
 let lastStopHistoryPoll = 0;
+
+// Routes singled out from the controller (control.routes, by short name):
+// their lines and stops are drawn in the route's own colour, the stop layers
+// narrow to their stops, and every other vehicle fades back.
+let routeDetails = {}; // name -> /route body (shape_ids, stop_ids, color)
+let routeFocusCanvas = null;
+let routeStopPositions = [];
+const UNFOCUSED_OPACITY = 0.12;
+
+function focusActive() { return Array.isArray(control.routes) && control.routes.length > 0; }
+
+function focusedStopIds() {
+  const ids = new Set();
+  for (const name of control.routes || []) {
+    for (const id of (routeDetails[name] && routeDetails[name].stop_ids) || []) ids.add(id);
+  }
+  return ids;
+}
+
+async function loadRouteFocus() {
+  const missing = (control.routes || []).filter((n) => !(n in routeDetails));
+  await Promise.all(missing.map(async (name) => {
+    try {
+      const resp = await fetch(`/route?name=${encodeURIComponent(name)}`);
+      routeDetails[name] = resp.ok ? await resp.json() : null;
+    } catch (_) { /* leave it missing so the next change retries */ }
+  }));
+  routeFocusCanvas = drawRouteFocusLayer();
+  stopsLayerCanvas = drawStopsLayer();
+  stopHistoryCanvas = drawStopHistoryLayer();
+}
+
+// Eight distinct hues in a fixed order (colour-blind-safe for neighbouring
+// slots), one per singled-out route by the slot the server assigned it --
+// the same palette as controller.html's ROUTE_PALETTE, so tablet tags match.
+const ROUTE_PALETTE = {
+  dark: ["#3987e5", "#d95926", "#199e70", "#c98500", "#d55181", "#008300", "#9085e9", "#e66767"],
+  light: ["#2a78d6", "#eb6834", "#1baf7a", "#eda100", "#e87ba4", "#008300", "#6250d6", "#e34948"],
+};
+
+function routeColor(name) {
+  const slot = control.route_slots ? control.route_slots[name] : undefined;
+  return ROUTE_PALETTE[theme][slot ?? 0];
+}
+
+function drawRouteFocusLayer() {
+  routeStopPositions = [];
+  if (!focusActive() || !projector || !shapes) return null;
+  const off = document.createElement("canvas");
+  off.width = canvas.width;
+  off.height = canvas.height;
+  const octx = off.getContext("2d");
+  octx.lineCap = "round";
+  octx.lineJoin = "round";
+  const servedBy = new Map(); // stop_id -> [route names]
+  for (const pass of [{ width: 10, alpha: 0.22 }, { width: 3.5, alpha: 0.95 }]) {
+    octx.lineWidth = pass.width;
+    for (const name of control.routes) {
+      const detail = routeDetails[name];
+      if (!detail) continue;
+      octx.strokeStyle = withAlpha(routeColor(name), pass.alpha);
+      for (const shapeId of detail.shape_ids) {
+        const pts = shapes[shapeId];
+        if (!pts || pts.length < 2) continue;
+        octx.beginPath();
+        pts.forEach(([lat, lon], i) => {
+          const [x, y] = projector.project(lat, lon);
+          if (i === 0) octx.moveTo(x, y); else octx.lineTo(x, y);
+        });
+        octx.stroke();
+      }
+    }
+  }
+  for (const name of control.routes) {
+    for (const id of (routeDetails[name] && routeDetails[name].stop_ids) || []) {
+      if (!servedBy.has(id)) servedBy.set(id, []);
+      servedBy.get(id).push(name);
+    }
+  }
+  octx.fillStyle = CANVAS_THEME[theme].bg;
+  octx.lineWidth = 2;
+  for (const s of stops) {
+    const names = servedBy.get(s.id);
+    if (!names) continue;
+    const [x, y] = projector.project(s.lat, s.lon);
+    octx.strokeStyle = routeColor(names[0]);
+    octx.beginPath();
+    octx.arc(x, y, STOP_HISTORY_RADIUS + 1.5, 0, Math.PI * 2);
+    octx.fill();
+    octx.stroke();
+    routeStopPositions.push({ id: s.id, name: s.name, x, y, routes: names });
+  }
+  return off;
+}
 
 async function loadBoam() {
   try {
@@ -293,6 +387,7 @@ function applyControl(next) {
   const boamChanged = next.line_layer !== control.line_layer || next.boam_period !== control.boam_period;
   const stopHistoryChanged =
     next.stop_history !== control.stop_history || next.lens !== control.lens || next.stop_metric !== control.stop_metric;
+  const routesChanged = JSON.stringify(next.routes || []) !== JSON.stringify(control.routes || []);
   const layoutChanged =
     next.theme !== control.theme ||
     next.calibrate !== control.calibrate ||
@@ -308,6 +403,7 @@ function applyControl(next) {
   else if (areaChanged) areaLayerCanvas = drawAreaLayer();
   if (control.area_layer === "pressure" && (areaChanged || weightsChanged || boamChanged)) pollPressure();
   if (boamChanged && !layoutChanged) boamCanvas = drawBoamLayer();
+  if (routesChanged) loadRouteFocus();
   if (stopHistoryChanged && control.stop_history) {
     if (!stopHistory) pollStopHistory();
     else if (!layoutChanged) stopHistoryCanvas = drawStopHistoryLayer();
@@ -424,6 +520,7 @@ function rebuildLayers() {
   boamCanvas = drawBoamLayer();
   stopsLayerCanvas = drawStopsLayer();
   stopHistoryCanvas = drawStopHistoryLayer();
+  routeFocusCanvas = drawRouteFocusLayer();
 }
 
 function clipToFootprint() {
@@ -597,13 +694,15 @@ function drawStopsLayer() {
   off.height = canvas.height;
   const octx = off.getContext("2d");
   octx.fillStyle = CANVAS_THEME[theme].stop;
+  const only = focusActive() ? focusedStopIds() : null;
   stopScreenPositions = [];
   for (const s of stops) {
+    if (only && !only.has(s.id)) continue;
     const [x, y] = projector.project(s.lat, s.lon);
     octx.beginPath();
     octx.arc(x, y, STOP_MARKER_RADIUS, 0, Math.PI * 2);
     octx.fill();
-    stopScreenPositions.push({ name: s.name, x, y });
+    stopScreenPositions.push({ id: s.id, name: s.name, x, y });
   }
   return off;
 }
@@ -662,13 +761,14 @@ function drawStopHistoryLayer() {
   const octx = off.getContext("2d");
   const graded = [];
   const thin = [];
+  const only = focusActive() ? focusedStopIds() : null;
   stopHistoryPositions = [];
   for (const s of stops) {
     const h = stopHistory[s.id];
-    if (!h) continue;
+    if (!h || (only && !only.has(s.id))) continue;
     const [x, y] = projector.project(s.lat, s.lon);
     const color = stopHistoryColor(h);
-    const pos = { name: s.name, x, y, history: h, color };
+    const pos = { id: s.id, name: s.name, x, y, history: h, color };
     (color ? graded : thin).push(pos);
     stopHistoryPositions.push(pos);
   }
@@ -783,6 +883,7 @@ function render() {
   if (!calibrateMode) clipToFootprint();
   if (areaLayerCanvas && !verificationMode) ctx.drawImage(areaLayerCanvas, 0, 0);
   ctx.drawImage(verificationMode ? corridorLayerBright : corridorLayerDim, 0, 0);
+  if (focusActive() && routeFocusCanvas) ctx.drawImage(routeFocusCanvas, 0, 0);
   if (control.stops && stopsLayerCanvas) ctx.drawImage(stopsLayerCanvas, 0, 0);
   if (control.stop_history && stopHistoryCanvas) ctx.drawImage(stopHistoryCanvas, 0, 0);
 
@@ -805,6 +906,8 @@ function render() {
   let hoveredDist = Infinity;
   const hoverActive = !calibrateMode && hoverX !== null && hoverY !== null;
 
+  const focusSet = focusActive() ? new Set(control.routes) : null;
+
   for (const [key, entry] of vehicles) {
     if (!modeVisible(entry.mode)) continue;
     const pos = currentRenderPosition(entry, nowMs);
@@ -817,6 +920,8 @@ function render() {
       opacity = 1 - Math.min(1, (elapsedSinceCurr - pollMs) / (staleMs - pollMs));
     }
     if (opacity <= 0.02) { toDelete.push(key); continue; }
+    const focused = !focusSet || focusSet.has(entry.route_short_name);
+    if (!focused) opacity *= UNFOCUSED_OPACITY;
 
     const color = dotColor(entry);
     const radius = MODE_RADIUS[entry.mode] || DEFAULT_RADIUS;
@@ -824,7 +929,7 @@ function render() {
     // Comet tail: the last ~30s of actual history plus the live interpolated point.
     const tailPts = entry.history.map((s) => projector.project(s.lat, s.lon));
     tailPts.push(projector.project(lat, lon));
-    if (tailPts.length > 1) {
+    if (focused && tailPts.length > 1) {
       for (let i = 1; i < tailPts.length; i++) {
         const tailT = i / (tailPts.length - 1);
         ctx.strokeStyle = withAlpha(color, tailT * 0.5 * opacity);
@@ -851,7 +956,7 @@ function render() {
     }
     ctx.fill();
 
-    if (hoverActive) {
+    if (hoverActive && focused) {
       const dist = Math.hypot(x - hoverX, y - hoverY);
       if (dist <= radius + 6 && dist < hoveredDist) {
         hoveredKey = key;
@@ -868,11 +973,12 @@ function render() {
   // when the layer is actually on -- no point hit-testing ~2,900 points for
   // a tooltip on an invisible layer.
   let hoveredStop = null;
-  if (hoveredKey === null && hoverActive && (control.stops || control.stop_history)) {
+  if (hoveredKey === null && hoverActive && (control.stops || control.stop_history || focusActive())) {
     let dist2 = Infinity;
     const lists = [];
     if (control.stop_history) lists.push(stopHistoryPositions); // first, so its entries win ties
     if (control.stops) lists.push(stopScreenPositions);
+    if (focusActive()) lists.push(routeStopPositions);
     for (const list of lists) {
       for (const s of list) {
         const d = Math.hypot(s.x - hoverX, s.y - hoverY);
@@ -1050,6 +1156,10 @@ canvas.addEventListener("mouseleave", () => {
   hoverY = null;
 });
 
+function escapeHtml(text) {
+  return String(text).replace(/[&<>"']/g, (c) => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#39;" })[c]);
+}
+
 // TfNSW's predicted delay at the vehicle's next stop, in seconds (+ = late).
 function formatDelay(sec) {
   if (sec === null || sec === undefined) return null;
@@ -1080,8 +1190,12 @@ function updateHoverTooltip(key, stop) {
       parts.push(`<div>Crowding: ${CROWDING_LABEL[Math.round(entry.oc)] || "?"}</div>`);
     }
   } else {
-    parts = [`<div class="route">${stop.name}</div>`];
-    const h = stop.history;
+    parts = [`<div class="route">${escapeHtml(stop.name)}</div>`];
+    if (focusActive()) {
+      const serving = control.routes.filter((n) => routeDetails[n] && routeDetails[n].stop_ids.includes(stop.id));
+      if (serving.length) parts.push(`<div class="muted">On route ${escapeHtml(serving.join(", "))}</div>`);
+    }
+    const h = stop.history || (control.stop_history && stopHistory ? stopHistory[stop.id] : null);
     if (h) {
       parts.push(`<div class="muted">${h.visits} vehicle visits recorded</div>`);
       if (h.delay_visits >= STOP_HISTORY_MIN_VISITS) {
