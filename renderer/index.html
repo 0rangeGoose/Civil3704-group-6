@@ -612,6 +612,10 @@ function applyFrame(frameVehicles) {
 
     const sample = { lat: v.lat, lon: v.lon, ts: v.ts };
     if (!entry.curr || entry.curr.ts !== sample.ts) {
+      if (entry.curr) {
+        const moved = movementBearing(entry.curr, sample);
+        if (moved !== null) entry.moveBearing = moved;
+      }
       entry.prev = entry.curr;
       entry.curr = sample;
       entry.currReceivedAt = performance.now();
@@ -635,6 +639,16 @@ function screenHeading(lat, lon, bearingDeg, x, y) {
     lon + (Math.sin(rad) * step) / Math.cos((lat * Math.PI) / 180),
   );
   return Math.atan2(y2 - y, x2 - x);
+}
+
+// Degrees clockwise from north between two positions, or null if it moved
+// too little to trust (GPS jitter at a platform would spin the arrow).
+const MIN_HEADING_MOVE_M = 15;
+function movementBearing(from, to) {
+  const dNorth = (to.lat - from.lat) * 111320;
+  const dEast = (to.lon - from.lon) * 111320 * Math.cos((from.lat * Math.PI) / 180);
+  if (Math.hypot(dNorth, dEast) < MIN_HEADING_MOVE_M) return null;
+  return (Math.atan2(dEast, dNorth) * 180) / Math.PI;
 }
 
 // Notched arrowhead centred on (x, y), sized off the mode's dot radius.
@@ -725,12 +739,14 @@ function render() {
 
     const [x, y] = projector.project(lat, lon);
 
-    // Solid shape -- no glow gradient. Buses are arrows pointing along the
-    // feed's own bearing; everything else (or a bus with no bearing) is a dot.
+    // Solid arrow -- no glow gradient. Heading is the feed's own bearing, or
+    // for Sydney Trains (which never send one) the direction of travel between
+    // positions. A dot only until a heading is known.
+    const heading = entry.bearing ?? entry.moveBearing;
     ctx.fillStyle = withAlpha(color, opacity);
     ctx.beginPath();
-    if (entry.mode === "buses" && entry.bearing != null) {
-      traceArrow(x, y, screenHeading(lat, lon, entry.bearing, x, y), radius);
+    if (heading != null) {
+      traceArrow(x, y, screenHeading(lat, lon, heading, x, y), radius);
     } else {
       ctx.arc(x, y, radius, 0, Math.PI * 2);
     }
