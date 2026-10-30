@@ -69,7 +69,7 @@ def _read_manifest(cfg: Config) -> Manifest | None:
     if not path.exists():
         return None
     try:
-        return Manifest.from_json(json.loads(path.read_text()))
+        return Manifest.from_json(json.loads(path.read_text(encoding="utf-8")))
     except (json.JSONDecodeError, TypeError, KeyError):
         return None
 
@@ -77,7 +77,7 @@ def _read_manifest(cfg: Config) -> Manifest | None:
 def _write_manifest(cfg: Config, manifest: Manifest) -> None:
     path = _manifest_path(cfg)
     path.parent.mkdir(parents=True, exist_ok=True)
-    path.write_text(json.dumps(manifest.to_json(), indent=2))
+    path.write_text(json.dumps(manifest.to_json(), indent=2), encoding="utf-8")
 
 
 def _hash_directory(directory: Path) -> str:

@@ -96,7 +96,7 @@ def section_samples(paths: list[str]) -> tuple[dict, dict[str, tuple[float, floa
             continue
         days.append(Path(path).name[5:13])
         trips: dict = defaultdict(list)
-        with gzip.open(path, "rt", newline="") as f:
+        with gzip.open(path, "rt", newline="", encoding="utf-8") as f:
             for r in csv.DictReader(f):
                 trips[(r["TRIP_ID"], r["ROUTE_VARIANT"])].append(r)
                 stops.setdefault(r["TRANSIT_STOP"], (float(r["LATITUDE"]), float(r["LONGITUDE"])))
@@ -154,7 +154,7 @@ def build_boam_layers(cfg: Config, shapes: ShapeIndex) -> dict:
         + [f"{db_path.stat().st_size}:{db_path.stat().st_mtime}"]).encode()).hexdigest()
     cache_path = boam_dir / "boam_layers.json"
     if cache_path.exists():
-        cached = json.loads(cache_path.read_text())
+        cached = json.loads(cache_path.read_text(encoding="utf-8"))
         if cached.get("meta", {}).get("signature") == signature:
             return cached
 
@@ -208,6 +208,6 @@ def build_boam_layers(cfg: Config, shapes: ShapeIndex) -> dict:
             "signature": signature,
         },
     }
-    cache_path.write_text(json.dumps(result))
+    cache_path.write_text(json.dumps(result), encoding="utf-8")
     logger.info("BOAM: %d sections from %d weekdays", len(result["sections"]), len(days))
     return result

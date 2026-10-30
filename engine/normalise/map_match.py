@@ -9,6 +9,7 @@ realtime feed calls the route, only where the vehicle actually is.
 """
 from __future__ import annotations
 
+import math
 import sqlite3
 from dataclasses import dataclass
 from pathlib import Path
@@ -94,6 +95,18 @@ class ShapeIndex:
         part = substring(line, start_m, end_m)
         coords = list(part.coords) if part.geom_type == "LineString" else [part.coords[0]] * 2
         return [list(to_wgs84(x, y)) for x, y in coords]
+
+    def heading_at(self, shape_id: str, distance_along_m: float, span_m: float = 20.0) -> float | None:
+        """Direction of travel along the shape at a point, degrees clockwise
+        from north. UTM grid north, which is within ~1.5 deg of true north here."""
+        line = self._shapes.get(shape_id)
+        if line is None:
+            return None
+        a = line.interpolate(max(0.0, distance_along_m - span_m))
+        b = line.interpolate(min(line.length, distance_along_m + span_m))
+        if a.equals(b):
+            return None
+        return math.degrees(math.atan2(b.x - a.x, b.y - a.y)) % 360
 
     def route_for_shape(self, shape_id: str) -> str | None:
         return self._shape_route.get(shape_id)

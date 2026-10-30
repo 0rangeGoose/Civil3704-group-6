@@ -28,8 +28,11 @@
   }
   html, body { margin: 0; padding: 0; background: var(--canvas-bg); overflow: hidden; height: 100%; }
   /* The projector mirrors this screen, so the cursor would land on the model.
-     It only comes back while calibrating, when crosshairs are dragged. */
-  body { cursor: none; }
+     It only comes back while calibrating, when crosshairs are dragged.
+     TEMPORARILY disabled for dev/testing on a regular screen (no physical
+     projector attached here) -- restore `cursor: none;` before the real rig
+     is used, or the mouse will show up on the projected model. */
+  /* body { cursor: none; } */
   body.calibrating { cursor: crosshair; }
   canvas { display: block; }
   #status[hidden] { display: none; }
@@ -56,10 +59,24 @@
   #cal-message { margin-top: 6px; min-height: 14px; }
   #cal-message.error { color: var(--error-color); }
   #cal-message.ok { color: var(--ok-color); }
+  /* Dev/testing aid, not part of the real projection -- a hovered vehicle's
+     own data is never drawn onto the model, only shown here on whatever
+     screen this page happens to be open on. pointer-events:none so the
+     tooltip itself can never block the hover it's reporting on. */
+  #hover-tooltip {
+    position: fixed; z-index: 20; pointer-events: none;
+    font: 11px/1.5 ui-monospace, monospace; color: var(--panel-text);
+    background: var(--panel-bg); border: 1px solid var(--panel-border); border-radius: 4px;
+    padding: 6px 9px; white-space: nowrap;
+  }
+  #hover-tooltip[hidden] { display: none; }
+  #hover-tooltip .route { color: var(--panel-heading); font-weight: 600; }
+  #hover-tooltip .muted { color: var(--panel-muted); }
 </style>
 </head>
 <body>
 <div id="status" hidden>connecting...</div>
+<div id="hover-tooltip" hidden></div>
 <div id="calibration-panel">
   <h3>Calibration mode (C or the tablet to exit)</h3>
   <div id="calibration-points"></div>
@@ -88,6 +105,16 @@ const ADHERENCE_COLOR = {
     cancelled: "#cf222e", unknown: "#57606a",
   },
 };
+
+// Same wording as the controller's legends (renderer/controller.html's
+// LEGENDS) and the engine's own labels (engine/normalise/levels.py), so the
+// hover tooltip never says something different from what the legend says.
+const ADHERENCE_LABEL = {
+  on_time: "On time", late: "Running late", very_late: "Very late",
+  cancelled: "Cancelled", unknown: "No schedule data",
+};
+const CONGESTION_LABEL = ["Running smoothly", "Stop and go", "Congested", "Severely congested"];
+const CROWDING_LABEL = ["Seats available", "Few seats", "Standing room", "Crowded / full"];
 
 // Congestion and crowding are ordinal levels from TfNSW's own feed fields
 // (engine/normalise/levels.py): congestion 0 running smoothly .. 3 severe,
@@ -147,8 +174,8 @@ const TAIL_WINDOW_MS = 30000; // "last 30 seconds of travel"
 // comes from the server's control state (see applyControl), so the tablet
 // controller and this page stay in sync.
 const CANVAS_THEME = {
-  dark: { bg: "#000", corridorDim: "rgba(220,228,238,0.55)", corridorBright: "rgba(255,255,255,0.95)", interchange: "#bfe8ff" },
-  light: { bg: "#f4f6f8", corridorDim: "rgba(60,80,110,0.28)", corridorBright: "rgba(9,105,218,0.85)", interchange: "#0969da" },
+  dark: { bg: "#000", corridorDim: "rgba(220,228,238,0.55)", corridorBright: "rgba(255,255,255,0.95)", interchange: "#bfe8ff", stop: "rgba(180,196,214,0.65)" },
+  light: { bg: "#f4f6f8", corridorDim: "rgba(60,80,110,0.28)", corridorBright: "rgba(9,105,218,0.85)", interchange: "#0969da", stop: "rgba(60,90,130,0.55)" },
 };
 let theme = "dark";
 
@@ -157,7 +184,7 @@ let theme = "dark";
 // the server first and comes back here via applyControl, so there is only
 // ever one source of truth.
 let control = {
-  theme: "dark", verify: false, hud: false, calibrate: false, interchanges: true,
+  theme: "dark", verify: false, hud: false, calibrate: false, interchanges: true, stops: false, stop_history: false, stop_metric: "median", routes: [], route_slots: {},
   lens: "adherence", line_layer: "none", area_layer: "none", area_unit: "zones", boam_period: "am", weights: {}, modes: {}, nudge: { dx: 0, dy: 0, scale: 1 },
 };
 let modeToGroup = {}; // feed mode -> controller group, from /config
@@ -177,6 +204,118 @@ let areaLayerCanvas = null;
 // BOAM sections from /boam (static), drawn once per layer/period/theme/projection.
 let boam = null;
 let boamCanvas = null;
+
+// Stop markers from /stops (static for the life of a run, like shapes).
+// stopScreenPositions is a parallel [{name, x, y}, ...] in the SAME
+// projection as stopsLayerCanvas, kept alongside it so hover hit-testing
+// doesn't need to re-run projector.project() on ~2,900 points every frame.
+let stops = [];
+let stopsLayerCanvas = null;
+let stopScreenPositions = [];
+
+// Stop history from /stop_history (engine/history/store.py stop_summaries),
+// refreshed every minute while the layer is on. Same projection-cached
+// pattern as the plain markers; positions carry each stop's summary for hover.
+let stopHistory = null;
+let stopHistoryCanvas = null;
+let stopHistoryPositions = [];
+let lastStopHistoryPoll = 0;
+
+// Routes singled out from the controller (control.routes, by short name):
+// their lines and stops are drawn in the route's own colour, the stop layers
+// narrow to their stops, and every other vehicle fades back.
+let routeDetails = {}; // name -> /route body (shape_ids, stop_ids, color)
+let routeFocusCanvas = null;
+let routeStopPositions = [];
+const UNFOCUSED_OPACITY = 0.12;
+
+function focusActive() { return Array.isArray(control.routes) && control.routes.length > 0; }
+
+function focusedStopIds() {
+  const ids = new Set();
+  for (const name of control.routes || []) {
+    for (const id of (routeDetails[name] && routeDetails[name].stop_ids) || []) ids.add(id);
+  }
+  return ids;
+}
+
+async function loadRouteFocus() {
+  const missing = (control.routes || []).filter((n) => !(n in routeDetails));
+  await Promise.all(missing.map(async (name) => {
+    try {
+      const resp = await fetch(`/route?name=${encodeURIComponent(name)}`);
+      routeDetails[name] = resp.ok ? await resp.json() : null;
+    } catch (_) { /* leave it missing so the next change retries */ }
+  }));
+  routeFocusCanvas = drawRouteFocusLayer();
+  stopsLayerCanvas = drawStopsLayer();
+  stopHistoryCanvas = drawStopHistoryLayer();
+}
+
+// Eight distinct hues in a fixed order (colour-blind-safe for neighbouring
+// slots), one per singled-out route by the slot the server assigned it --
+// the same palette as controller.html's ROUTE_PALETTE, so tablet tags match.
+const ROUTE_PALETTE = {
+  dark: ["#3987e5", "#d95926", "#199e70", "#c98500", "#d55181", "#008300", "#9085e9", "#e66767"],
+  light: ["#2a78d6", "#eb6834", "#1baf7a", "#eda100", "#e87ba4", "#008300", "#6250d6", "#e34948"],
+};
+
+function routeColor(name) {
+  const slot = control.route_slots ? control.route_slots[name] : undefined;
+  return ROUTE_PALETTE[theme][slot ?? 0];
+}
+
+function drawRouteFocusLayer() {
+  routeStopPositions = [];
+  if (!focusActive() || !projector || !shapes) return null;
+  const off = document.createElement("canvas");
+  off.width = canvas.width;
+  off.height = canvas.height;
+  const octx = off.getContext("2d");
+  octx.lineCap = "round";
+  octx.lineJoin = "round";
+  const servedBy = new Map(); // stop_id -> [route names]
+  for (const pass of [{ width: 10, alpha: 0.22 }, { width: 3.5, alpha: 0.95 }]) {
+    octx.lineWidth = pass.width;
+    for (const name of control.routes) {
+      const detail = routeDetails[name];
+      if (!detail) continue;
+      octx.strokeStyle = withAlpha(routeColor(name), pass.alpha);
+      for (const shapeId of detail.shape_ids) {
+        const pts = shapes[shapeId];
+        if (!pts || pts.length < 2) continue;
+        octx.beginPath();
+        pts.forEach(([lat, lon], i) => {
+          const [x, y] = projector.project(lat, lon);
+          if (i === 0) octx.moveTo(x, y); else octx.lineTo(x, y);
+        });
+        octx.stroke();
+      }
+    }
+  }
+  // Stop rings follow the stop layers: with both off the route is just its line.
+  if (!control.stops && !control.stop_history) return off;
+  for (const name of control.routes) {
+    for (const id of (routeDetails[name] && routeDetails[name].stop_ids) || []) {
+      if (!servedBy.has(id)) servedBy.set(id, []);
+      servedBy.get(id).push(name);
+    }
+  }
+  octx.fillStyle = CANVAS_THEME[theme].bg;
+  octx.lineWidth = 2;
+  for (const s of stops) {
+    const names = servedBy.get(s.id);
+    if (!names) continue;
+    const [x, y] = projector.project(s.lat, s.lon);
+    octx.strokeStyle = routeColor(names[0]);
+    octx.beginPath();
+    octx.arc(x, y, STOP_HISTORY_RADIUS + 1.5, 0, Math.PI * 2);
+    octx.fill();
+    octx.stroke();
+    routeStopPositions.push({ id: s.id, name: s.name, x, y, routes: names });
+  }
+  return off;
+}
 
 async function loadBoam() {
   try {
@@ -269,6 +408,10 @@ function applyControl(next) {
   const areaChanged = next.area_layer !== control.area_layer || next.area_unit !== control.area_unit;
   const weightsChanged = JSON.stringify(next.weights) !== JSON.stringify(control.weights);
   const boamChanged = next.line_layer !== control.line_layer || next.boam_period !== control.boam_period;
+  const stopHistoryChanged =
+    next.stop_history !== control.stop_history || next.lens !== control.lens || next.stop_metric !== control.stop_metric;
+  const routesChanged = JSON.stringify(next.routes || []) !== JSON.stringify(control.routes || []);
+  const stopLayersChanged = next.stops !== control.stops || next.stop_history !== control.stop_history;
   const layoutChanged =
     next.theme !== control.theme ||
     next.calibrate !== control.calibrate ||
@@ -284,6 +427,14 @@ function applyControl(next) {
   else if (areaChanged) areaLayerCanvas = drawAreaLayer();
   if (control.area_layer === "pressure" && (areaChanged || weightsChanged || boamChanged)) pollPressure();
   if (boamChanged && !layoutChanged) boamCanvas = drawBoamLayer();
+  if (routesChanged) loadRouteFocus();
+  else if (!layoutChanged && focusActive() && stopLayersChanged) {
+    routeFocusCanvas = drawRouteFocusLayer();
+  }
+  if (stopHistoryChanged && control.stop_history) {
+    if (!stopHistory) pollStopHistory();
+    else if (!layoutChanged) stopHistoryCanvas = drawStopHistoryLayer();
+  }
   if (LIVE_LINE_LAYERS.has(control.line_layer) && !segments.length) pollSegments();
 }
 
@@ -369,6 +520,13 @@ let projector = null;
 //                 route_color, adherence, mode, history: [{lat,lon,ts}] }
 const vehicles = new Map();
 
+// Dev/testing hover tooltip state -- see the #hover-tooltip CSS comment.
+// Screen-space mouse position (canvas-relative), or null when the pointer
+// isn't over the canvas at all.
+let hoverX = null;
+let hoverY = null;
+const hoverTooltipEl = document.getElementById("hover-tooltip");
+
 // [{name, lat, lon, count}, ...] -- "services passing through in the last
 // few minutes" per interchange, from the same WS frame as vehicles.
 let interchanges = [];
@@ -387,6 +545,9 @@ function rebuildLayers() {
   corridorLayerBright = drawCorridorLayer(CANVAS_THEME[theme].corridorBright, 1.6);
   areaLayerCanvas = drawAreaLayer();
   boamCanvas = drawBoamLayer();
+  stopsLayerCanvas = drawStopsLayer();
+  stopHistoryCanvas = drawStopHistoryLayer();
+  routeFocusCanvas = drawRouteFocusLayer();
 }
 
 function clipToFootprint() {
@@ -552,6 +713,110 @@ function drawCorridorLayer(strokeStyle, lineWidth) {
   return off;
 }
 
+const STOP_MARKER_RADIUS = 2.5;
+
+function drawStopsLayer() {
+  const off = document.createElement("canvas");
+  off.width = canvas.width;
+  off.height = canvas.height;
+  const octx = off.getContext("2d");
+  octx.fillStyle = CANVAS_THEME[theme].stop;
+  const only = focusActive() ? focusedStopIds() : null;
+  stopScreenPositions = [];
+  for (const s of stops) {
+    if (only && !only.has(s.id)) continue;
+    const [x, y] = projector.project(s.lat, s.lon);
+    octx.beginPath();
+    octx.arc(x, y, STOP_MARKER_RADIUS, 0, Math.PI * 2);
+    octx.fill();
+    stopScreenPositions.push({ id: s.id, name: s.name, x, y });
+  }
+  return off;
+}
+
+// Fixed bands, chosen from the first ~56k recorded visits so stops actually
+// spread across them -- the vehicle cut-offs (late = 5+ min) would paint
+// nearly every stop the same, since a stop's *typical* delay is far smaller
+// than one late bus. Delay: under 1, 1-2, 2-4, over 4 min. Crowding: share
+// of arrivals with few seats or fuller -- under 10%, 10-25%, 25-50%, over 50%.
+const STOP_HISTORY_MIN_VISITS = 20;
+const STOP_DELAY_BANDS_S = [60, 120, 240];
+const STOP_CROWDED_BANDS = [0.1, 0.25, 0.5];
+const STOP_DELAY_COLOR = {
+  dark: ["#39ff6a", "#ffd23f", "#ff8c1a", "#c81c2e"],
+  light: ["#1a7f37", "#9a6700", "#bc4c00", "#cf222e"],
+};
+const STOP_HISTORY_RADIUS = 4;
+
+function bandIndex(value, bands) {
+  let i = 0;
+  while (i < bands.length && value >= bands[i]) i++;
+  return i;
+}
+
+// Crowding lens shows crowding; schedule and traffic both show delay, since
+// stops have no traffic reading of their own.
+function stopHistoryColor(h) {
+  if (control.lens === "crowding") {
+    if (h.crowding_visits < STOP_HISTORY_MIN_VISITS) return null;
+    return LEVEL_COLOR.crowding[theme][bandIndex(h.crowded_share, STOP_CROWDED_BANDS)];
+  }
+  if (h.delay_visits < STOP_HISTORY_MIN_VISITS) return null;
+  const delay = control.stop_metric === "mean" ? h.mean_delay_s : h.median_delay_s;
+  return STOP_DELAY_COLOR[theme][bandIndex(delay, STOP_DELAY_BANDS_S)];
+}
+
+async function pollStopHistory() {
+  if (!control.stop_history) return;
+  lastStopHistoryPoll = performance.now();
+  try {
+    const resp = await fetch("/stop_history", { cache: "no-store" });
+    if (!resp.ok) return;
+    stopHistory = await resp.json();
+    stopHistoryCanvas = drawStopHistoryLayer();
+  } catch (_) { /* keep the last drawing; the next poll retries */ }
+}
+setInterval(() => {
+  if (performance.now() - lastStopHistoryPoll >= 60000) pollStopHistory();
+}, 5000);
+
+function drawStopHistoryLayer() {
+  if (!stopHistory || !projector) return null;
+  const off = document.createElement("canvas");
+  off.width = canvas.width;
+  off.height = canvas.height;
+  const octx = off.getContext("2d");
+  const graded = [];
+  const thin = [];
+  const only = focusActive() ? focusedStopIds() : null;
+  stopHistoryPositions = [];
+  for (const s of stops) {
+    const h = stopHistory[s.id];
+    if (!h || (only && !only.has(s.id))) continue;
+    const [x, y] = projector.project(s.lat, s.lon);
+    const color = stopHistoryColor(h);
+    const pos = { id: s.id, name: s.name, x, y, history: h, color };
+    (color ? graded : thin).push(pos);
+    stopHistoryPositions.push(pos);
+  }
+  octx.fillStyle = withAlpha(ADHERENCE_COLOR[theme].unknown, 0.5);
+  for (const p of thin) {
+    octx.beginPath();
+    octx.arc(p.x, p.y, STOP_MARKER_RADIUS, 0, Math.PI * 2);
+    octx.fill();
+  }
+  octx.strokeStyle = CANVAS_THEME[theme].bg;
+  octx.lineWidth = 1;
+  for (const p of graded) {
+    octx.fillStyle = p.color;
+    octx.beginPath();
+    octx.arc(p.x, p.y, STOP_HISTORY_RADIUS, 0, Math.PI * 2);
+    octx.fill();
+    octx.stroke();
+  }
+  return off;
+}
+
 function applyFrame(frameVehicles) {
   const seen = new Set();
   for (const v of frameVehicles) {
@@ -563,12 +828,19 @@ function applyFrame(frameVehicles) {
     }
     entry.mode = v.m;
     entry.route_color = v.rc;
+    entry.route_short_name = v.rsn;
     entry.adherence = v.adh;
+    entry.deviation = v.dev;
     entry.cg = v.cg;
     entry.oc = v.oc;
+    entry.bearing = v.b;
 
     const sample = { lat: v.lat, lon: v.lon, ts: v.ts };
     if (!entry.curr || entry.curr.ts !== sample.ts) {
+      if (entry.curr) {
+        const moved = movementBearing(entry.curr, sample);
+        if (moved !== null) entry.moveBearing = moved;
+      }
       entry.prev = entry.curr;
       entry.curr = sample;
       entry.currReceivedAt = performance.now();
@@ -580,6 +852,39 @@ function applyFrame(frameVehicles) {
 }
 
 function lerp(a, b, t) { return a + (b - a) * t; }
+
+// GTFS-RT bearing is degrees clockwise from true north. Projecting a point a
+// few metres along it (rather than assuming north = screen-up) keeps arrows
+// correct under the calibration's rotation/skew.
+function screenHeading(lat, lon, bearingDeg, x, y) {
+  const rad = (bearingDeg * Math.PI) / 180;
+  const step = 1e-4;
+  const [x2, y2] = projector.project(
+    lat + Math.cos(rad) * step,
+    lon + (Math.sin(rad) * step) / Math.cos((lat * Math.PI) / 180),
+  );
+  return Math.atan2(y2 - y, x2 - x);
+}
+
+// Degrees clockwise from north between two positions, or null if it moved
+// too little to trust (GPS jitter at a platform would spin the arrow).
+const MIN_HEADING_MOVE_M = 15;
+function movementBearing(from, to) {
+  const dNorth = (to.lat - from.lat) * 111320;
+  const dEast = (to.lon - from.lon) * 111320 * Math.cos((from.lat * Math.PI) / 180);
+  if (Math.hypot(dNorth, dEast) < MIN_HEADING_MOVE_M) return null;
+  return (Math.atan2(dEast, dNorth) * 180) / Math.PI;
+}
+
+// Notched arrowhead centred on (x, y), sized off the mode's dot radius.
+function traceArrow(x, y, angle, r) {
+  const c = Math.cos(angle), s = Math.sin(angle);
+  const pt = (fx, fy) => [x + fx * c - fy * s, y + fx * s + fy * c];
+  const pts = [pt(1.8 * r, 0), pt(-1.2 * r, 1.2 * r), pt(-0.5 * r, 0), pt(-1.2 * r, -1.2 * r)];
+  ctx.moveTo(pts[0][0], pts[0][1]);
+  for (let i = 1; i < pts.length; i++) ctx.lineTo(pts[i][0], pts[i][1]);
+  ctx.closePath();
+}
 
 function currentRenderPosition(entry, nowMs) {
   const pollMs = pollIntervalMs();
@@ -605,6 +910,9 @@ function render() {
   if (!calibrateMode) clipToFootprint();
   if (areaLayerCanvas && !verificationMode) ctx.drawImage(areaLayerCanvas, 0, 0);
   ctx.drawImage(verificationMode ? corridorLayerBright : corridorLayerDim, 0, 0);
+  if (focusActive() && routeFocusCanvas) ctx.drawImage(routeFocusCanvas, 0, 0);
+  if (control.stops && stopsLayerCanvas) ctx.drawImage(stopsLayerCanvas, 0, 0);
+  if (control.stop_history && stopHistoryCanvas) ctx.drawImage(stopHistoryCanvas, 0, 0);
 
   drawSegments();
   if (control.interchanges) drawInterchangePulses(performance.now());
@@ -618,6 +926,17 @@ function render() {
   const pollMs = pollIntervalMs();
   const toDelete = [];
 
+  // Dev-only hover hit-test: whichever drawn dot is nearest the pointer,
+  // within a few px of its own radius so small (bus) and large (train) dots
+  // don't need the same fixed tolerance. Computed inline in the same loop
+  // that draws the dots, so it's always testing exactly what's on screen
+  // this frame, not a stale copy of it.
+  let hoveredKey = null;
+  let hoveredDist = Infinity;
+  const hoverActive = !calibrateMode && hoverX !== null && hoverY !== null;
+
+  const focusSet = focusActive() ? new Set(control.routes) : null;
+
   for (const [key, entry] of vehicles) {
     if (!modeVisible(entry.mode)) continue;
     const pos = currentRenderPosition(entry, nowMs);
@@ -630,6 +949,8 @@ function render() {
       opacity = 1 - Math.min(1, (elapsedSinceCurr - pollMs) / (staleMs - pollMs));
     }
     if (opacity <= 0.02) { toDelete.push(key); continue; }
+    const focused = !focusSet || focusSet.has(entry.route_short_name);
+    if (!focused) opacity *= UNFOCUSED_OPACITY;
 
     const color = dotColor(entry);
     const radius = MODE_RADIUS[entry.mode] || DEFAULT_RADIUS;
@@ -637,7 +958,7 @@ function render() {
     // Comet tail: the last ~30s of actual history plus the live interpolated point.
     const tailPts = entry.history.map((s) => projector.project(s.lat, s.lon));
     tailPts.push(projector.project(lat, lon));
-    if (tailPts.length > 1) {
+    if (focused && tailPts.length > 1) {
       for (let i = 1; i < tailPts.length; i++) {
         const tailT = i / (tailPts.length - 1);
         ctx.strokeStyle = withAlpha(color, tailT * 0.5 * opacity);
@@ -651,15 +972,50 @@ function render() {
 
     const [x, y] = projector.project(lat, lon);
 
-    // Solid dot -- no glow gradient.
+    // Solid arrow -- no glow gradient. Heading is the feed's own bearing, or
+    // for Sydney Trains (which never send one) the direction of travel between
+    // positions. A dot only until a heading is known.
+    const heading = entry.bearing ?? entry.moveBearing;
     ctx.fillStyle = withAlpha(color, opacity);
     ctx.beginPath();
-    ctx.arc(x, y, radius, 0, Math.PI * 2);
+    if (heading != null) {
+      traceArrow(x, y, screenHeading(lat, lon, heading, x, y), radius);
+    } else {
+      ctx.arc(x, y, radius, 0, Math.PI * 2);
+    }
     ctx.fill();
+
+    if (hoverActive && focused) {
+      const dist = Math.hypot(x - hoverX, y - hoverY);
+      if (dist <= radius + 6 && dist < hoveredDist) {
+        hoveredKey = key;
+        hoveredDist = dist;
+      }
+    }
   }
 
   ctx.restore();
   for (const key of toDelete) vehicles.delete(key);
+
+  // Stops are checked only when no vehicle was hit (vehicles take priority
+  // when a comet tail and a tiny stop marker happen to overlap) and only
+  // when the layer is actually on -- no point hit-testing ~2,900 points for
+  // a tooltip on an invisible layer.
+  let hoveredStop = null;
+  if (hoveredKey === null && hoverActive && (control.stops || control.stop_history || focusActive())) {
+    let dist2 = Infinity;
+    const lists = [];
+    if (control.stop_history) lists.push(stopHistoryPositions); // first, so its entries win ties
+    if (control.stops) lists.push(stopScreenPositions);
+    if (focusActive()) lists.push(routeStopPositions);
+    for (const list of lists) {
+      for (const s of list) {
+        const d = Math.hypot(s.x - hoverX, s.y - hoverY);
+        if (d <= STOP_HISTORY_RADIUS + 5 && d < dist2) { hoveredStop = s; dist2 = d; }
+      }
+    }
+  }
+  updateHoverTooltip(hoveredKey, hoveredStop);
 
   if (control.hud) {
     const n = control.nudge;
@@ -816,6 +1172,94 @@ canvas.addEventListener("mousemove", (ev) => {
 });
 window.addEventListener("mouseup", () => { draggingPointIndex = null; });
 
+// Dev-only hover tracking -- separate listener from the calibration one
+// above (both fire independently; this one runs whenever the pointer moves
+// over the canvas at all, calibrating or not, and the render loop itself
+// decides whether to act on it via hoverActive).
+canvas.addEventListener("mousemove", (ev) => {
+  hoverX = ev.offsetX;
+  hoverY = ev.offsetY;
+});
+canvas.addEventListener("mouseleave", () => {
+  hoverX = null;
+  hoverY = null;
+});
+
+function escapeHtml(text) {
+  return String(text).replace(/[&<>"']/g, (c) => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#39;" })[c]);
+}
+
+// TfNSW's predicted delay at the vehicle's next stop, in seconds (+ = late).
+function formatDelay(sec) {
+  if (sec === null || sec === undefined) return null;
+  if (sec === 0) return "on schedule";
+  const abs = Math.abs(sec);
+  const m = Math.floor(abs / 60);
+  const s = abs % 60;
+  return `${m ? `${m} min ` : ""}${s}s ${sec > 0 ? "late" : "early"}`;
+}
+
+function updateHoverTooltip(key, stop) {
+  const entry = key !== null ? vehicles.get(key) : null;
+  if (!entry && !stop) {
+    hoverTooltipEl.hidden = true;
+    return;
+  }
+  let parts;
+  if (entry) {
+    const route = entry.route_short_name || entry.mode;
+    parts = [`<div class="route">${route}</div>`, `<div class="muted">${entry.mode}</div>`];
+    parts.push(`<div>${ADHERENCE_LABEL[entry.adherence] || "No schedule data"}</div>`);
+    const delayText = formatDelay(entry.deviation);
+    if (delayText) parts.push(`<div>Delay: ${delayText}</div>`);
+    if (entry.cg !== null && entry.cg !== undefined) {
+      parts.push(`<div>Traffic: ${CONGESTION_LABEL[Math.round(entry.cg)] || "?"}</div>`);
+    }
+    if (entry.oc !== null && entry.oc !== undefined) {
+      parts.push(`<div>Crowding: ${CROWDING_LABEL[Math.round(entry.oc)] || "?"}</div>`);
+    }
+  } else {
+    parts = [`<div class="route">${escapeHtml(stop.name)}</div>`];
+    if (focusActive()) {
+      const serving = control.routes.filter((n) => routeDetails[n] && routeDetails[n].stop_ids.includes(stop.id));
+      if (serving.length) parts.push(`<div class="muted">On route ${escapeHtml(serving.join(", "))}</div>`);
+    }
+    const h = stop.history || (control.stop_history && stopHistory ? stopHistory[stop.id] : null);
+    if (h) {
+      parts.push(`<div class="muted">${h.visits} vehicle visits recorded</div>`);
+      if (h.delay_visits >= STOP_HISTORY_MIN_VISITS) {
+        parts.push(`<div>Median delay on arrival: ${formatDelay(h.median_delay_s)}</div>`);
+        parts.push(`<div>Average delay on arrival: ${formatDelay(h.mean_delay_s)}</div>`);
+      } else {
+        parts.push(`<div class="muted">Delay: only ${h.delay_visits} visits had a live prediction</div>`);
+      }
+      if (h.crowding_visits >= STOP_HISTORY_MIN_VISITS) {
+        parts.push(`<div>Arrive with few seats or fuller: ${Math.round(h.crowded_share * 100)}%</div>`);
+      } else {
+        parts.push(`<div class="muted">Crowding: only ${h.crowding_visits} visits reported it</div>`);
+      }
+      const stat = control.stop_metric === "mean" ? "mean" : "median";
+      const seated = h[`${stat}_delay_seated_s`];
+      const crowded = h[`${stat}_delay_crowded_s`];
+      if (seated !== null && crowded !== null) {
+        const word = stat === "mean" ? "Average" : "Median";
+        parts.push(`<div>${word} delay when seats available: ${formatDelay(seated)}</div>`);
+        parts.push(`<div>${word} delay when crowded: ${formatDelay(crowded)}</div>`);
+      }
+    }
+  }
+  hoverTooltipEl.innerHTML = parts.join("");
+  hoverTooltipEl.hidden = false;
+  // hoverX/hoverY are canvas-relative (offsetX/offsetY); #hover-tooltip is
+  // position:fixed (viewport-relative), so convert via the canvas's own
+  // rect rather than assuming the canvas starts at the viewport origin.
+  // Offset from the cursor so the tooltip doesn't sit directly under it
+  // (which would immediately re-trigger mousemove/mouseleave churn).
+  const rect = canvas.getBoundingClientRect();
+  hoverTooltipEl.style.left = `${rect.left + hoverX + 14}px`;
+  hoverTooltipEl.style.top = `${rect.top + hoverY + 14}px`;
+}
+
 document.getElementById("cal-add").addEventListener("click", () => {
   calibrationPoints.push({ lat: null, lon: null, pixel_x: canvas.width / 2, pixel_y: canvas.height / 2 });
   renderCalibrationPanel();
@@ -881,6 +1325,8 @@ document.addEventListener("keydown", (ev) => {
   else if (key === "h") sendControl({ hud: !control.hud });
   else if (key === "t") sendControl({ theme: control.theme === "dark" ? "light" : "dark" });
   else if (key === "p") sendControl({ interchanges: !control.interchanges });
+  else if (key === "s") sendControl({ stops: !control.stops });
+  else if (key === "o") sendControl({ stop_history: !control.stop_history });
   else if (key === "l") sendControl({ lens: nextOf(LENSES, control.lens) });
   else if (key === "k") sendControl({ line_layer: nextOf(LINE_LAYERS, control.line_layer) });
   else if (key === "a") sendControl({ area_layer: nextOf(AREA_LAYERS, control.area_layer) });
@@ -930,8 +1376,8 @@ function connectWebSocket() {
 }
 
 async function boot() {
-  const [cfgResp, shapesResp, calResp] = await Promise.all([
-    fetch("/config"), fetch("/shapes"), fetch("/calibration"),
+  const [cfgResp, shapesResp, calResp, stopsResp] = await Promise.all([
+    fetch("/config"), fetch("/shapes"), fetch("/calibration"), fetch("/stops"),
   ]);
   cfg = await cfgResp.json();
   for (const [group, modes] of Object.entries(cfg.mode_groups || {})) {
@@ -939,6 +1385,7 @@ async function boot() {
   }
   shapes = await shapesResp.json();
   calibration = await calResp.json(); // null if none saved yet -- Phase 4's linear fit is used
+  stops = await stopsResp.json();
   resize();
   loadAreas();
   loadBoam();

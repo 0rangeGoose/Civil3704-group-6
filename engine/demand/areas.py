@@ -180,7 +180,7 @@ def _opal_points(opal_csv: Path, stops: dict[str, tuple[float, float, str]],
     """[(metric point, average weekday AM-peak taps), ...]"""
     station_taps: dict[tuple[str, str], float] = defaultdict(float)
     postcode_taps: dict[str, float] = defaultdict(float)
-    with open(opal_csv, newline="") as f:
+    with open(opal_csv, newline="", encoding="utf-8") as f:
         for row in csv.DictReader(f):
             if row["date"] not in OPAL_DAYS or not (PEAK_START[:5] <= row["time"] < PEAK_END[:5]):
                 continue
@@ -253,7 +253,7 @@ def build_area_layers(cfg: Config) -> dict:
         day = _reference_weekday(conn, cfg.raw.get("demand", {}).get("service_date"))
         signature = _signature(cfg, [zones_path, jobs_path, postcodes_path, opal_path, db_path], day)
         if cache_path.exists():
-            cached = json.loads(cache_path.read_text())
+            cached = json.loads(cache_path.read_text(encoding="utf-8"))
             if cached.get("meta", {}).get("signature") == signature:
                 return cached
         logger.info("building area layers (service reference day %s) ...", day)
@@ -261,7 +261,7 @@ def build_area_layers(cfg: Config) -> dict:
     finally:
         conn.close()
     result["meta"]["signature"] = signature
-    cache_path.write_text(json.dumps(result))
+    cache_path.write_text(json.dumps(result), encoding="utf-8")
     return result
 
 
@@ -272,7 +272,7 @@ def _build(cfg, conn, day, zones_path, jobs_path, postcodes_path, opal_path) -> 
     # Units: zones (whole polygons for values, clipped for drawing) and grid cells.
     zone_geoms: dict[str, object] = {}
     zone_names: dict[str, str] = {}
-    for feature in json.loads(zones_path.read_text())["features"]:
+    for feature in json.loads(zones_path.read_text(encoding="utf-8"))["features"]:
         code = str(feature["properties"]["tz21_code"])
         zone_geoms[code] = _metric(shape(feature["geometry"])).buffer(0)
         zone_names[code] = feature["properties"]["tz21_name"]
@@ -332,7 +332,7 @@ def _build(cfg, conn, day, zones_path, jobs_path, postcodes_path, opal_path) -> 
         postcodes = []
         if postcodes_path.exists():
             postcodes = [(str(f["properties"]["postcode"]), _metric(shape(f["geometry"])).buffer(0))
-                         for f in json.loads(postcodes_path.read_text())["features"]]
+                         for f in json.loads(postcodes_path.read_text(encoding="utf-8"))["features"]]
         opal_points = _opal_points(opal_path, stops, _bus_stop_ids(conn), postcodes, footprint_m)
     opal_tree = STRtree([p for p, _ in opal_points]) if opal_points else None
 

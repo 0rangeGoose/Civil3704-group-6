@@ -41,7 +41,7 @@ async def run(max_cycles: int | None, out_path: Path | None) -> None:
     recordings_dir = cfg.root / "data" / "recordings"
     source = RecordingSource(LiveSource(cfg), recordings_dir)
 
-    out_file = open(out_path, "a") if out_path else None
+    out_file = open(out_path, "a", encoding="utf-8") if out_path else None
     bbox = cfg.bounding_box
     cycles = 0
     feed_counts: dict[str, int] = {}

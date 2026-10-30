@@ -101,6 +101,27 @@ def load_interchanges(db_path: Path, names: list[str]) -> list[Interchange]:
         conn.close()
 
 
+@dataclass
+class Stop:
+    stop_id: str
+    name: str
+    lat: float
+    lon: float
+
+
+def load_stops(db_path: Path) -> list[Stop]:
+    """Every stop in the footprint (the static cache is already filtered to
+    it), for the optional stop-markers layer. One row per stand/platform,
+    same granularity as the stops table itself -- see load_interchanges's
+    docstring for why there's no single "station" row to use instead."""
+    conn = sqlite3.connect(f"file:{db_path}?mode=ro", uri=True)
+    try:
+        rows = conn.execute("SELECT stop_id, stop_name, stop_lat, stop_lon FROM stops").fetchall()
+        return [Stop(stop_id=r[0], name=r[1], lat=r[2], lon=r[3]) for r in rows]
+    finally:
+        conn.close()
+
+
 def count_services_near_interchanges(
     interchanges: list[Interchange],
     vehicle_positions: list[tuple[float, float]],

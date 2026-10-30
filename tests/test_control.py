@@ -9,8 +9,57 @@ def test_defaults_are_the_safe_showcase_state():
     s = ControlState().state
     assert s["theme"] == "dark"
     assert s["hud"] is False and s["calibrate"] is False and s["verify"] is False
+    assert s["stops"] is False  # off by default, same as the other static overlay (interchanges is on, stops isn't -- 2,903 markers is a lot to default to)
     assert all(s["modes"].values())
     assert s["nudge"] == {"dx": 0.0, "dy": 0.0, "scale": 1.0}
+
+
+@pytest.mark.parametrize("key", ["stops", "stop_history"])
+def test_stop_toggles_validate_like_the_other_boolean_flags(key):
+    c = ControlState()
+    assert c.state[key] is False
+    c.apply({key: True})
+    assert c.state[key] is True
+    with pytest.raises(ControlError):
+        c.apply({key: "yes"})
+
+
+def test_stop_metric_defaults_to_median_and_accepts_mean():
+    c = ControlState()
+    assert c.state["stop_metric"] == "median"
+    c.apply({"stop_metric": "mean"})
+    assert c.state["stop_metric"] == "mean"
+    with pytest.raises(ControlError):
+        c.apply({"stop_metric": "average"})
+
+
+def test_routes_default_empty_dedupe_and_validate():
+    c = ControlState()
+    assert c.state["routes"] == []
+    c.apply({"routes": ["333", "T1", "333"]})
+    assert c.state["routes"] == ["333", "T1"]
+    c.apply({"routes": []})
+    assert c.state["routes"] == []
+    for bad in ["333", [333], [""], ["x" * 33], [str(i) for i in range(9)]]:
+        with pytest.raises(ControlError):
+            c.apply({"routes": bad})
+
+
+def test_route_colour_slots_stay_put_when_another_route_is_removed():
+    c = ControlState()
+    c.apply({"routes": ["333", "T1", "L2"]})
+    assert c.state["route_slots"] == {"333": 0, "T1": 1, "L2": 2}
+
+    c.apply({"routes": ["T1", "L2"]})
+    assert c.state["route_slots"] == {"T1": 1, "L2": 2}
+
+    c.apply({"routes": ["T1", "L2", "M50"]})
+    assert c.state["route_slots"]["M50"] == 0  # reuses the freed slot
+
+
+def test_route_slots_cannot_be_set_directly():
+    with pytest.raises(ControlError):
+        ControlState().apply({"route_slots": {"333": 5}})
 
 
 def test_patch_merges_nested_fields():

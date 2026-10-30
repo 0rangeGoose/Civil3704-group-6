@@ -62,11 +62,11 @@ def compute_and_save_calibration(
         "homography": matrix.tolist(),
     }
     path.parent.mkdir(parents=True, exist_ok=True)
-    path.write_text(json.dumps(record, indent=2))
+    path.write_text(json.dumps(record, indent=2), encoding="utf-8")
     return record
 
 
 def load_calibration(path: Path) -> dict | None:
     if not path.exists():
         return None
-    return json.loads(path.read_text())
+    return json.loads(path.read_text(encoding="utf-8"))

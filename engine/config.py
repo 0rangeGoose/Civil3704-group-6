@@ -14,7 +14,7 @@ REPO_ROOT = Path(__file__).resolve().parent.parent
 def _load_dotenv(path: Path) -> None:
     if not path.exists():
         return
-    for line in path.read_text().splitlines():
+    for line in path.read_text(encoding="utf-8").splitlines():
         line = line.strip()
         if not line or line.startswith("#") or "=" not in line:
             continue
@@ -64,6 +64,6 @@ def load_config(config_path: Path | None = None) -> Config:
     root = REPO_ROOT
     config_path = config_path or root / "config" / "config.yaml"
     _load_dotenv(root / ".env")
-    with open(config_path) as f:
+    with open(config_path, encoding="utf-8") as f:
         raw = yaml.safe_load(f)
     return Config(raw=raw, root=root)

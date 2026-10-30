@@ -44,7 +44,7 @@ def import_day(src: Path, out_dir: Path, box) -> tuple[Path, int, int]:
         raise SystemExit(f"{src}: can't find a YYYYMMDD date in the file name")
     dst = out_dir / f"BOAM_{match.group(1)}.csv.gz"
     total = kept = 0
-    with open(src, newline="", encoding="utf-8-sig") as f_in, gzip.open(dst, "wt", newline="") as f_out:
+    with open(src, newline="", encoding="utf-8-sig") as f_in, gzip.open(dst, "wt", newline="", encoding="utf-8") as f_out:
         reader = csv.DictReader(f_in, delimiter="|")
         missing = [c for c in KEEP if c not in (reader.fieldnames or [])]
         if missing:
@@ -64,7 +64,7 @@ def import_day(src: Path, out_dir: Path, box) -> tuple[Path, int, int]:
 
 
 def _count_rows(path: Path) -> int:
-    with gzip.open(path, "rt", newline="") as f:
+    with gzip.open(path, "rt", newline="", encoding="utf-8") as f:
         return sum(1 for _ in f) - 1
 
 

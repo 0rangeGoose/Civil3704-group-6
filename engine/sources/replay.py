@@ -33,6 +33,7 @@ import gzip
 import heapq
 import json
 import logging
+import sys
 from dataclasses import dataclass
 from datetime import datetime, time, timedelta, timezone
 from pathlib import Path
@@ -40,6 +41,11 @@ from typing import AsyncIterator, Callable, Iterator
 from zoneinfo import ZoneInfo
 
 from engine.sources.base import RawFeed
+
+# "day of month, no leading zero" -- %-d is the POSIX strftime extension (glibc,
+# macOS); the C runtime Windows Python links against doesn't support it and
+# raises ValueError, only %#d does the same thing there.
+_DAY_NO_LEADING_ZERO = "%#d" if sys.platform == "win32" else "%-d"
 
 logger = logging.getLogger("pulse_cbd.replay")
 
@@ -137,7 +143,7 @@ class RecordingIndex:
             return cached[1]
         times = []
         try:
-            with gzip.open(path, "rt") as f:
+            with gzip.open(path, "rt", encoding="utf-8") as f:
                 for line in f:
                     # fetched_at is the first field the recorder writes
                     # ('{"fetched_at": "<here>"'); slicing it out avoids
@@ -169,13 +175,14 @@ class RecordingIndex:
                 end = datetime.combine(day, end_t, SYDNEY).astimezone(timezone.utc)
                 coverage = self._coverage(times, start, end)
                 if coverage >= MIN_COVERAGE:
-                    label = f"{name} · {day:%a %-d %b}"
+                    label = f"{name} · {day.strftime(f'%a {_DAY_NO_LEADING_ZERO} %b')}"
                     result.append(Session(f"{day.isoformat()}-{key}", label, start, end, coverage))
         latest_end = times[-1] + timedelta(seconds=1)
         latest_start = latest_end - LATEST_SPAN
+        latest_label = latest_end.astimezone(SYDNEY).strftime(f"%a {_DAY_NO_LEADING_ZERO} %b %H:%M")
         result.insert(0, Session(
             "latest",
-            f"Latest 2 hours recorded · until {latest_end.astimezone(SYDNEY):%a %-d %b %H:%M}",
+            f"Latest 2 hours recorded · until {latest_label}",
             latest_start, latest_end,
             self._coverage(times, latest_start, latest_end),
         ))
@@ -207,7 +214,7 @@ class RecordingIndex:
 def _records(mode: str, feed_type: str, paths: list[Path], start: datetime, end: datetime) -> Iterator[RawFeed]:
     for path in paths:
         try:
-            with gzip.open(path, "rt") as f:
+            with gzip.open(path, "rt", encoding="utf-8") as f:
                 for line in f:
                     try:
                         record = json.loads(line)
