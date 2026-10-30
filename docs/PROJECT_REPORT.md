@@ -1,6 +1,6 @@
 # Pulse CBD — Project Report and Handover
 
-**As of:** Friday 30 October 2026, 11:20 am (Sydney)  
+**As of:** Friday 30 October 2026, 11:45 am (Sydney)  
 **Showcase:** Friday 6 November 2026  
 **Feature freeze:** 30 October 2026 (today)  
 **Author:** Yoseph Kim, with Claude Code  
@@ -15,7 +15,7 @@
 | Thing | Location |
 | --- | --- |
 | Project folder | `~/pulse-cbd` (Python 3.13 venv in `.venv`; activate with `source .venv/bin/activate`) |
-| Current branch | `yosephW12` (commit `db1b94a`), pushed to GitHub, up to date |
+| Current branch | `yosephW12` (latest commit: `git log -1`), pushed to GitHub, up to date |
 | GitHub remote | `group-repo` → `https://github.com/0rangeGoose/Civil3704-group-6` (private) |
 | Decision log (newest first, every non-obvious call and its reasoning) | `docs/DECISIONS.md` |
 | How to run everything | `README.md` |
@@ -43,7 +43,7 @@ cd ~/pulse-cbd && git status -sb && git log --oneline -3
 lsof -nP -iTCP:8765 -sTCP:LISTEN           # is the server running?
 curl -s http://127.0.0.1:8765/health        # vehicles, feed age, API quota use, playback mode
 tail -5 data/recordings/recorder.log        # scheduled peak recordings
-source .venv/bin/activate && pytest -q      # 144 tests should pass
+source .venv/bin/activate && pytest -q      # 145 tests should pass
 ```
 
 **Open decisions waiting on the owner** are listed in §16; **remaining work** in §14.
@@ -67,8 +67,8 @@ Pulse CBD projects Sydney's live public transport network onto a physical scale 
 | 7. Model testing, report figures, rehearsal | Not started — needs the physical model |
 | Extras | BOAM bus-load layers; quota-aware polling; timetable refreshed |
 
-- **Tests:** 144 automated tests pass in about 2 seconds, no network needed.
-- **Data recorded:** 9 weekday peaks so far (7 complete, 2 partial — see §12), plus nights and middays.
+- **Tests:** 145 automated tests pass in about 2 seconds, no network needed.
+- **Data recorded:** 9 weekday peaks so far (8 complete, 1 partial — see §12), plus nights and middays.
 - **Biggest risks now:** nothing has been tested on the physical model yet; a teammate's work on `integration` has diverged from `yosephW12` and needs merging (§11); Wi-Fi drops during peaks.
 
 ---
@@ -315,7 +315,7 @@ Outputs: `data/analysis/congestion_agreement.json`, `congestion_disagreements.ge
 
 ## 9. Validation, testing and performance
 
-- **144 automated tests** (`pytest`, ~2 s): static filter, map matching, adherence, aggregates, homography, footprint trimming, control state, segments/levels, replay (pacing, looping, coverage, seek, pause), area maths, pressure, BOAM maths, API budget, travel-time tracker, agreement statistics.
+- **145 automated tests** (`pytest`, ~2 s): static filter, map matching, adherence, aggregates, homography, footprint trimming, control state, segments/levels, replay (pacing, looping, coverage, seek, pause), area maths, pressure, BOAM maths, API budget, travel-time tracker, agreement statistics.
 - **Live checks:** TfNSW field coverage (23 Oct): 164/269 buses with a traffic level; crowding on all buses and Metro, ~half of Sydney Trains, none for light rail/ferries. After the 30 Oct timetable refresh, all 324 live vehicles matched with route names.
 - **Visual checks in Chrome** of the projector view (all layers) and the tablet (Display, Team, legend, timeline). Found and fixed: lines spilling past the model edge, a hidden row showing, recordings list missing after startup, nudge button layout.
 
@@ -341,7 +341,7 @@ Startup ~15 s; area and BOAM layers finish in the background. Projector: `http:/
 
 ### 10.2 Recording
 - Scheduled: `python scripts/install_recording_schedule.py` (installed; `--uninstall` to remove). Wake schedule `scripts/wake_schedule.sh` was **not** run — not needed while sleep is disabled.
-- Recordings: `data/recordings/{mode}/{feed_type}/{UTC hour}.{serve|rec}.ndjson.gz`. Replay prefers `rec` when both exist.
+- Recordings: `data/recordings/{mode}/{feed_type}/{UTC hour}.{serve|rec}.ndjson.gz`. When both exist for an hour, replay reads the larger file (fixed 30 Oct; it used to prefer `rec`, which hid most of the Thu 29 Oct PM peak).
 
 ### 10.3 API budget (`engine/sources/budget.py`, config `api_budget`)
 Shared daily count in `data/api_usage.json` (file-locked). Budget 57,000 (5% under the measured quota). Peaks (weekdays 06:55–09:05, 16:25–18:35) poll every 15 s; between them the interval stretches to keep the remaining peaks affordable; spent → one cycle per 600 s. The recorder idles while the server's heartbeat (`data/recordings/.server_polling`) is fresh.
@@ -389,7 +389,7 @@ python scripts/prepare_demand_data.py --poa-dir <ABS shapefile dir> # only if zo
 
 | Item | State |
 | --- | --- |
-| Server | Running detached (PID 33059 at last restart), live mode, logging to `data/recordings/server.log` |
+| Server | Running detached (PID 39739, restarted 30 Oct 11:31 am for the replay fix), live mode, logging to `data/recordings/server.log` |
 | launchd recorder | Installed, idle between peaks, stands aside while the server polls |
 | Sleep | Disabled (`SleepDisabled 1`) — undo after 6 Nov: `sudo pmset -a disablesleep 0` |
 | API usage | 26 Oct 56,987 · 27 Oct 54,635 · 28 Oct 56,978 · 29 Oct 56,984 · 30 Oct 23,696 by 11 am |
@@ -397,7 +397,7 @@ python scripts/prepare_demand_data.py --poa-dir <ABS shapefile dir> # only if zo
 | Node.js | Installed via Homebrew (needed only for syntax checks / skills) |
 | Claude skills installed | grill-me, grilling, grill-with-docs, loop-me, domain-modeling, handoff, wait-what (others removed) |
 
-**Weekday peak recordings so far (coverage of expected bus updates):** Mon 26 AM 100%, PM 100% · Tue 27 AM 100%, PM 86% (Wi-Fi drop ~5 pm) · Wed 28 AM 100%, PM 100% · Thu 29 AM 100%, **PM 50%** (cause not yet checked) · Fri 30 AM 99%. Weekend sessions 24–25 Oct, 6 Sep, 22 Aug also replayable.
+**Weekday peak recordings so far (coverage of expected bus updates):** Mon 26 AM 100%, PM 100% · Tue 27 AM 100%, PM 86% (Wi-Fi drop ~5 pm) · Wed 28 AM 100%, PM 100% · Thu 29 AM 100%, PM 99% (was shown as 50% until the 30 Oct replay fix — the data was always complete) · Fri 30 AM 99%. Weekend sessions 24–25 Oct, 6 Sep, 22 Aug also replayable.
 
 **Known Wi-Fi drops:** 23 Oct from ~4:31 pm (lost most of that PM peak), 25 Oct afternoon, 27 Oct 5:00–5:20 pm and 7:40–10:42 pm. TfNSW also throttled the key 2–4 pm on 28 Oct (not our quota).
 
@@ -431,7 +431,7 @@ python scripts/prepare_demand_data.py --poa-dir <ABS shapefile dir> # only if zo
 **Before the showcase (by 5 Nov)**
 1. **Merge `yosephW12` with the teammate's `integration` work** — review their 9 commits, trial-merge locally, resolve conflicts, agree with the teammate which branch is the showcase build.
 2. **Test on the physical model** at the next weekly session: calibrate, check every layer, zones vs grid, colours on white card. Fixes allowed after the freeze.
-3. **Check the Thu 29 Oct PM peak** (50% coverage) — Wi-Fi or something else.
+3. ~~**Check the Thu 29 Oct PM peak** (50% coverage)~~ — done 30 Oct: a replay bug, not missing data (see `DECISIONS.md`).
 4. **Keep recording** through Thu 5 Nov; keep the Mac plugged in and on Wi-Fi during 06:55–09:05 and 16:25–18:35.
 5. **Rebuild the free-flow baseline** and **rerun the step 6 analysis** once more nights and peaks are in (`build_freeflow.py` → restart → `analyse_congestion.py`).
 6. **Report figures:** service gap, pressure, BOAM load and time lost, the step 6 tables and disagreement map.

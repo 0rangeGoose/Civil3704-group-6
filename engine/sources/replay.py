@@ -9,8 +9,10 @@ as "now" -- so 10-minute windows mean 10 minutes of *recorded* time even at
 25x.
 
 When the server and the scheduled recorder both wrote the same hour (tags
-"serve" and "rec"), only one is read so payloads aren't doubled: "rec" if
-present, since it's the dedicated peak recording.
+"serve" and "rec"), only one is read so payloads aren't doubled: the larger
+file. The recorder only polls when the server's heartbeat goes stale, so its
+file for an hour the server also wrote is usually a few stray cycles; preferring
+it by tag replaced a full hour with almost nothing (29 Oct PM peak).
 
 ``RecordingIndex`` lists what can be replayed: each weekday AM peak
 (7:00-9:00) and PM peak (16:30-18:30) Sydney time that has bus positions
@@ -49,7 +51,7 @@ PEAKS = {
 LATEST_SPAN = timedelta(hours=2)
 POLL_INTERVAL_S = 15
 MIN_COVERAGE = 0.1
-_TAG_PREFERENCE = ("rec", "serve", None)  # None = untagged files from before writer tags existed
+_TAG_PREFERENCE = ("rec", "serve", None)  # tie-break only; None = untagged files from before writer tags existed
 
 # A RawFeed with this feed_type marks the start of a new pass through the
 # window (the first, and every loop after): the engine clears its state.
@@ -84,6 +86,17 @@ def _parse_name(path: Path) -> tuple[datetime, str | None] | None:
     return hour, tag
 
 
+def _pick_writer(tags: dict[str | None, Path]) -> Path:
+    """The one file to read for an hour: the largest, ties by _TAG_PREFERENCE."""
+    def size(path: Path) -> int:
+        try:
+            return path.stat().st_size
+        except OSError:
+            return -1
+    ordered = [tags[t] for t in _TAG_PREFERENCE if t in tags]
+    return max(ordered, key=size)  # max keeps the first of equal sizes
+
+
 def _hours(start: datetime, end: datetime) -> list[datetime]:
     hour = start.replace(minute=0, second=0, microsecond=0)
     out = []
@@ -112,7 +125,7 @@ class RecordingIndex:
                 by_hour.setdefault(parsed[0], {})[parsed[1]] = path
         times: list[datetime] = []
         for tags in by_hour.values():
-            path = next(tags[t] for t in _TAG_PREFERENCE if t in tags)
+            path = _pick_writer(tags)
             times.extend(self._file_times(path))
         return sorted(times)
 
@@ -185,8 +198,7 @@ class RecordingIndex:
                         by_hour.setdefault(parsed[0], {})[parsed[1]] = path
                 chosen = []
                 for hour in sorted(by_hour):
-                    tags = by_hour[hour]
-                    chosen.append(next(tags[t] for t in _TAG_PREFERENCE if t in tags))
+                    chosen.append(_pick_writer(by_hour[hour]))
                 if chosen:
                     result.append((mode_dir.name, type_dir.name, chosen))
         return result
