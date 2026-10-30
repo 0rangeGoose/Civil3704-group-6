@@ -119,9 +119,46 @@ def test_truncated_file_ends_that_stream_without_crashing(tmp_path):
 
 def test_playback_control_validation():
     c = ControlState()
-    assert c.state["playback"] == {"session": "live", "speed": 25.0}
-    c.apply({"playback": {"session": "2026-10-22-am", "speed": 500}})
-    assert c.state["playback"] == {"session": "2026-10-22-am", "speed": 100.0}
-    for bad in ({"session": ""}, {"speed": "fast"}, {"loop": True}):
+    assert c.state["playback"] == {"session": "live", "speed": 25.0, "paused": False}
+    c.apply({"playback": {"session": "2026-10-22-am", "speed": 500, "paused": True}})
+    assert c.state["playback"] == {"session": "2026-10-22-am", "speed": 100.0, "paused": True}
+    for bad in ({"session": ""}, {"speed": "fast"}, {"loop": True}, {"paused": "yes"}):
         with pytest.raises(ControlError):
             c.apply({"playback": bad})
+
+
+def test_seek_feeds_a_warm_up_then_plays_from_the_target(tmp_path):
+    times = _every(AM_START, 40, step_s=60)  # one bus payload a minute for 40 min
+    _write(tmp_path, "buses", "vehicle_positions", "rec", times, "bus")
+    session = Session("s", "test", AM_START, AM_START + timedelta(minutes=40), 1.0)
+    target = AM_START + timedelta(minutes=30)
+    source = ReplaySource(RecordingIndex(tmp_path), session, speed=lambda: 1e6, loop=False, start_at=target)
+    out = asyncio.run(_collect(source, 100))
+    assert out[0].feed_type == RESTART and out[0].fetched_at == target - timedelta(minutes=10)
+    played = [r.fetched_at for r in out[1:]]
+    assert played[0] == target - timedelta(minutes=10)   # warm-up from 10 min before
+    assert played[-1] == AM_START + timedelta(minutes=39)
+    assert len(played) == 20
+
+
+def test_pause_holds_playback_until_resumed(tmp_path):
+    _write(tmp_path, "buses", "vehicle_positions", "rec", _every(AM_START, 1, step_s=15)[:2], "bus")
+    session = Session("s", "test", AM_START, AM_START + timedelta(minutes=1), 1.0)
+    state = {"paused": True}
+    source = ReplaySource(RecordingIndex(tmp_path), session, speed=lambda: 1e6, loop=False,
+                          paused=lambda: state["paused"])
+
+    async def run():
+        got = []
+        async def consume():
+            async for raw in source.stream():
+                got.append(raw)
+        task = asyncio.create_task(consume())
+        await asyncio.sleep(0.5)
+        held = len(got)            # only the restart marker while paused
+        state["paused"] = False
+        await asyncio.wait_for(task, 2)
+        return held, len(got)
+
+    held, total = asyncio.run(run())
+    assert held == 1 and total == 3

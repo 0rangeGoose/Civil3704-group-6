@@ -19,6 +19,7 @@ from __future__ import annotations
 
 from dataclasses import dataclass
 
+from engine.normalise.travel_time import Interval
 from engine.normalise.levels import congestion_level, crowding_level
 from engine.normalise.map_match import ShapeIndex
 from engine.normalise.vehicle import VehicleRecord
@@ -46,6 +47,9 @@ class SegmentAggregator:
         self._window_s = window_s
         # (shape_id, index) -> vehicle_key -> latest reading on that section
         self._readings: dict[tuple[str, int], dict[str, _Reading]] = {}
+        # Our derived measure (engine/normalise/travel_time.py): (shape, index) ->
+        # vehicle -> (at, level, travel-time index), attributed at each interval's midpoint
+        self._derived: dict[tuple[str, int], dict[str, tuple[float, int, float]]] = {}
         self._geometry: dict[tuple[str, int], list[list[float]]] = {}
 
     def record(self, vehicle: VehicleRecord, at: float) -> None:
@@ -58,18 +62,28 @@ class SegmentAggregator:
         key = (vehicle.shape_id, int(vehicle.distance_along_shape_m // self._segment_m))
         self._readings.setdefault(key, {})[vehicle.vehicle_key] = _Reading(at, congestion, crowding)
 
+    def record_derived(self, interval: Interval) -> None:
+        if interval.level is None:
+            return  # no free-flow baseline for this street
+        key = (interval.shape_id, int(interval.mid_m // self._segment_m))
+        self._derived.setdefault(key, {})[interval.vehicle_key] = (interval.at, interval.level, interval.tti)
+
     def snapshot(self, now: float) -> list[dict]:
         """Sections with at least one current reading:
         [{id, pts, congestion, crowding, vehicles}, ...] where
         congestion/crowding are mean levels (or None) over the window."""
         cutoff = now - self._window_s
         result = []
-        for key in list(self._readings):
-            by_vehicle = {k: r for k, r in self._readings[key].items() if r.at >= cutoff}
-            if not by_vehicle:
-                del self._readings[key]
+        for key in set(self._readings) | set(self._derived):
+            by_vehicle = {k: r for k, r in self._readings.get(key, {}).items() if r.at >= cutoff}
+            derived = {k: r for k, r in self._derived.get(key, {}).items() if r[0] >= cutoff}
+            for store, kept in ((self._readings, by_vehicle), (self._derived, derived)):
+                if kept:
+                    store[key] = kept
+                else:
+                    store.pop(key, None)
+            if not by_vehicle and not derived:
                 continue
-            self._readings[key] = by_vehicle
             congestion = [r.congestion for r in by_vehicle.values() if r.congestion is not None]
             crowding = [r.crowding for r in by_vehicle.values() if r.crowding is not None]
             result.append({
@@ -77,7 +91,9 @@ class SegmentAggregator:
                 "pts": self._section_geometry(key),
                 "congestion": round(sum(congestion) / len(congestion), 2) if congestion else None,
                 "crowding": round(sum(crowding) / len(crowding), 2) if crowding else None,
-                "vehicles": len(by_vehicle),
+                "derived": round(sum(r[1] for r in derived.values()) / len(derived), 2) if derived else None,
+                "derived_tti": round(sum(r[2] for r in derived.values()) / len(derived), 2) if derived else None,
+                "vehicles": len(by_vehicle | derived),
             })
         return result
 

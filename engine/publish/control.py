@@ -34,7 +34,7 @@ MODE_GROUPS: dict[str, list[str]] = {
 # What vehicle-dot colour shows, and which street-segment layer is drawn (at
 # most one line layer at a time; see docs/DECISIONS.md).
 LENSES = ("adherence", "congestion", "crowding")
-LINE_LAYERS = ("none", "congestion", "crowding", "boam_load", "boam_lost")
+LINE_LAYERS = ("none", "congestion", "derived", "crowding", "boam_load", "boam_lost")
 # Which BOAM peak the typical-load / time-lost streets and the pressure
 # layer's BOAM input use.
 BOAM_PERIODS = ("am", "pm")
@@ -65,7 +65,7 @@ DEFAULT_STATE: dict[str, Any] = {
     "area_unit": "zones",
     "boam_period": "am",
     "weights": {name: 1.0 for name in PRESSURE_INPUTS},
-    "playback": {"session": "live", "speed": DEFAULT_REPLAY_SPEED},
+    "playback": {"session": "live", "speed": DEFAULT_REPLAY_SPEED, "paused": False},
     "modes": {group: True for group in MODE_GROUPS},
     "nudge": dict(IDENTITY_NUDGE),
 }
@@ -150,6 +150,10 @@ class ControlState:
                         if not isinstance(item, str) or not item:
                             raise ControlError("playback.session must be 'live' or a recording id")
                         updated["playback"]["session"] = item
+                    elif field == "paused":
+                        if not isinstance(item, bool):
+                            raise ControlError("playback.paused must be true/false")
+                        updated["playback"]["paused"] = item
                     elif field == "speed":
                         if isinstance(item, bool) or not isinstance(item, (int, float)):
                             raise ControlError("playback.speed must be a number")

@@ -123,12 +123,22 @@ async def _handle_control_message(app: web.Application, ws: web.WebSocketRespons
             if known is None:
                 raise ControlError(f"no recording {session!r}")
         before = app["control"].state["playback"]["session"]
+        # "seek" is an action, not state: take it out before the patch is stored
+        seek = None
+        if isinstance(patch, dict) and isinstance(patch.get("playback"), dict) and "seek" in patch["playback"]:
+            patch = {**patch, "playback": {k: v for k, v in patch["playback"].items() if k != "seek"}}
+            seek = message["control"]["playback"]["seek"]
+            if isinstance(seek, bool) or not isinstance(seek, (int, float)):
+                raise ControlError("playback.seek must be a number from 0 to 1")
         app["control"].apply(patch)
+        if app["control"].state["playback"]["session"] != before:
+            app["control"].apply({"playback": {"paused": False}})  # a new recording starts playing
+            await switch_source(app)
+        if seek is not None:
+            await seek_replay(app, float(seek))
     except (ValueError, KeyError, TypeError, AttributeError, ControlError) as exc:
         await _send_one(ws, json.dumps({"control_error": str(exc)}))
         return
-    if app["control"].state["playback"]["session"] != before:
-        await switch_source(app)
     await broadcast_control(app)
 
 
@@ -188,7 +198,10 @@ def _playback_frame(app: web.Application) -> dict:
         "label": replay.session.label,
         "t": feed.clock,
         "speed": app["control"].state["playback"]["speed"],
+        "paused": app["control"].state["playback"]["paused"],
         "progress": round(replay.progress, 4),
+        "start": replay.session.start.timestamp(),
+        "end": replay.session.end.timestamp(),
     }
 
 
@@ -209,11 +222,36 @@ async def switch_source(app: web.Application) -> None:
         app["replay"] = None
         app["feed_task"] = asyncio.create_task(feed.run_forever())
     else:
-        session = app["replay_index"].find(session_id)
-        control = app["control"]
-        app["replay"] = ReplaySource(app["replay_index"], session, speed=lambda: control.state["playback"]["speed"])
-        app["feed_task"] = asyncio.create_task(feed.run_forever(app["replay"]))
+        _start_replay(app, app["replay_index"].find(session_id))
     logger.info("playback switched to %s", session_id)
+
+
+def _start_replay(app: web.Application, session, start_at=None) -> None:
+    control = app["control"]
+    app["replay"] = ReplaySource(
+        app["replay_index"], session,
+        speed=lambda: control.state["playback"]["speed"],
+        paused=lambda: control.state["playback"]["paused"],
+        start_at=start_at,
+    )
+    app["feed_task"] = asyncio.create_task(app["feed"].run_forever(app["replay"]))
+
+
+async def seek_replay(app: web.Application, fraction: float) -> None:
+    """Jump the current replay to a point in its window (0 = start, 1 = end)."""
+    replay: ReplaySource | None = app["replay"]
+    if replay is None:
+        raise ControlError("seeking only works during a replay")
+    session = replay.session
+    target = session.start + (session.end - session.start) * max(0.0, min(0.999, fraction))
+    app["feed_task"].cancel()
+    try:
+        await app["feed_task"]
+    except asyncio.CancelledError:
+        pass
+    app["feed"].reset()
+    _start_replay(app, session, start_at=target)
+    logger.info("replay %s: seek to %s", session.id, target.isoformat())
 
 
 async def snapshot_handler(request: web.Request) -> web.Response:

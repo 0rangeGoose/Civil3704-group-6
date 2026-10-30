@@ -2,6 +2,103 @@
 
 Judgment calls made without stopping to ask, per the project brief. Newest first.
 
+## 2026-10-30 — Step 6, final: setup kept, two threshold sets, street-level result
+
+**Trying to improve agreement** (`scripts/experiment_congestion_collect.py` and
+`_evaluate.py`): one replay of the peaks, 8 nights and 6 middays, scoring each baseline and
+stretch length on the **Thu–Fri** peaks with thresholds fitted on **Mon–Wed**:
+
+| Baseline | Stretch | Has a baseline | Fitted thresholds (TTI) | Kappa per reading | Kappa per 10 min | Spearman per street, whole peak |
+| --- | --- | --- | --- | --- | --- | --- |
+| night | 300 m | 62% | 2.66 / 2.98 / 3.32 | 0.009 | 0.015 | 0.275 |
+| night | 600 m | 61% | 2.42 / 2.7 / 3.01 | 0.003 | 0.012 | 0.104 |
+| night | 1000 m | 62% | 2.3 / 2.59 / 2.89 | -0.009 | 0.003 | 0.181 |
+| midday | 300 m | 73% | 1.91 / 2.12 / 2.34 | -0.022 | -0.018 | 0.182 |
+| midday | 600 m | 73% | 1.7 / 1.87 / 2.05 | -0.025 | -0.016 | 0.038 |
+| midday | 1000 m | 74% | 1.62 / 1.8 / 2.01 | -0.023 | -0.013 | 0.156 |
+
+No setup agrees with TfNSW beyond chance per reading or per 10 minutes. The only real
+signal is at street level over a whole peak, strongest for the setup already used
+(night, 300m). A midday baseline adds coverage but weakens it; longer stretches don't help.
+
+**Decisions**:
+- **Keep night baseline, 300m stretches.**
+- **Two threshold sets.** The model keeps **1.5 / 2 / 3×** ("how much slower than at
+  night", readable for visitors). The analysis uses **2.66 / 2.98 / 3.32**
+  (`analysis_thresholds_tti`), fitted so our levels occur as often as TfNSW's
+  (77% / 6% / 4% / 13%), which is the fair basis for comparing levels.
+- **Report step 6 at both scales**, final run (9 weekday peaks, 190,251 stretches):
+  per reading, exact 63% but weighted kappa 0.01 (the exact
+  figure is mostly the shared 77% "smooth"); per street over a whole peak, Spearman
+  **0.242** across 1,184 streets. Against BOAM time lost: 0.081.
+  Conclusion: TfNSW's per-bus label and a measured speed index capture different things;
+  they only line up, weakly, when averaged per street.
+
+## 2026-10-30 — Step 6: our own congestion measure, and how it compares with TfNSW's
+
+**Method changed from A to B (decided with the project owner).**
+
+- **A, time lost against the timetable** (planned 25 Sep), was tried first and dropped. On
+  the 28 Oct AM peak the median bus *gained* 3–5 s per 100m, even where TfNSW reported
+  severe congestion: bus timetables are padded (buses run ahead and wait at timing
+  points), so the measure mostly measured the padding. Including or excluding stop time,
+  and 100/300/500m stretches, didn't fix it.
+- **B, a travel-time index (TTI)** (`engine/normalise/travel_time.py`): a bus's speed over
+  each 300m+ stretch, stops included, against the same street's **free-flow speed**, the
+  85th-percentile speed at night (22:00–05:00) from our own recordings
+  (`scripts/build_freeflow.py`; 4,712 segments with their own baseline, 217 route shapes as
+  a fallback, from 7 nights). TTI 1.0 = as fast as at night. Levels: ≤1.5 smooth, ≤2 slow,
+  ≤3 congested, >3 severe (**thresholds proposed, awaiting approval**). Needs no
+  timetable, so it works for every bus placed on a route.
+- Live: "Traffic (our measure)" street layer, same colours as TfNSW's Traffic so the two
+  can be switched between. Streets with no night baseline stay grey.
+
+**Results** (`scripts/analyse_congestion.py`, 9 weekday peaks 26–30 Oct,
+190,251 bus stretches, 62% with a baseline):
+
+| | Per reading | Per segment, 10 min |
+| --- | --- | --- |
+| Pairs compared | 97,488 | 83,634 |
+| Exact level agreement | 35% | 36% |
+| Within one level | 60% | 60% |
+| Weighted kappa | 0.056 | 0.068 |
+
+Median TTI by TfNSW level: Running smoothly 1.75, Stop and go 2.03, Congested 2.02, Severely congested 1.93.
+Spearman TTI vs TfNSW level 0.087; vs BOAM time lost
+-0.001 (2,198 segments).
+
+**Agreement is barely above chance.** Streets TfNSW calls smooth are faster on our measure
+than the rest, but TfNSW's three congested levels are indistinguishable by speed, and most
+of our "congested/severe" readings are on streets TfNSW calls smooth. Likely reasons, to
+discuss in the report rather than tune away:
+1. **The night baseline has fewer passengers**: peak buses dwell longer at stops, so every
+   street reads slower at peak (median TTI 1.75 even where TfNSW says smooth).
+2. **300m single-bus readings are noisy**: one long dwell or red light dominates.
+3. **TfNSW's label is opaque and per vehicle**: we don't know what it measures, and it may
+   reflect conditions ahead of the bus rather than behind it.
+4. **BOAM time lost is timetable-relative**, so it shares method A's padding problem,
+   and its days are school holidays.
+
+## 2026-10-30 — Timetable refreshed
+
+The static timetable from 19 Aug ran out on 5 Nov, the day before the showcase. Replaced
+with TfNSW's current Complete GTFS (calendar 30 Oct 2026 – 28 Jan 2027: 546 routes, 2,905
+stops, 3,135 shapes in the footprint). All 324 live vehicles matched it on restart; the
+service-gap reference day moved to Tue 3 Nov. The old cache is kept as
+`data/static_cache/gtfs_cbd.2026-08-19.db`.
+
+## 2026-10-30 — Replays can be paused and scrubbed
+
+- **Pause / play** (tablet, or Space on the laptop) holds the replay where it is; the
+  projection freezes (positions and fade-outs use the paused moment) and resumes without
+  a jump.
+- **Tap the timeline** (or ±5 min, or ←/→ for a minute) to jump anywhere in the window.
+  A seek restarts the replay at the target after feeding the **10 recorded minutes before
+  it** through unpaced, so street layers and trip updates are already filled when it
+  shows. `seek` is an action, not stored state; choosing a different recording un-pauses.
+- Live polling (and the server's own recording) stays paused for as long as a replay is
+  on, paused or not: switch back to Live after a demo.
+
 ## 2026-10-26 — Polling adapts to TfNSW's daily quota
 
 Left running all weekend, the server was refused (429) from 7:06pm Sunday until midnight

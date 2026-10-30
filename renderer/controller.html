@@ -66,8 +66,15 @@
   .swatch { width: 16px; height: 16px; border-radius: 50%; flex-shrink: 0; background: #000; }
   #now-showing { font-size: 17px; font-weight: 600; margin-bottom: 10px; }
   #now-showing small { display: block; font-size: 13px; font-weight: 400; color: var(--muted); }
-  .progress { height: 6px; border-radius: 3px; background: var(--track-bg); overflow: hidden; margin: 0 0 12px; }
-  .progress div { height: 100%; width: 0; background: var(--on-bg); }
+  .transport { display: flex; gap: 8px; margin-bottom: 12px; }
+  .transport #play-pause { min-width: 110px; font-weight: 600; }
+  /* Tap anywhere on the track to jump there; the tall hit area is for fingers. */
+  .timeline { position: relative; height: 36px; cursor: pointer; touch-action: none; }
+  .timeline::before { content: ""; position: absolute; left: 0; right: 0; top: 15px; height: 6px; border-radius: 3px; background: var(--track-bg); }
+  .timeline-fill { position: absolute; left: 0; top: 15px; height: 6px; width: 0; border-radius: 3px; background: var(--on-bg); }
+  .timeline-thumb { position: absolute; top: 8px; width: 20px; height: 20px; margin-left: -10px; border-radius: 50%; background: var(--on-bg); border: 2px solid var(--fg); left: 0; }
+  .timeline-labels { display: flex; justify-content: space-between; font-size: 13px; color: var(--muted); margin: 2px 0 12px; font-variant-numeric: tabular-nums; }
+  #tl-now { color: var(--fg); font-weight: 600; }
   #session-choices { margin-bottom: 8px; }
   #session-choices .toggle { font-size: 14px; min-height: 56px; padding: 4px 8px; }
   #session-choices .toggle small { display: block; font-weight: 400; font-size: 12px; opacity: 0.8; }
@@ -153,7 +160,18 @@
     <section>
       <h2>Time</h2>
       <div id="now-showing"></div>
-      <div class="progress" id="replay-progress" hidden><div></div></div>
+      <div id="replay-controls" hidden>
+        <div class="transport">
+          <button class="btn" id="play-pause">Pause</button>
+          <button class="btn" data-skip="-5">−5 min</button>
+          <button class="btn" data-skip="5">+5 min</button>
+        </div>
+        <div class="timeline" id="timeline" role="slider" aria-label="Replay position" tabindex="0">
+          <div class="timeline-fill"></div>
+          <div class="timeline-thumb"></div>
+        </div>
+        <div class="timeline-labels"><span id="tl-start"></span><span id="tl-now"></span><span id="tl-end"></span></div>
+      </div>
       <div class="toggles" id="session-choices"></div>
       <div class="row" id="speed-row">
         <div class="label">Replay speed</div>
@@ -182,6 +200,7 @@
       <div class="toggles" id="line-choices">
         <button class="toggle" data-line="none">Off</button>
         <button class="toggle" data-line="congestion">Traffic</button>
+        <button class="toggle" data-line="derived">Traffic (our measure)</button>
         <button class="toggle" data-line="crowding">Crowding</button>
         <button class="toggle" data-line="boam_load">Typical bus load</button>
         <button class="toggle" data-line="boam_lost">Where buses lose time</button>
@@ -338,6 +357,12 @@ const LEGENDS = {
   congestion: {
     title: "Traffic (reported by Transport for NSW)",
     note: "Buses only: trains and metro aren't in road traffic. Streets show the last 10 minutes.",
+    colors: ["#3ddc84", "#ffd23f", "#ff8c1a", "#ff2e4d"],
+    labelsKey: "congestion_labels",
+  },
+  derived: {
+    title: "Traffic, our measure: how much slower than at night",
+    note: "Bus speed over each 300 m stretch compared with the same street's free-flow speed at night (from our recordings). 1.5× or less = smooth, up to 2× = slow, up to 3× = congested, more = severe. Streets without a night-time baseline stay grey. Compare with TfNSW's Traffic layer.",
     colors: ["#3ddc84", "#ffd23f", "#ff8c1a", "#ff2e4d"],
     labelsKey: "congestion_labels",
   },
@@ -658,19 +683,62 @@ function renderSessions() {
   document.getElementById("speed-row").hidden = current === "live";
 }
 
+let seekPendingUntil = 0; // after a tap, hold the thumb where it was tapped until the replay catches up
+
 function renderPlayback(p) {
   lastPlayback = p;
   const el = document.getElementById("now-showing");
-  const bar = document.getElementById("replay-progress");
+  const controls = document.getElementById("replay-controls");
   if (p.mode === "live") {
     el.innerHTML = `Live<small>What's on the network right now</small>`;
-    bar.hidden = true;
+    controls.hidden = true;
     return;
   }
-  el.innerHTML = `Replay: ${p.label}<small>Showing ${sydneyTime(p.t)} · ${p.speed === 1 ? "real time" : `${p.speed}× speed`} · loops at the end</small>`;
-  bar.hidden = false;
-  bar.firstElementChild.style.width = `${(p.progress * 100).toFixed(1)}%`;
+  const state = p.paused ? "paused" : (p.speed === 1 ? "real time" : `${p.speed}× speed`);
+  el.innerHTML = `Replay: ${p.label}<small>Showing ${sydneyTime(p.t)} · ${state} · tap the timeline to jump · loops at the end</small>`;
+  controls.hidden = false;
+  document.getElementById("play-pause").textContent = p.paused ? "Play" : "Pause";
+  document.getElementById("tl-start").textContent = sydneyTime(p.start);
+  document.getElementById("tl-end").textContent = sydneyTime(p.end);
+  document.getElementById("tl-now").textContent = sydneyTime(p.t);
+  if (performance.now() > seekPendingUntil) placeThumb(p.progress);
 }
+
+function placeThumb(fraction) {
+  const pct = `${(Math.max(0, Math.min(1, fraction)) * 100).toFixed(2)}%`;
+  document.querySelector(".timeline-fill").style.width = pct;
+  document.querySelector(".timeline-thumb").style.left = pct;
+}
+
+function seekTo(fraction) {
+  fraction = Math.max(0, Math.min(0.999, fraction));
+  placeThumb(fraction);
+  seekPendingUntil = performance.now() + 3000;
+  sendControl({ playback: { seek: fraction } });
+}
+
+document.getElementById("timeline").addEventListener("pointerdown", (ev) => {
+  const rect = ev.currentTarget.getBoundingClientRect();
+  seekTo((ev.clientX - rect.left) / rect.width);
+});
+document.getElementById("timeline").addEventListener("keydown", (ev) => {
+  if (!lastPlayback || lastPlayback.mode !== "replay") return;
+  const step = 60 / (lastPlayback.end - lastPlayback.start); // one minute
+  if (ev.key === "ArrowRight") seekTo(lastPlayback.progress + step);
+  else if (ev.key === "ArrowLeft") seekTo(lastPlayback.progress - step);
+  else return;
+  ev.preventDefault();
+});
+document.getElementById("play-pause").addEventListener("click", () => {
+  if (control) sendControl({ playback: { paused: !control.playback.paused } });
+});
+document.querySelectorAll("[data-skip]").forEach((b) => {
+  b.addEventListener("click", () => {
+    if (!lastPlayback || lastPlayback.mode !== "replay") return;
+    const minutes = Number(b.dataset.skip);
+    seekTo(lastPlayback.progress + (minutes * 60) / (lastPlayback.end - lastPlayback.start));
+  });
+});
 
 document.getElementById("speed-seg").addEventListener("click", (ev) => {
   const b = ev.target.closest("button[data-speed]");

@@ -27,6 +27,7 @@ from engine.normalise.aggregate import (
 from engine.normalise.build import build_vehicle_records
 from engine.normalise.enrich import enrich_vehicle_record
 from engine.normalise.map_match import ShapeIndex
+from engine.normalise.travel_time import DEFAULT_THRESHOLDS, FreeFlow, TravelTimeTracker
 from engine.normalise.segments import SegmentAggregator
 from engine.normalise.static_lookup import StaticLookup
 from engine.normalise.trip_updates import build_trip_update_index
@@ -54,6 +55,10 @@ class LiveVehicleFeed:
         self.interchanges: list[Interchange] = load_interchanges(db_path, cfg.raw["interchanges"])
         self._interchange_radius_m = cfg.raw.get("interchange_radius_m", 300)
         self.recordings_dir = cfg.root / "data" / "recordings"
+        derived_cfg = cfg.raw.get("derived_congestion", {})
+        self.freeflow_path = cfg.root / derived_cfg.get("freeflow_path", "data/analysis/freeflow.json")
+        self.travel_time = TravelTimeTracker(
+            FreeFlow.load(self.freeflow_path), tuple(derived_cfg.get("thresholds_tti", DEFAULT_THRESHOLDS)))
         self.api_budget, self.heartbeat = budget_from_config(cfg)
 
         self.epoch = 0  # bumped on every reset, so pages know to drop what they're showing
@@ -71,6 +76,7 @@ class LiveVehicleFeed:
         self.segments = SegmentAggregator(self._shapes)
         self.rolling_interchange_activity = RollingInterchangeActivity()
         self._trip_update_index_by_mode: dict[str, dict] = {}
+        self.travel_time.reset()
         self.epoch += 1
 
     @property
@@ -110,6 +116,9 @@ class LiveVehicleFeed:
                 self.snapshot_updated_at[enriched.vehicle_key] = now
                 self.rolling_adherence.record(enriched.mode, enriched.adherence_state, at=now)
                 self.segments.record(enriched, at=now)
+                interval = self.travel_time.observe(enriched)
+                if interval is not None:
+                    self.segments.record_derived(interval)
 
                 position_lat = enriched.matched_lat if enriched.matched_lat is not None else enriched.lat
                 position_lon = enriched.matched_lon if enriched.matched_lon is not None else enriched.lon

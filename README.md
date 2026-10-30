@@ -194,6 +194,18 @@ The server picks up every imported weekday on its next start (Display → Colour
 by → Typical bus load / Where buses lose time, with an AM/PM switch), and BOAM load becomes
 a fifth input to the pressure layer.
 
+## Step 6: our own congestion measure
+
+"Traffic (our measure)" on the tablet is a travel-time index: bus speed over 300 m
+stretches against the same street's free-flow speed at night, from our own recordings.
+
+```bash
+python scripts/build_freeflow.py        # night-time baseline (rerun as more nights are recorded)
+python scripts/analyse_congestion.py    # agreement with TfNSW's labels -> data/analysis/
+```
+
+Restart the server after rebuilding the baseline.
+
 ## Recording
 
 Raw protobuf payloads are written to
@@ -210,8 +222,10 @@ python scripts/install_recording_schedule.py --uninstall
 ```
 
 Recordings replay from the tablet (Display → Time): any recorded AM/PM peak, or the
-latest two hours, in real time or as a 10× / 25× / 50× time-lapse that loops. Live
-polling pauses while a replay plays.
+latest two hours, in real time or as a 10× / 25× / 50× time-lapse that loops. Replays can be
+paused (Play/Pause, or Space on the laptop) and scrubbed: tap the timeline, or −5/+5 min.
+Live polling, and the server's own recording, pause while a replay is on, so switch back to
+Live after a demo.
 
 Polling stays inside TfNSW's daily quota (~60,000 requests per key, reset at midnight)
 automatically: full rate during the weekday peaks, slower in between so the peaks stay
@@ -304,7 +318,7 @@ projector) and the `/control` URL the server prints on the tablet.
 tablet stays in sync): **C** calibrate, **V** verification overlay, **H** status line,
 **T** theme, **P** interchange pulses, **L** dot colour (schedule / traffic / crowding),
 **K** street lines (off / traffic / crowding), **A** areas (off / jobs / service gap / Opal 2016 / pressure),
-**G** areas on travel zones / grid, **B** BOAM peak AM / PM, **1–5** trains / metro / light rail / buses /
+**G** areas on travel zones / grid, **B** BOAM peak AM / PM, **Space** pause/play a replay, **1–5** trains / metro / light rail / buses /
 ferries, **arrows** nudge (shift ×10), **[ ]** scale, **0** reset nudge.
 
 **Headless dev/debug tools** (no rendering, just prove the data pipeline works and
@@ -318,7 +332,7 @@ python scripts/run_phase3.py --cycles 7            # + map matching/adherence + 
 **Tests**:
 
 ```bash
-pytest        # 132 tests, ~1s, no network required
+pytest        # 144 tests, ~2s, no network required
 ```
 
 ### Calibrating onto a physical model (once one exists)

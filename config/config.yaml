@@ -129,3 +129,14 @@ api_budget:
   max_interval_seconds: 600   # slowest pace when the budget is spent
   usage_path: "data/api_usage.json"
   heartbeat_path: "data/recordings/.server_polling"
+
+# Step 6: our own congestion measure, a travel-time index (TTI) against each
+# street's night-time free-flow speed. See engine/normalise/travel_time.py.
+derived_congestion:
+  freeflow_path: "data/analysis/freeflow.json"   # built by scripts/build_freeflow.py
+  # On the model: "how much slower than at night", easy to read for visitors.
+  thresholds_tti: [1.5, 2.0, 3.0]                 # smooth / slow / congested / severe
+  # In the step 6 analysis: fitted so our four levels occur as often as TfNSW's
+  # (quantile-matched on the Mon-Wed 26-28 Oct peaks, tested on Thu-Fri).
+  # See scripts/experiment_congestion.py and docs/DECISIONS.md, 30 Oct.
+  analysis_thresholds_tti: [2.66, 2.98, 3.32]
