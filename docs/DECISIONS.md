@@ -2,6 +2,23 @@
 
 Judgment calls made without stopping to ask, per the project brief. Newest first.
 
+## 2026-10-30 — Replay reads the larger file when two writers recorded the same hour
+
+The Thu 29 Oct PM peak showed 50% coverage, but nothing was missing: the server polled
+the whole peak (~900 requests every 10 min). At 17:45 its heartbeat went briefly stale,
+the scheduled recorder took over for one cycle and wrote its own `.rec.` files for that
+hour (1 bus payload), and replay always preferred `rec` over `serve`, so the full
+17:00–18:00 hour was replaced by that single cycle.
+
+- **Fix (decided with the project owner):** per hour, replay and the coverage count read
+  whichever writer's file is **larger**; the old `rec` → `serve` → untagged order only
+  breaks ties (`engine/sources/replay.py`, `_pick_writer`). Since the recorder only polls
+  when the server isn't, its file is the bigger one only when the server was down.
+- Chosen over deleting the stray files because the same thing had happened on 22 Oct
+  22:00 and 23 Oct 05:00 UTC (outside the peak windows), and will happen again whenever
+  the server stalls mid-peak.
+- Result: Thu 29 Oct PM 50% → **99%**; no other session changed. 145 tests pass.
+
 ## 2026-10-30 — Step 6, final: setup kept, two threshold sets, street-level result
 
 **Trying to improve agreement** (`scripts/experiment_congestion_collect.py` and

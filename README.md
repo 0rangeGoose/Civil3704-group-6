@@ -332,7 +332,7 @@ python scripts/run_phase3.py --cycles 7            # + map matching/adherence + 
 **Tests**:
 
 ```bash
-pytest        # 144 tests, ~2s, no network required
+pytest        # 145 tests, ~2s, no network required
 ```
 
 ### Calibrating onto a physical model (once one exists)

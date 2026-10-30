@@ -51,12 +51,15 @@ def test_sparse_peaks_are_hidden(tmp_path):
     assert "2026-10-22-am" not in {s.id for s in RecordingIndex(tmp_path).sessions()}
 
 
-def test_one_writer_per_hour_preferring_the_scheduled_recorder(tmp_path):
-    times = _every(AM_START, 60)
-    _write(tmp_path, "buses", "vehicle_positions", "serve", times, "serve")
-    _write(tmp_path, "buses", "vehicle_positions", "rec", times, "rec")
-    ((mode, feed_type, paths),) = RecordingIndex(tmp_path).files(AM_START, AM_START + timedelta(hours=1))
-    assert [p.name for p in paths] == ["20261021T20.rec.ndjson.gz"]
+@pytest.mark.parametrize("full, stray", [("serve", "rec"), ("rec", "serve")])
+def test_one_writer_per_hour_the_one_with_more_data(tmp_path, full, stray):
+    # 29 Oct: the recorder stepped in for one cycle while the server recorded the whole hour
+    _write(tmp_path, "buses", "vehicle_positions", full, _every(AM_START, 60, step_s=15), "x")
+    _write(tmp_path, "buses", "vehicle_positions", stray, [AM_START + timedelta(minutes=45)], "x")
+    index = RecordingIndex(tmp_path)
+    ((mode, feed_type, paths),) = index.files(AM_START, AM_START + timedelta(hours=1))
+    assert [p.name for p in paths] == [f"20261021T20.{full}.ndjson.gz"]
+    assert index.sessions()[0].coverage == 0.5  # "latest" window: 1 full hour of 2
 
 
 async def _collect(source: ReplaySource, limit: int) -> list:
