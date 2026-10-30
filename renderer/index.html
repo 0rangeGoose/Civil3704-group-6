@@ -99,6 +99,12 @@ const LEVEL_COLOR = {
     dark: ["#3ddc84", "#ffd23f", "#ff8c1a", "#ff2e4d"],
     light: ["#1a7f37", "#9a6700", "#bc4c00", "#cf222e"],
   },
+  // our travel-time index (step 6): same scale and colours as TfNSW's traffic,
+  // so the two can be compared by switching between them
+  derived: {
+    dark: ["#3ddc84", "#ffd23f", "#ff8c1a", "#ff2e4d"],
+    light: ["#1a7f37", "#9a6700", "#bc4c00", "#cf222e"],
+  },
   crowding: {
     dark: ["#5ec8ff", "#b48cff", "#ff7ad9", "#ff2e4d"],
     light: ["#0969da", "#8250df", "#bf3989", "#cf222e"],
@@ -159,6 +165,7 @@ let modeToGroup = {}; // feed mode -> controller group, from /config
 // Street-segment layer (congestion or crowding along route shapes), polled
 // from /segments while a line layer is on. [{id, pts, congestion, crowding}]
 let segments = [];
+const LIVE_LINE_LAYERS = new Set(["congestion", "derived", "crowding"]);
 const SEGMENT_POLL_MS = 10000;
 
 // Static area layers from /areas: {zones: [...], grid: [...]}, each unit
@@ -240,6 +247,20 @@ setInterval(() => {
 // arrive `speed` times faster, so interpolation and fade-out timing shrink to
 // match; a new epoch (source switched, or a replay looped) clears the screen.
 let playback = { mode: "live", speed: 1 };
+let pausedAtMs = null;
+
+function setPlayback(next) {
+  const paused = next.mode === "replay" && !!next.paused;
+  if (paused && pausedAtMs === null) {
+    pausedAtMs = performance.now();
+  } else if (!paused && pausedAtMs !== null) {
+    // shift every vehicle's clock by the pause, so nothing jumps or fades on resume
+    const pausedFor = performance.now() - pausedAtMs;
+    for (const entry of vehicles.values()) entry.currReceivedAt += pausedFor;
+    pausedAtMs = null;
+  }
+  playback = next;
+}
 let epoch = null;
 function pollIntervalMs() { return ((cfg.poll_interval_seconds || 15) * 1000) / (playback.speed || 1); }
 function staleAfterMs() { return ((cfg.stale_after_seconds || 90) * 1000) / (playback.speed || 1); }
@@ -263,12 +284,12 @@ function applyControl(next) {
   else if (areaChanged) areaLayerCanvas = drawAreaLayer();
   if (control.area_layer === "pressure" && (areaChanged || weightsChanged || boamChanged)) pollPressure();
   if (boamChanged && !layoutChanged) boamCanvas = drawBoamLayer();
-  if ((control.line_layer === "congestion" || control.line_layer === "crowding") && !segments.length) pollSegments();
+  if (LIVE_LINE_LAYERS.has(control.line_layer) && !segments.length) pollSegments();
 }
 
 let lastSegmentPoll = 0;
 async function pollSegments() {
-  if (control.line_layer !== "congestion" && control.line_layer !== "crowding") return;
+  if (!LIVE_LINE_LAYERS.has(control.line_layer)) return;
   lastSegmentPoll = performance.now();
   try {
     const resp = await fetch("/segments", { cache: "no-store" });
@@ -590,7 +611,9 @@ function render() {
 
   if (calibrateMode) drawCalibrationCrosshairs();
 
-  const nowMs = performance.now();
+  // Paused replay: the picture holds still (positions and fade-outs use the
+  // moment it paused), apart from the interchange glow.
+  const nowMs = pausedAtMs ?? performance.now();
   const staleMs = staleAfterMs();
   const pollMs = pollIntervalMs();
   const toDelete = [];
@@ -646,7 +669,7 @@ function render() {
       n.dx || n.dy || n.scale !== 1 ? `NUDGE ${n.dx},${n.dy} x${n.scale.toFixed(3)}` : null,
     ].filter(Boolean);
     const when = playback.mode === "replay"
-      ? `REPLAY ${playback.label} @ ${new Date(playback.t * 1000).toLocaleTimeString("en-AU", { timeZone: "Australia/Sydney" })} x${playback.speed}`
+      ? `REPLAY ${playback.label} @ ${new Date(playback.t * 1000).toLocaleTimeString("en-AU", { timeZone: "Australia/Sydney" })} x${playback.speed}${playback.paused ? " PAUSED" : ""}`
       : "LIVE";
     statusEl.textContent = `pulse-cbd  |  ${when}  |  ${vehicles.size} vehicles  |  ${wsStatus}` +
       (modeFlags.length ? `  |  ${modeFlags.join(" ")}` : "");
@@ -837,11 +860,12 @@ document.getElementById("cal-save").addEventListener("click", async () => {
 //   L dot colour (schedule / congestion / crowding)   K street lines (off / congestion / crowding)
 //   A areas (off / jobs / service gap / Opal 2016 / pressure)   G areas on travel zones / 150m grid
 //   K also reaches the BOAM streets (typical load / time lost)   B BOAM peak: AM / PM
+//   Space pause / play a replay
 //   1-5 trains / metro / light rail / buses / ferries
 //   arrows nudge (shift = x10)   [ ] scale   0 reset nudge
 const KEY_MODE_GROUPS = ["trains", "metro", "lightrail", "buses", "ferries"];
 const LENSES = ["adherence", "congestion", "crowding"];
-const LINE_LAYERS = ["none", "congestion", "crowding", "boam_load", "boam_lost"];
+const LINE_LAYERS = ["none", "congestion", "derived", "crowding", "boam_load", "boam_lost"];
 const AREA_LAYERS = ["none", "jobs", "service_gap", "opal", "pressure"];
 const nextOf = (list, current) => list[(list.indexOf(current) + 1) % list.length];
 const NUDGE_STEP_PX = 2;
@@ -862,6 +886,9 @@ document.addEventListener("keydown", (ev) => {
   else if (key === "a") sendControl({ area_layer: nextOf(AREA_LAYERS, control.area_layer) });
   else if (key === "g") sendControl({ area_unit: control.area_unit === "zones" ? "grid" : "zones" });
   else if (key === "b") sendControl({ boam_period: control.boam_period === "am" ? "pm" : "am" });
+  else if (key === " " && control.playback && control.playback.session !== "live") {
+    sendControl({ playback: { paused: !control.playback.paused } });
+  }
   else if (key >= "1" && key <= "5") {
     const group = KEY_MODE_GROUPS[Number(key) - 1];
     sendControl({ modes: { [group]: control.modes[group] === false } });
@@ -896,7 +923,7 @@ function connectWebSocket() {
       segments = [];
       pollSegments();
     }
-    if (frame.playback) playback = frame.playback;
+    if (frame.playback) setPlayback(frame.playback);
     applyFrame(frame.vehicles);
     if (frame.interchanges) interchanges = frame.interchanges;
   };

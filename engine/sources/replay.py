@@ -212,6 +212,12 @@ def _records(mode: str, feed_type: str, paths: list[Path], start: datetime, end:
             logger.warning("%s: stopped reading early: %s", path, exc)
 
 
+# On a seek, this much recorded time before the target is fed through
+# unpaced, so 10-minute street windows and trip updates are already filled
+# when playback resumes there.
+SEEK_WARMUP = timedelta(minutes=10)
+
+
 class ReplaySource:
     def __init__(
         self,
@@ -219,12 +225,16 @@ class ReplaySource:
         session: Session,
         speed: Callable[[], float],
         loop: bool = True,
+        paused: Callable[[], bool] = lambda: False,
+        start_at: datetime | None = None,
     ):
         self._index = index
         self.session = session
         self._speed = speed
+        self._paused = paused
         self._loop = loop
-        self.position: datetime = session.start  # recorded time currently being played
+        self._start_at = start_at  # first pass only; a loop starts from the beginning
+        self.position: datetime = start_at or session.start  # recorded time currently being played
 
     @property
     def progress(self) -> float:
@@ -234,15 +244,29 @@ class ReplaySource:
     async def stream(self) -> AsyncIterator[RawFeed]:
         clock = asyncio.get_event_loop()
         while True:
-            yield RawFeed("replay", RESTART, self.session.start, b"")
+            start_at, self._start_at = self._start_at, None
+            read_from = max(self.session.start, start_at - SEEK_WARMUP) if start_at else self.session.start
+            yield RawFeed("replay", RESTART, read_from, b"")
             streams = [
-                _records(mode, feed_type, paths, self.session.start, self.session.end)
-                for mode, feed_type, paths in self._index.files(self.session.start, self.session.end)
+                _records(mode, feed_type, paths, read_from, self.session.end)
+                for mode, feed_type, paths in self._index.files(read_from, self.session.end)
             ]
             anchor_wall = anchor_rec = None
             anchor_speed = None
             count = 0
             for raw in heapq.merge(*streams, key=lambda r: r.fetched_at):
+                if start_at and raw.fetched_at < start_at:
+                    # warm-up before a seek target: no pacing, no pausing
+                    self.position = raw.fetched_at
+                    if count % 20 == 0:
+                        await asyncio.sleep(0)
+                    count += 1
+                    yield raw
+                    continue
+                if self._paused():
+                    while self._paused():
+                        await asyncio.sleep(0.2)
+                    anchor_wall = None  # resume from here, not from where the clock says
                 speed = max(0.1, self._speed())
                 if anchor_wall is None or speed != anchor_speed:
                     # (Re)anchor so a speed change applies from here on, not retroactively.
