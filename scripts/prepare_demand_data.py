@@ -37,13 +37,13 @@ def _footprint(cfg):
 
 
 def _write(path: Path, features: list[dict]) -> None:
-    path.write_text(json.dumps({"type": "FeatureCollection", "features": features}))
+    path.write_text(json.dumps({"type": "FeatureCollection", "features": features}), encoding="utf-8")
     print(f"wrote {path} ({len(features)} features, {path.stat().st_size // 1024} KB)")
 
 
 def prepare_zones(cfg, src: Path, dst: Path) -> None:
     footprint = _footprint(cfg)
-    data = json.loads(src.read_text())
+    data = json.loads(src.read_text(encoding="utf-8"))
     keep = []
     for feature in data["features"]:
         geom = shape(feature["geometry"])

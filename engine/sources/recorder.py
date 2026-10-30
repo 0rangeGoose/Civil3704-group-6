@@ -50,5 +50,5 @@ class RecordingSource:
             "fetched_at": raw.fetched_at.isoformat(),
             "payload_b64": base64.b64encode(raw.payload).decode("ascii"),
         }
-        with gzip.open(mode_dir / name, "at") as f:
+        with gzip.open(mode_dir / name, "at", encoding="utf-8") as f:
             f.write(json.dumps(record) + "\n")

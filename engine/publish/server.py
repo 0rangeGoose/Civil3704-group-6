@@ -26,10 +26,12 @@ from engine.publish.calibration import CalibrationPoint, compute_and_save_calibr
 from engine.publish.control import MODE_GROUPS, ControlError, ControlState
 from engine.publish.feed import LiveVehicleFeed
 from engine.publish.homography import HomographyError
+from engine.publish.route_focus import load_route_catalog, route_detail
 from engine.publish.shapes_export import build_render_shapes
 from engine.demand.areas import build_area_layers
 from engine.demand.pressure import PressureModel
 from engine.demand.boam import build_boam_layers
+from engine.history import store as stop_visit_store
 from engine.sources.replay import RecordingIndex, ReplaySource
 
 logger = logging.getLogger("pulse_cbd.publish_server")
@@ -51,9 +53,11 @@ def _vehicle_frame(record) -> dict:
         "rc": record.route_color,
         "rsn": record.route_short_name,
         "adh": record.adherence_state,
+        "dev": record.schedule_deviation_seconds,
         "cg": congestion_level(record.congestion_level) if record.mode in CONGESTION_MODES else None,
         "oc": crowding_level(record.occupancy_status),
         "ts": record.position_timestamp,
+        "b": record.bearing,
     }
 
 
@@ -66,7 +70,11 @@ def _interchange_frame(feed: "LiveVehicleFeed") -> list[dict]:
 
 
 async def index_handler(request: web.Request) -> web.Response:
-    return web.Response(text=RENDERER_INDEX.read_text(), content_type="text/html")
+    # encoding="utf-8" explicitly -- Path.read_text()'s default is the OS
+    # locale encoding, which is UTF-8 on macOS/Linux but cp1252 on Windows;
+    # these templates have real non-ASCII characters (e.g. "·"), so reading
+    # them with the Windows default raises UnicodeDecodeError.
+    return web.Response(text=RENDERER_INDEX.read_text(encoding="utf-8"), content_type="text/html")
 
 
 async def controller_handler(request: web.Request) -> web.Response:
@@ -74,7 +82,7 @@ async def controller_handler(request: web.Request) -> web.Response:
     that used to be /stats -- per the brief, text never renders onto the
     model surface itself, and the projector mirrors the laptop screen, so
     every control lives here instead."""
-    return web.Response(text=CONTROLLER_INDEX.read_text(), content_type="text/html")
+    return web.Response(text=CONTROLLER_INDEX.read_text(encoding="utf-8"), content_type="text/html")
 
 
 async def stats_redirect_handler(request: web.Request) -> web.Response:
@@ -263,6 +271,50 @@ async def shapes_handler(request: web.Request) -> web.Response:
     return web.json_response(request.app["shapes"])
 
 
+async def stops_handler(request: web.Request) -> web.Response:
+    """Every stop in the footprint, for the optional stop-markers layer --
+    static for the life of a run (loaded once in LiveVehicleFeed.__init__),
+    same fetch-once-and-cache pattern as /shapes."""
+    feed: LiveVehicleFeed = request.app["feed"]
+    return web.json_response([
+        {"id": s.stop_id, "name": s.name, "lat": s.lat, "lon": s.lon} for s in feed.stops
+    ])
+
+
+async def routes_handler(request: web.Request) -> web.Response:
+    """Every route by short name, for the controller's route picker. Static."""
+    cache = request.app["route_cache"]
+    if "catalog" not in cache:
+        cache["catalog"] = load_route_catalog(request.app["cfg"].path("db_path"))
+    return web.json_response(cache["catalog"])
+
+
+async def route_handler(request: web.Request) -> web.Response:
+    """One route's shapes and stops, for singling it out on the model."""
+    name = request.query.get("name", "")
+    cache = request.app["route_cache"].setdefault("detail", {})
+    if name not in cache:
+        cache[name] = route_detail(request.app["cfg"].path("db_path"), name)
+    if cache[name] is None:
+        raise web.HTTPNotFound(text=f"no route named {name!r}")
+    return web.json_response(cache[name])
+
+
+STOP_HISTORY_CACHE_S = 60.0
+
+
+async def stop_history_handler(request: web.Request) -> web.Response:
+    """Per-stop delay and crowding summaries from the stop-visit history.
+    Rescanning the whole table is ~100ms, so it runs off the event loop and
+    is cached -- the history only grows by a few rows a second anyway."""
+    cache = request.app["stop_history_cache"]
+    if time.monotonic() - cache["at"] > STOP_HISTORY_CACHE_S:
+        feed: LiveVehicleFeed = request.app["feed"]
+        cache["body"] = await asyncio.to_thread(stop_visit_store.stop_summaries, feed.stop_visits_db_path)
+        cache["at"] = time.monotonic()
+    return web.json_response(cache["body"])
+
+
 async def config_handler(request: web.Request) -> web.Response:
     cfg: Config = request.app["cfg"]
     bbox = cfg.bounding_box
@@ -395,6 +447,8 @@ def build_app(cfg: Config) -> web.Application:
     app = web.Application()
     app["cfg"] = cfg
     app["websockets"] = set()
+    app["stop_history_cache"] = {"at": float("-inf"), "body": {}}
+    app["route_cache"] = {}
     app["control"] = ControlState(cfg.root / "data" / "projection_nudge.json")
     app["replay"] = None
     app["areas"] = None
@@ -411,6 +465,10 @@ def build_app(cfg: Config) -> web.Application:
     app.router.add_get("/ws", websocket_handler)
     app.router.add_get("/snapshot", snapshot_handler)
     app.router.add_get("/shapes", shapes_handler)
+    app.router.add_get("/stops", stops_handler)
+    app.router.add_get("/stop_history", stop_history_handler)
+    app.router.add_get("/routes", routes_handler)
+    app.router.add_get("/route", route_handler)
     app.router.add_get("/segments", segments_handler)
     app.router.add_get("/recordings", recordings_handler)
     app.router.add_get("/areas", areas_handler)

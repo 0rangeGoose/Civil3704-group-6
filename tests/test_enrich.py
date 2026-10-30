@@ -42,6 +42,35 @@ def test_static_join_snaps_to_the_trips_shape(static_db: Path):
     assert enriched.distance_along_shape_m == pytest.approx(550, rel=0.1)
 
 
+def test_missing_bearing_is_taken_from_the_trips_own_shape(static_db: Path):
+    record = _record(confidence="static_join", bearing=None)
+    shapes = ShapeIndex(static_db)
+    with StaticLookup(static_db) as lookup:
+        enriched = enrich_vehicle_record(record, {}, shapes, lookup, THRESHOLDS, very_late_multiplier=2)
+
+    assert enriched.bearing is not None
+    assert min(enriched.bearing, 360 - enriched.bearing) < 2  # SH1 runs north
+
+
+def test_feed_bearing_is_kept_over_the_shape_heading(static_db: Path):
+    record = _record(confidence="static_join", bearing=123.0)
+    shapes = ShapeIndex(static_db)
+    with StaticLookup(static_db) as lookup:
+        enriched = enrich_vehicle_record(record, {}, shapes, lookup, THRESHOLDS, very_late_multiplier=2)
+
+    assert enriched.bearing == 123.0
+
+
+def test_nearest_shape_fallback_does_not_invent_a_bearing(static_db: Path):
+    record = _record(confidence="unmatched", trip_id=None, bearing=None)
+    shapes = ShapeIndex(static_db)
+    with StaticLookup(static_db) as lookup:
+        enriched = enrich_vehicle_record(record, {}, shapes, lookup, THRESHOLDS, very_late_multiplier=2)
+
+    assert enriched.matched_lat is not None
+    assert enriched.bearing is None
+
+
 def test_unmatched_record_near_a_shape_is_upgraded_to_geometric_match(static_db: Path):
     record = _record(confidence="unmatched", trip_id=None)
     shapes = ShapeIndex(static_db)

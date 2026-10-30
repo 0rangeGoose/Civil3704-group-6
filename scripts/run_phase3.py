@@ -74,7 +74,7 @@ async def run(max_cycles: int | None, out_path: Path | None, aggregate_every: in
     recordings_dir = cfg.root / "data" / "recordings"
     source = RecordingSource(LiveSource(cfg), recordings_dir)
 
-    out_file = open(out_path, "a") if out_path else None
+    out_file = open(out_path, "a", encoding="utf-8") if out_path else None
     bbox = cfg.bounding_box
     roll = RollingAdherence()
     trip_update_index_by_mode: dict[str, dict] = {}

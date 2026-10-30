@@ -15,13 +15,17 @@ import logging
 import time
 
 from engine.config import Config
+from engine.history import store as stop_visit_store
+from engine.history.stop_tracker import StopVisitTracker
 from engine.normalise.aggregate import (
     Interchange,
     RollingAdherence,
     RollingInterchangeActivity,
+    Stop,
     count_active_alerts,
     load_cbd_ids,
     load_interchanges,
+    load_stops,
     nearby_interchanges,
 )
 from engine.normalise.build import build_vehicle_records
@@ -54,12 +58,14 @@ class LiveVehicleFeed:
 
         self.interchanges: list[Interchange] = load_interchanges(db_path, cfg.raw["interchanges"])
         self._interchange_radius_m = cfg.raw.get("interchange_radius_m", 300)
+        self.stops: list[Stop] = load_stops(db_path)
         self.recordings_dir = cfg.root / "data" / "recordings"
         derived_cfg = cfg.raw.get("derived_congestion", {})
         self.freeflow_path = cfg.root / derived_cfg.get("freeflow_path", "data/analysis/freeflow.json")
         self.travel_time = TravelTimeTracker(
             FreeFlow.load(self.freeflow_path), tuple(derived_cfg.get("thresholds_tti", DEFAULT_THRESHOLDS)))
         self.api_budget, self.heartbeat = budget_from_config(cfg)
+        self.stop_visits_db_path = stop_visit_store.default_db_path(cfg)
 
         self.epoch = 0  # bumped on every reset, so pages know to drop what they're showing
         self.reset()
@@ -77,6 +83,7 @@ class LiveVehicleFeed:
         self.rolling_interchange_activity = RollingInterchangeActivity()
         self._trip_update_index_by_mode: dict[str, dict] = {}
         self.travel_time.reset()
+        self.stop_visits = StopVisitTracker()
         self.epoch += 1
 
     @property
@@ -119,6 +126,12 @@ class LiveVehicleFeed:
                 interval = self.travel_time.observe(enriched)
                 if interval is not None:
                     self.segments.record_derived(interval)
+
+                trip_update_info = trip_updates.get(enriched.trip_id) if enriched.trip_id else None
+                next_stop_id = trip_update_info.next_stop_id if trip_update_info else None
+                visit = self.stop_visits.record(enriched, next_stop_id)
+                if visit is not None:
+                    stop_visit_store.record_stop_visit(self.stop_visits_db_path,**visit, recorded_at=now)
 
                 position_lat = enriched.matched_lat if enriched.matched_lat is not None else enriched.lat
                 position_lon = enriched.matched_lon if enriched.matched_lon is not None else enriched.lon

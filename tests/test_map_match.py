@@ -43,6 +43,18 @@ def test_nearest_shape_respects_max_distance(static_db: Path):
     assert result is None
 
 
+def test_heading_follows_the_shapes_direction_of_travel(static_db: Path):
+    index = ShapeIndex(static_db)
+    # SH1 runs south to north.
+    heading = index.heading_at("SH1", 550)
+    assert heading is not None
+    assert min(heading, 360 - heading) < 2
+
+
+def test_heading_for_unknown_shape_is_none(static_db: Path):
+    assert ShapeIndex(static_db).heading_at("NO_SUCH_SHAPE", 0) is None
+
+
 def test_route_for_shape(static_db: Path):
     index = ShapeIndex(static_db)
     assert index.route_for_shape("SH1") == "R1"

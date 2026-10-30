@@ -1,0 +1,13 @@
+{
+  "permissions": {
+    "allow": [
+      "Bash(python -m pytest -q --ignore=tests/test_budget.py)",
+      "Bash(python -m pytest tests/test_trip_updates.py tests/test_stop_tracker.py tests/test_history_store.py tests/test_enrich.py -v)",
+      "Bash(python -c ' *)",
+      "WebSearch",
+      "WebFetch(domain:transitcenter.org)",
+      "WebFetch(domain:mic.comotion.uw.edu)",
+      "Bash(curl -s -m 10 http://127.0.0.1:8765/snapshot)"
+    ]
+  }
+}
