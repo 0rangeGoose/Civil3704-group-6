@@ -286,6 +286,8 @@ function drawRouteFocusLayer() {
       }
     }
   }
+  // Stop rings follow the stop layers: with both off the route is just its line.
+  if (!control.stops && !control.stop_history) return off;
   for (const name of control.routes) {
     for (const id of (routeDetails[name] && routeDetails[name].stop_ids) || []) {
       if (!servedBy.has(id)) servedBy.set(id, []);
@@ -388,6 +390,7 @@ function applyControl(next) {
   const stopHistoryChanged =
     next.stop_history !== control.stop_history || next.lens !== control.lens || next.stop_metric !== control.stop_metric;
   const routesChanged = JSON.stringify(next.routes || []) !== JSON.stringify(control.routes || []);
+  const stopLayersChanged = next.stops !== control.stops || next.stop_history !== control.stop_history;
   const layoutChanged =
     next.theme !== control.theme ||
     next.calibrate !== control.calibrate ||
@@ -404,6 +407,9 @@ function applyControl(next) {
   if (control.area_layer === "pressure" && (areaChanged || weightsChanged || boamChanged)) pollPressure();
   if (boamChanged && !layoutChanged) boamCanvas = drawBoamLayer();
   if (routesChanged) loadRouteFocus();
+  else if (!layoutChanged && focusActive() && stopLayersChanged) {
+    routeFocusCanvas = drawRouteFocusLayer();
+  }
   if (stopHistoryChanged && control.stop_history) {
     if (!stopHistory) pollStopHistory();
     else if (!layoutChanged) stopHistoryCanvas = drawStopHistoryLayer();
