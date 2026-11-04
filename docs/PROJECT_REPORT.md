@@ -1,8 +1,8 @@
 # Pulse CBD — Project Report and Handover
 
-**As of:** Friday 30 October 2026, 11:45 am (Sydney)  
+**As of:** Wednesday 4 November 2026, 8 pm (Sydney)  
 **Showcase:** Friday 6 November 2026  
-**Feature freeze:** 30 October 2026 (today)  
+**Feature freeze:** 30 October 2026 (the background map, 4 Nov, was added after it at the owner's request)  
 **Author:** Yoseph Kim, with Claude Code  
 **Purpose:** a complete record of the project — what it is, how it works, why every choice was made, what's left, and the exact state of the machine and repository — so that a new Claude Code session (or a teammate) can carry on from this document alone.
 
@@ -15,7 +15,7 @@
 | Thing | Location |
 | --- | --- |
 | Project folder | `~/pulse-cbd` (Python 3.13 venv in `.venv`; activate with `source .venv/bin/activate`) |
-| Current branch | `yosephW12` (latest commit: `git log -1`), pushed to GitHub, up to date |
+| Current branch | `w12merge` = `yosephW12` + the teammate's `integration` work (latest commit: `git log -1`), pushed to GitHub. This is the build the Mac runs |
 | GitHub remote | `group-repo` → `https://github.com/0rangeGoose/Civil3704-group-6` (private) |
 | Decision log (newest first, every non-obvious call and its reasoning) | `docs/DECISIONS.md` |
 | How to run everything | `README.md` |
@@ -25,7 +25,7 @@
 
 **What is running on the Mac right now** (see §12 for details)
 
-- The Pulse CBD **server** (`scripts/run_publish.py`), started detached with `nohup`, so it survives Claude sessions ending. It serves `http://127.0.0.1:8765/` (projector view) and `/control` (tablet), polls TfNSW live and **records continuously**. Log: `data/recordings/server.log`.
+- The Pulse CBD **server** (`scripts/run_publish.py`), kept running by the **launchd job `com.pulsecbd.server`**: it starts at login and restarts within 30 s if it stops (`kill` only restarts it; stop with `python scripts/install_server_service.py --uninstall`). It serves `http://127.0.0.1:8765/` (projector view) and `/control` (tablet), polls TfNSW live and **records continuously**. Log: `data/recordings/server.log`.
 - A **launchd job** `com.pulsecbd.recorder` runs `scripts/run_record.py` every weekday at 06:55 and 16:25 for 130 minutes. It stands aside while the server is polling.
 - **Sleep is disabled** (`sudo pmset -a disablesleep 1`). Undo after the showcase with `sudo pmset -a disablesleep 0`.
 
@@ -43,7 +43,7 @@ cd ~/pulse-cbd && git status -sb && git log --oneline -3
 lsof -nP -iTCP:8765 -sTCP:LISTEN           # is the server running?
 curl -s http://127.0.0.1:8765/health        # vehicles, feed age, API quota use, playback mode
 tail -5 data/recordings/recorder.log        # scheduled peak recordings
-source .venv/bin/activate && pytest -q      # 145 tests should pass
+source .venv/bin/activate && pytest -q      # 193 tests should pass
 ```
 
 **Open decisions waiting on the owner** are listed in §16; **remaining work** in §14.
@@ -65,11 +65,11 @@ Pulse CBD projects Sydney's live public transport network onto a physical scale 
 | 5. Combined "pressure" score with adjustable weights | Done |
 | 6. Our own congestion measure + agreement with TfNSW | Done (method changed; result is weak agreement — see §8) |
 | 7. Model testing, report figures, rehearsal | Not started — needs the physical model |
-| Extras | BOAM bus-load layers; quota-aware polling; timetable refreshed |
+| Extras | BOAM bus-load layers; quota-aware polling; timetable refreshed; teammate's stop history, route filter and arrows (merged 30 Oct); optional background map (4 Nov) |
 
-- **Tests:** 145 automated tests pass in about 2 seconds, no network needed.
-- **Data recorded:** 9 weekday peaks so far (8 complete, 1 partial — see §12), plus nights and middays.
-- **Biggest risks now:** nothing has been tested on the physical model yet; a teammate's work on `integration` has diverged from `yosephW12` and needs merging (§11); Wi-Fi drops during peaks.
+- **Tests:** 193 automated tests pass in about 2 seconds, no network needed.
+- **Data recorded:** 15 weekday peaks so far (14 complete, 1 partial; Tue 3 Nov PM lost — see §12), plus nights, middays and weekends.
+- **Biggest risks now:** nothing has been tested on the physical model yet; the merged build (`w12merge`) has had little use; showcase networking (a Mac can't host a hotspot and join Wi-Fi at once); Wi-Fi drops during peaks.
 
 ---
 
@@ -162,7 +162,9 @@ The owner and Claude worked through the design question by question. Key outcome
 | Where buses lose time | BOAM, delay gained per 100 m | Typical weekday AM or PM peak |
 
 - **Area layers** (one at a time, on travel zones or the 150 m grid): Jobs, Service gap, Opal 2016, Pressure (combined, live).
-- **Projection hygiene:** no UI or cursor; everything clipped to the footprint; no basemap (the model has the streets). An optional status line can be turned on from the team panel.
+- **Stop and route layers** (teammate, merged 30 Oct): stop markers; **stop history** (median or average delay, or crowding, per stop, from live stop visits; a stop needs ≥ 20 visits to be coloured); **route filter** singling out up to 8 routes with their stops in fixed colours. Vehicles are drawn as **arrows** showing direction.
+- **Background map** (4 Nov): Plain (default), Detailed (OpenStreetMap roads, rail, water, parks) or Full (Detailed plus suburb, station, landmark, park, water and street names, never overlapping). Stored offline; see `DECISIONS.md` (4 Nov).
+- **Projection hygiene:** no UI or cursor; everything clipped to the footprint; plain background by default (the model has the streets). An optional status line can be turned on from the team panel.
 
 ### 5.2 Time
 
@@ -174,13 +176,13 @@ The owner and Claude worked through the design question by question. Key outcome
 
 ### 5.3 The tablet (`/control`)
 
-- **Display (visitors):** time and replay controls, vehicle modes, dot colour, street layer, area layer, area shape, BOAM peak (AM/PM), and a legend explaining whatever is on.
+- **Display (visitors):** time and replay controls, vehicle modes, dot colour, street layer, stop markers and stop history, route filter, area layer, area shape, BOAM peak (AM/PM), background map, and a legend explaining whatever is on.
 - **Team (PIN `3704`, browser-only check):** theme, verification overlay, status line on projection, alignment nudge (2 px / 20 px, scale), crosshair calibration, pressure weights (0–3), system health (vehicles per mode, feed age, API requests used today and current polling interval).
 - **Stats:** on-time % by mode over 5/15/60 min, active alerts, busiest interchanges.
 
 ### 5.4 Laptop keyboard (backup; every key goes through the server)
 
-C calibrate · V verification overlay · H status line · T theme · P pulses · L dot colour · K street layer · A area layer · G zones/grid · B BOAM peak · Space pause/play · 1–5 mode groups · arrows nudge (Shift ×10) · [ ] scale · 0 reset nudge.
+C calibrate · V verification overlay · H status line · T theme · M background map · P pulses · S stop markers · O stop history · L dot colour · K street layer · A area layer · G zones/grid · B BOAM peak · Space pause/play · 1–5 mode groups · arrows nudge (Shift ×10) · [ ] scale · 0 reset nudge.
 
 ---
 
@@ -315,7 +317,7 @@ Outputs: `data/analysis/congestion_agreement.json`, `congestion_disagreements.ge
 
 ## 9. Validation, testing and performance
 
-- **145 automated tests** (`pytest`, ~2 s): static filter, map matching, adherence, aggregates, homography, footprint trimming, control state, segments/levels, replay (pacing, looping, coverage, seek, pause), area maths, pressure, BOAM maths, API budget, travel-time tracker, agreement statistics.
+- **193 automated tests** (`pytest`, ~2 s): static filter, map matching, adherence, aggregates, homography, footprint trimming, control state, segments/levels, replay (pacing, looping, coverage, seek, pause, writer choice), area maths, pressure, BOAM maths, API budget, travel-time tracker, agreement statistics, the teammate's stop tracker/history/trip updates/route focus, and the background map build. None cover the projector or tablet pages' JavaScript; those are checked by eye in a browser.
 - **Live checks:** TfNSW field coverage (23 Oct): 164/269 buses with a traffic level; crowding on all buses and Metro, ~half of Sydney Trains, none for light rail/ferries. After the 30 Oct timetable refresh, all 324 live vehicles matched with route names.
 - **Visual checks in Chrome** of the projector view (all layers) and the tablet (Display, Team, legend, timeline). Found and fixed: lines spilling past the model edge, a hidden row showing, recordings list missing after startup, nudge button layout.
 
@@ -334,9 +336,11 @@ Outputs: `data/analysis/congestion_agreement.json`, `congestion_disagreements.ge
 
 ### 10.1 Start / stop
 ```bash
-cd ~/pulse-cbd && nohup .venv/bin/python scripts/run_publish.py >> data/recordings/server.log 2>&1 < /dev/null & disown   # start detached
-kill $(lsof -t -iTCP:8765 -sTCP:LISTEN)                                                                                    # stop
+python scripts/install_server_service.py                  # install the launchd job and start (done 3 Nov)
+launchctl kickstart -k gui/$(id -u)/com.pulsecbd.server   # restart, e.g. after a code change
+python scripts/install_server_service.py --uninstall      # stop for good (plain `kill` only restarts it)
 ```
+The job starts the server at login, so after a reboot someone must log in.
 Startup ~15 s; area and BOAM layers finish in the background. Projector: `http://127.0.0.1:8765/` full-screen. Tablet: `http://<laptop address>:8765/control` (printed in the log).
 
 ### 10.2 Recording
@@ -354,6 +358,7 @@ python scripts/export_boam.py                                      # data/boam/s
 python scripts/build_freeflow.py                                   # rebuild night baseline (~5 min), then restart
 python scripts/analyse_congestion.py                               # step 6 analysis (~15 min)
 python scripts/prepare_demand_data.py --poa-dir <ABS shapefile dir> # only if zones/postcodes change
+python scripts/fetch_basemap.py [--cached]                         # background map from OpenStreetMap, then restart
 ```
 
 ### 10.5 Weekly model session
@@ -372,34 +377,37 @@ python scripts/prepare_demand_data.py --poa-dir <ABS shapefile dir> # only if zo
 
 | Branch | Where | State |
 | --- | --- | --- |
-| `yosephW12` | local + GitHub | **Current.** All of the owner's work through 30 Oct (`db1b94a`). Pushed 30 Oct on instruction. |
-| `integration` | local `ff65c32`; **GitHub `7ecca02`** | Local = owner's work to 26 Oct. **GitHub has 9 extra commits by 0rangeGoose (29–30 Oct)**: "Directional arrows", "History stop data", "median average delays", "removing abnormal zeros", "route lines and colors", "Antohny changes" — 40 files, ~1,700 lines, new tests `test_route_focus.py`, `test_stop_tracker.py`, `test_trip_updates.py`. |
+| `w12merge` | local + GitHub | **Current, and what the Mac runs.** `yosephW12` merged with the teammate's `integration` work (merge `3ab2a8a`, 30 Oct), plus later work: stop visits recorded only while live, the server's launchd job, the background map. |
+| `yosephW12` | local + GitHub | The owner's work through 30 Oct, before the merge (`3bfd432`). |
+| `integration` | GitHub `67d4d9c` | The teammate's 11 commits of 29–30 Oct (stop history, delay-reading fixes, route filter, arrows, Windows support, their individual report) on top of the owner's work to 26 Oct. Fully contained in `w12merge`. |
 | `test` | local + GitHub | Owner's prototype as of 28 Aug |
 | `main`, `mid-project-demo`, `test-pipline`, `Mid-project-demo-A-edits` | GitHub | Teammates' template and dashboard work |
 
-**`yosephW12` and `integration` have diverged** and must be merged before the showcase, or one version of the app lacks the other's features. Both sides touched the engine (teammate: trip updates, map matching; owner: feed, segments, replay). A trial merge on a separate local branch (nothing pushed) was offered and not yet approved.
+**Which branch is the showcase build** still has to be agreed with the teammate (§16); `w12merge` is the only one with both sides' work.
 
 **Never push to `integration` without explicit instruction** (owner's 30 Oct instruction).
+
+**Repository clean-up before submission:** the teammate committed personal `.claude/settings.json` and `.vscode/settings.json`, ~55 MB of PDFs and a spreadsheet in `template-repository-main/New folder/` (not in Git LFS), and their report at the repo root.
 
 **Security note:** a teammate's TfNSW API key is committed in `template-repository-main/src/file.env` (commit `d85b5e1`, private repo). It should be regenerated. The owner's key is only in `.env` (gitignored) and appears in no commit (checked before each push).
 
 ---
 
-## 12. State of the Mac (as of 30 Oct, 11:20 am)
+## 12. State of the Mac (as of 4 Nov, 8 pm)
 
 | Item | State |
 | --- | --- |
-| Server | Running detached (PID 39739, restarted 30 Oct 11:31 am for the replay fix), live mode, logging to `data/recordings/server.log` |
+| Server | launchd job `com.pulsecbd.server` (since 3 Nov), running `w12merge`, live mode, logging to `data/recordings/server.log` |
 | launchd recorder | Installed, idle between peaks, stands aside while the server polls |
-| Sleep | Disabled (`SleepDisabled 1`) — undo after 6 Nov: `sudo pmset -a disablesleep 0` |
-| API usage | 26 Oct 56,987 · 27 Oct 54,635 · 28 Oct 56,978 · 29 Oct 56,984 · 30 Oct 23,696 by 11 am |
-| Disk | ~80 GB free. `data/recordings` 16 GB (~3.5 GB/day), `static_cache` 1.1 GB (incl. backup), `demand` 109 MB, `analysis` 58 MB, `boam` 47 MB |
+| Sleep | Disabled (`SleepDisabled 1`) — undo after 6 Nov: `sudo pmset -a disablesleep 0`. The Mac must stay **on power** (it was found on battery on 3 Nov) |
+| API usage | ~57,000 every full day 26 Oct – 2 Nov · 3 Nov 39,663 (server down 11:30–18:33) · 4 Nov 46,023 by 8 pm |
+| Disk | 73 GB free. `data/recordings` 26 GB, `data/history` (stop visits) 112 MB, `data/basemap` 16 MB |
 | Node.js | Installed via Homebrew (needed only for syntax checks / skills) |
 | Claude skills installed | grill-me, grilling, grill-with-docs, loop-me, domain-modeling, handoff, wait-what (others removed) |
 
-**Weekday peak recordings so far (coverage of expected bus updates):** Mon 26 AM 100%, PM 100% · Tue 27 AM 100%, PM 86% (Wi-Fi drop ~5 pm) · Wed 28 AM 100%, PM 100% · Thu 29 AM 100%, PM 99% (was shown as 50% until the 30 Oct replay fix — the data was always complete) · Fri 30 AM 99%. Weekend sessions 24–25 Oct, 6 Sep, 22 Aug also replayable.
+**Weekday peak recordings so far (coverage of expected bus updates):** Mon 26 Oct AM 100%, PM 100% · Tue 27 AM 100%, PM 86% (Wi-Fi drop ~5 pm) · Wed 28 AM 100%, PM 100% · Thu 29 AM 100%, PM 99% · Fri 30 AM 99%, PM 100% · Mon 2 Nov AM 100%, PM 98% · Tue 3 AM 100%, **PM lost** (Mac shut down; see `DECISIONS.md`, 3 Nov) · Wed 4 AM 100%, PM 99%. Weekends 24–25 Oct and 31 Oct – 1 Nov (66%: slower polling outside weekday peaks), 6 Sep and 22 Aug are also replayable.
 
-**Known Wi-Fi drops:** 23 Oct from ~4:31 pm (lost most of that PM peak), 25 Oct afternoon, 27 Oct 5:00–5:20 pm and 7:40–10:42 pm. TfNSW also throttled the key 2–4 pm on 28 Oct (not our quota).
+**Known outages:** Wi-Fi drops 23 Oct from ~4:31 pm (lost most of that PM peak), 25 Oct afternoon, 27 Oct 5:00–5:20 pm and 7:40–10:42 pm; TfNSW throttled the key 2–4 pm on 28 Oct (not our quota); the Mac shut down after 11:30 am on 3 Nov and the server stayed down until 6:33 pm.
 
 ---
 
@@ -429,22 +437,27 @@ python scripts/prepare_demand_data.py --poa-dir <ABS shapefile dir> # only if zo
 ## 14. Remaining work (prioritised)
 
 **Before the showcase (by 5 Nov)**
-1. **Merge `yosephW12` with the teammate's `integration` work** — review their 9 commits, trial-merge locally, resolve conflicts, agree with the teammate which branch is the showcase build.
+1. ~~**Merge `yosephW12` with the teammate's `integration` work**~~ — done 30 Oct (`w12merge`). Still to do: **agree with the teammate** that `w12merge` is the showcase build, and that ~70% of Sydney Trains now show grey.
 2. **Test on the physical model** at the next weekly session: calibrate, check every layer, zones vs grid, colours on white card. Fixes allowed after the freeze.
 3. ~~**Check the Thu 29 Oct PM peak** (50% coverage)~~ — done 30 Oct: a replay bug, not missing data (see `DECISIONS.md`).
 4. **Keep recording** through Thu 5 Nov; keep the Mac plugged in and on Wi-Fi during 06:55–09:05 and 16:25–18:35.
 5. **Rebuild the free-flow baseline** and **rerun the step 6 analysis** once more nights and peaks are in (`build_freeflow.py` → restart → `analyse_congestion.py`).
 6. **Report figures:** service gap, pressure, BOAM load and time lost, the step 6 tables and disagreement map.
 7. **Pick the showcase replay** (best complete weekday peak).
-8. **Full rehearsal** with the tablet on the hotspot.
+8. **Full rehearsal** with the tablet on the hotspot. **Test the networking first:** a Mac can't host a hotspot and join Wi-Fi at once, so live mode needs Ethernet or USB tethering, or a phone hotspot both devices join.
 9. Ask the teammate to **regenerate the committed API key**.
+10. **Back up the best 3–4 peaks** to an external drive (replays depend on this one disk).
+11. **Say on the projection when it's a replay** (status line, or say it out loud): the default is a 25× replay of a past peak.
 
 **Optional / undecided**
 - Exclude the 3 holiday BOAM days from averages (they barely change results — loads match to ~1 percentage point).
 - Wi-Fi stall notification on the Mac (offered, not built).
 - Add an "early" adherence state; cite official TfNSW on-time definitions.
+- Move "Traffic (our measure)" to the team panel (it disagrees with TfNSW's layer and reads "slow" almost everywhere at peak).
+- Speed up `/stop_history` (rescans the whole history; ~13 s at 586k visits).
+- Check the Full background map's labels are readable on the model.
 
-**After the showcase:** `sudo pmset -a disablesleep 0`; stop the server; `python scripts/install_recording_schedule.py --uninstall`.
+**After the showcase:** `sudo pmset -a disablesleep 0`; `python scripts/install_server_service.py --uninstall`; `python scripts/install_recording_schedule.py --uninstall`.
 
 ---
 
@@ -463,10 +476,11 @@ python scripts/prepare_demand_data.py --poa-dir <ABS shapefile dir> # only if zo
 
 ## 16. Open decisions waiting on the owner
 
-1. Trial merge with the teammate's `integration` commits? (offered 30 Oct)
-2. Exclude the holiday BOAM days from averages?
-3. Build the Wi-Fi stall notification?
-4. Which branch is the showcase build (`yosephW12`, `integration`, or a merge)?
+1. Exclude the holiday BOAM days from averages?
+2. Build the Wi-Fi stall notification?
+3. Confirm `w12merge` as the showcase build, with the teammate.
+4. Move "Traffic (our measure)" off the visitor tab?
+5. Speed up the teammate's `/stop_history` (their code)?
 
 ---
 
@@ -482,7 +496,9 @@ python scripts/prepare_demand_data.py --poa-dir <ABS shapefile dir> # only if zo
 | 24–25 Oct | Server run continuously; quota exhausted 7 pm Sun → quota measured |
 | 26 Oct | Quota-aware polling, network retry ≤30 s; first complete weekday peaks |
 | 29–30 Oct | Teammate pushes 9 commits to `integration` |
-| 30 Oct | Replay pause/seek; timetable refreshed; step 6 (method B, experiment, final analysis); 12 more BOAM days (term time); work pushed to new branch `yosephW12` |
+| 30 Oct | Replay pause/seek; timetable refreshed; step 6 (method B, experiment, final analysis); 12 more BOAM days (term time); work pushed to new branch `yosephW12`; replay writer fix (Thu 29 PM 50% → 99%); merged with `integration` as `w12merge`; stop visits live-only |
+| 3 Nov | Mac shut down after 11:30, server down until 18:33, PM peak lost; server moved to a launchd job that restarts it |
+| 4 Nov | Optional background map: Plain / Detailed / Full (OpenStreetMap, offline, with labels) |
 
 ---
 
@@ -494,8 +510,9 @@ python scripts/prepare_demand_data.py --poa-dir <ABS shapefile dir> # only if zo
 | Live engine | `engine/sources/live.py`, `budget.py`, `recorder.py`, `footprint.py`, `replay.py` |
 | Normalise | `engine/normalise/build.py`, `enrich.py`, `map_match.py`, `levels.py`, `segments.py`, `travel_time.py`, `adherence.py`, `aggregate.py` |
 | Static layers | `engine/demand/areas.py`, `boam.py`, `pressure.py` |
-| Server | `engine/publish/server.py`, `feed.py`, `control.py`, `calibration.py` |
+| Server | `engine/publish/server.py`, `feed.py`, `control.py`, `calibration.py`, `route_focus.py` |
+| Stop history (teammate) | `engine/history/stop_tracker.py`, `store.py`; `engine/normalise/trip_updates.py` (delay rules) |
 | Pages | `renderer/index.html` (projector), `renderer/controller.html` (tablet) |
-| Scripts | `run_publish.py`, `run_record.py`, `install_recording_schedule.py`, `run_phase1.py`, `prepare_demand_data.py`, `import_boam.py`, `export_boam.py`, `build_freeflow.py`, `analyse_congestion.py`, `experiment_congestion_collect.py`, `experiment_congestion_evaluate.py` |
-| Data (gitignored) | `data/static_cache/`, `data/recordings/`, `data/demand/`, `data/opal/`, `data/boam/`, `data/analysis/`, `data/api_usage.json`, `data/projection_nudge.json` |
+| Scripts | `run_publish.py`, `run_record.py`, `install_server_service.py`, `install_recording_schedule.py`, `fetch_basemap.py`, `run_phase1.py`, `prepare_demand_data.py`, `import_boam.py`, `export_boam.py`, `build_freeflow.py`, `analyse_congestion.py`, `experiment_congestion_collect.py`, `experiment_congestion_evaluate.py` |
+| Data (gitignored) | `data/static_cache/`, `data/recordings/`, `data/demand/`, `data/opal/`, `data/boam/`, `data/analysis/`, `data/history/` (stop visits), `data/basemap/`, `data/api_usage.json`, `data/projection_nudge.json` |
 | Docs | `README.md`, `docs/DECISIONS.md`, `docs/PROJECT_REPORT.md` |

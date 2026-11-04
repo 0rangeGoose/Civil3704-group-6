@@ -86,7 +86,7 @@
   .row + .row { border-top: 1px solid var(--track-bg); }
   .row .label { font-size: 15px; }
   .row .label small { display: block; color: var(--muted); font-size: 12px; }
-  .seg { display: inline-flex; border: 1px solid var(--panel-border); border-radius: 8px; overflow: hidden; }
+  .seg { display: inline-flex; flex-shrink: 0; border: 1px solid var(--panel-border); border-radius: 8px; overflow: hidden; }
   .seg button, .btn {
     font: inherit; font-size: 15px; min-height: 48px; min-width: 64px; padding: 0 14px; cursor: pointer;
     background: var(--track-bg); color: var(--fg); border: none;
@@ -94,6 +94,7 @@
   .btn { border: 1px solid var(--panel-border); border-radius: 8px; }
   .seg button + button { border-left: 1px solid var(--panel-border); }
   .seg button[aria-pressed="true"] { background: var(--on-bg); color: var(--on-fg); }
+  .seg button:disabled { opacity: 0.4; cursor: default; }
   .btn.warn { color: var(--warn); }
 
   .nudge { display: grid; grid-template-columns: repeat(3, 64px); grid-template-rows: repeat(3, 56px); gap: 6px; }
@@ -264,6 +265,16 @@
         <div class="seg" id="unit-seg">
           <button data-unit="zones">Travel zones</button>
           <button data-unit="grid">150 m grid</button>
+        </div>
+      </div>
+    </section>
+    <section>
+      <div class="row">
+        <div class="label">Background map<small>Plain suits the model. Detailed adds roads, rail, water and parks; Full also names places, stations and streets (© OpenStreetMap contributors)</small></div>
+        <div class="seg" id="basemap-seg">
+          <button data-basemap="plain">Plain</button>
+          <button data-basemap="detailed">Detailed</button>
+          <button data-basemap="full">Full</button>
         </div>
       </div>
     </section>
@@ -588,6 +599,10 @@ function render(next) {
   document.querySelectorAll("[data-unit]").forEach((b) => b.setAttribute("aria-pressed", String(b.dataset.unit === control.area_unit)));
   document.querySelectorAll("[data-boam-period]").forEach((b) => b.setAttribute("aria-pressed", String(b.dataset.boamPeriod === control.boam_period)));
   document.querySelectorAll("[data-stop-metric]").forEach((b) => b.setAttribute("aria-pressed", String(b.dataset.stopMetric === control.stop_metric)));
+  document.querySelectorAll("[data-basemap]").forEach((b) => {
+    b.setAttribute("aria-pressed", String(b.dataset.basemap === control.basemap));
+    if (b.dataset.basemap !== "plain") b.disabled = !(cfg && cfg.basemap_available);
+  });
   renderRouteChips();
   document.getElementById("boam-period-row").hidden = !(control.line_layer in BOAM_LEGENDS || control.area_layer === "pressure");
   const hasBoam = !!(boamMeta && boamMeta.days && boamMeta.days.length);
@@ -624,6 +639,10 @@ document.getElementById("area-choices").addEventListener("click", (ev) => {
 document.getElementById("boam-period-seg").addEventListener("click", (ev) => {
   const b = ev.target.closest("[data-boam-period]");
   if (b) sendControl({ boam_period: b.dataset.boamPeriod });
+});
+document.getElementById("basemap-seg").addEventListener("click", (ev) => {
+  const b = ev.target.closest("[data-basemap]");
+  if (b && !b.disabled) sendControl({ basemap: b.dataset.basemap });
 });
 document.getElementById("stop-metric-seg").addEventListener("click", (ev) => {
   const b = ev.target.closest("[data-stop-metric]");

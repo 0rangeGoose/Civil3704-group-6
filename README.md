@@ -206,6 +206,22 @@ python scripts/analyse_congestion.py    # agreement with TfNSW's labels -> data/
 
 Restart the server after rebuilding the baseline.
 
+## Background map
+
+The model has its own streets, so the projection's background is plain by default. For a
+laptop or flat-screen demo, the tablet's Display tab (Background map) or **M** switches to
+**Detailed** (roads, rail, water, parks) or **Full** (Detailed plus suburb, station, landmark,
+park, water and street names, placed so they never overlap). Both come from OpenStreetMap,
+downloaded once and stored locally, so they need no internet at the showcase:
+
+```bash
+python scripts/fetch_basemap.py            # -> data/basemap/basemap.json (~3 MB), then restart
+python scripts/fetch_basemap.py --cached   # rebuild from the last download
+```
+
+Until it has been downloaded, Detailed and Full are greyed out. Map data © OpenStreetMap
+contributors (ODbL); the tablet shows the credit.
+
 ## Recording
 
 Raw protobuf payloads are written to
@@ -271,7 +287,7 @@ pulse-cbd/
     run_phase3.py             + map matching/adherence (dev/debug tool)
     run_publish.py            The real entry point — starts everything
 
-  tests/                     68 tests, one file per module
+  tests/                     193 tests, one file per module
   docs/DECISIONS.md          Every non-obvious judgment call made during the build,
                               and why — read this for the "why" behind anything
                               that looks like it could've been done differently
@@ -305,18 +321,25 @@ python scripts/run_phase1.py --seed-dir /path/to/gtfs/extract
 python scripts/run_phase1.py
 ```
 
-**Run it for real**:
+**Run it for real**, kept running by launchd (starts at login, restarts within 30 s if it
+stops; log in `data/recordings/server.log`):
 
 ```bash
-python scripts/run_publish.py
+python scripts/install_server_service.py              # install and start
+launchctl kickstart -k gui/$(id -u)/com.pulsecbd.server   # restart (e.g. after a code change)
+python scripts/install_server_service.py --uninstall  # stop for good
 ```
+
+While it's installed, `kill` only restarts the server. For a one-off run in the terminal
+instead (uninstall the service first, or the port is taken): `python scripts/run_publish.py`.
 
 Then open `http://127.0.0.1:8765/` full-screen on the laptop (it's mirrored to the
 projector) and the `/control` URL the server prints on the tablet.
 
 **Keyboard backup** on the projector page (each key goes through the server, so the
 tablet stays in sync): **C** calibrate, **V** verification overlay, **H** status line,
-**T** theme, **P** interchange pulses, **L** dot colour (schedule / traffic / crowding),
+**T** theme, **M** background map (plain / detailed / full), **P** interchange pulses,
+**S** stop markers, **O** stop history, **L** dot colour (schedule / traffic / crowding),
 **K** street lines (off / traffic / crowding), **A** areas (off / jobs / service gap / Opal 2016 / pressure),
 **G** areas on travel zones / grid, **B** BOAM peak AM / PM, **Space** pause/play a replay, **1–5** trains / metro / light rail / buses /
 ferries, **arrows** nudge (shift ×10), **[ ]** scale, **0** reset nudge.
@@ -332,7 +355,7 @@ python scripts/run_phase3.py --cycles 7            # + map matching/adherence + 
 **Tests**:
 
 ```bash
-pytest        # 145 tests, ~2s, no network required
+pytest        # 193 tests, ~2s, no network required
 ```
 
 ### Calibrating onto a physical model (once one exists)
@@ -376,14 +399,14 @@ stopping to ask, in the order they were made, each with its reasoning. Highlight
 - **SQLite** for the filtered static cache — no extra dependency, indexed lookups.
 - **Compiled the TfNSW realtime proto standalone** rather than using the `gtfs-realtime-bindings` package, because the fetched extension file redefines the base messages inline rather than importing Google's official proto.
 - **Geometric map matching resolves the Sydney Trains/Metro/Light-Rail id-mismatch quirk** — confirmed live, not just theorised.
-- **No basemap image** in the renderer — the route-corridor layer alone gives enough spatial reference.
+- **No basemap by default** — the model has the streets. An optional OpenStreetMap background (Detailed, or Full with names) is there for screen demos, stored offline and drawn through the same projection as everything else.
 - **Calibration uses a simple equirectangular projection**, not the UTM used for map matching, specifically so the browser (no pyproj available) can reproduce the exact same transform in plain JavaScript.
 - **Two real bugs caught by live testing**, not code review: a blocking `alert()` that froze the page, and — more seriously — a WebSocket broadcast loop with no per-client timeout that one frozen connection could hang for every viewer, permanently.
 
 ## Current status
 
-All six phases from the original design brief are built, tested (68 automated
-tests), and live-verified against the real Transport for NSW API:
+All six phases from the original design brief are built, tested (193 automated
+tests, as of 4 Nov 2026), and live-verified against the real Transport for NSW API:
 
 1. ✅ Static GTFS foundation
 2. ✅ Headless realtime ingestion

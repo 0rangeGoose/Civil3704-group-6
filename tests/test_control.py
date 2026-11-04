@@ -24,6 +24,16 @@ def test_stop_toggles_validate_like_the_other_boolean_flags(key):
         c.apply({key: "yes"})
 
 
+def test_basemap_defaults_to_plain_and_accepts_detailed_and_full():
+    c = ControlState()
+    assert c.state["basemap"] == "plain"  # the model has its own streets
+    for value in ("detailed", "full"):
+        c.apply({"basemap": value})
+        assert c.state["basemap"] == value
+    with pytest.raises(ControlError):
+        c.apply({"basemap": "satellite"})
+
+
 def test_stop_metric_defaults_to_median_and_accepts_mean():
     c = ControlState()
     assert c.state["stop_metric"] == "median"

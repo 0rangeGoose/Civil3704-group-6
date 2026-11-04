@@ -2,6 +2,69 @@
 
 Judgment calls made without stopping to ask, per the project brief. Newest first.
 
+## 2026-11-04 — Optional background map: Plain (default), Detailed, Full
+
+Asked for by the project owner, for a richer picture on a laptop or flat screen. This
+**partly reverses the 25 Sep "no basemap" decision**, so the default stays Plain: on the
+model the streets are already there, and anything drawn would compete with them.
+
+- **OpenStreetMap, downloaded once and stored offline** (`scripts/fetch_basemap.py`,
+  `data/basemap/basemap.json`, ~3 MB, gitignored), chosen with the owner over live map
+  tiles: no internet needed at the showcase, and it's drawn as lines and polygons through
+  the same projector as everything else, so it lines up after calibration. Tiles would
+  have needed warping to match the calibrated projection.
+- **Detailed**: roads (major and minor), rail, water and parks, kept faint so data stays on
+  top. Hidden while the verification overlay is on.
+- **Full**: Detailed plus 753 labels: suburbs, water, rail stations and wharves, landmarks,
+  parks over 4 ha, neighbourhoods and street names (angled along the road, repeated about
+  every 1 km). Placed greedily in that order of importance, skipping any that would overlap
+  one already placed or not fit wholly on the model. Drawn above the street colours, under
+  the vehicles.
+- Calls made while checking it: **road tunnels are left out** (drawing the Cross City or
+  Harbour Tunnel on the surface misleads on a physical model); **one label per wharf**
+  ("Circular Quay", not one per berth); **bus interchanges and railway junctions aren't
+  labelled** (they crowded out stations and places); each water/park ring is filled
+  separately (filled together, overlapping rings cancelled out and the harbour vanished).
+- The public Overpass servers failed several times while downloading (502/504), so the
+  script retries, falls back to a second server, and keeps the raw download for
+  `--cached` rebuilds.
+- **Untested on the model.** At projector resolution the smallest labels (10 px street
+  names) may be too small to read; Full is likely more useful on a screen.
+
+## 2026-11-03 — The server restarts itself (launchd agent)
+
+The Mac shut down some time after 11:30 on Tue 3 Nov (cause not found in the logs) and
+came back at 16:00. The server had been started by hand, so it stayed down, and the
+scheduled 16:25 recording didn't start until 18:28: most of that PM peak was lost.
+
+- `scripts/install_server_service.py` installs `com.pulsecbd.server`: starts the server at
+  login, restarts it within 30 s whenever it exits (tested: killed at 18:33:15, serving
+  again at 18:33:30), under `caffeinate -i`. Same pattern as the recorder's agent.
+- It's a user agent, so after a restart it starts only once someone logs in.
+- `kill` no longer stops the server for good; `--uninstall` does.
+
+## 2026-10-30 — Merged the teammate's `integration` work (branch `w12merge`)
+
+`w12merge` = `yosephW12` + 0rangeGoose's 29–30 Oct commits: stop-visit history, the
+placeholder-zero and full-trip fixes to trip-update delays, route filter, directional
+arrows, Windows support. Their reasoning is in their individual report (repo root);
+the calls that change what everyone sees:
+
+- **An exact 0 s delay on a whole trip counts as "no live prediction"**, not on time. About
+  70% of Sydney Trains now show grey ("no schedule data") instead of green, and Metro,
+  light rail, ferries and NSW TrainLink now read the next stop's delay rather than the
+  trip origin's (always 0). On-time percentages on the Stats tab change accordingly.
+- **Two conflicts, both additive**: `feed.reset()` keeps both the travel-time reset and the
+  stop-visit tracker; the renderer polls segments for every live line layer, so "Traffic
+  (our measure)" still loads with the new route-focus code.
+- **Stop visits are recorded only while live** (`engine/publish/feed.py`). The tracker sat
+  in the engine code that replays also run through, so every replay, and every loop of
+  one, wrote the recorded visits into the history again, with nothing to stop duplicates.
+  Checked: 30 s of a 50× replay added 0 visits; live adds them again afterwards.
+- Known, not fixed: `/stop_history` rescans the whole table at most once a minute; at
+  ~586k visits (3 Nov) the first request after a refresh took ~13 s. It runs off the
+  event loop, so nothing else stalls, but it grows with the history.
+
 ## 2026-10-30 — Replay reads the larger file when two writers recorded the same hour
 
 The Thu 29 Oct PM peak showed 50% coverage, but nothing was missing: the server polled

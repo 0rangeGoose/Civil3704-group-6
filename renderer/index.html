@@ -177,6 +177,26 @@ const CANVAS_THEME = {
   dark: { bg: "#000", corridorDim: "rgba(220,228,238,0.55)", corridorBright: "rgba(255,255,255,0.95)", interchange: "#bfe8ff", stop: "rgba(180,196,214,0.65)" },
   light: { bg: "#f4f6f8", corridorDim: "rgba(60,80,110,0.28)", corridorBright: "rgba(9,105,218,0.85)", interchange: "#0969da", stop: "rgba(60,90,130,0.55)" },
 };
+// Detailed background map (control.basemap = "detailed"), per theme: kept
+// faint so routes, vehicles and the data layers stay on top visually.
+const BASEMAP_THEME = {
+  dark: { parks: "#123320", water: "#123a5e", coastline: "rgba(90,150,205,0.75)", roadsMinor: "rgba(255,255,255,0.17)", roadsMajor: "rgba(255,255,255,0.34)", rail: "rgba(255,190,120,0.40)",
+    label: { suburb: "#e8edf3", neighbourhood: "#b9c3cf", station: "#ffd28a", landmark: "#d7c6f2", park: "#8fd19e", water: "#8ec5f0", road: "#aab4c0" } },
+  light: { parks: "#cfe6c7", water: "#b9d6f0", coastline: "rgba(70,125,185,0.8)", roadsMinor: "rgba(0,0,0,0.14)", roadsMajor: "rgba(0,0,0,0.30)", rail: "rgba(130,70,20,0.40)",
+    label: { suburb: "#1f2a37", neighbourhood: "#475463", station: "#8a4b00", landmark: "#5b3b8c", park: "#2f6b3a", water: "#24588c", road: "#4f5966" } },
+};
+// "Full" map labels, most important first: when two would overlap, the
+// earlier kind keeps its place and the other is left out.
+const LABEL_KINDS = [
+  ["suburb", "600 13px", true],
+  ["water", "italic 12px", false],
+  ["station", "600 11px", false],
+  ["landmark", "11px", false],
+  ["park", "italic 11px", false],
+  ["neighbourhood", "11px", false],
+  ["road", "10px", false],
+];
+const LABEL_FONT = "-apple-system, 'Segoe UI', Helvetica, Arial, sans-serif";
 let theme = "dark";
 
 // The server's display-control state (engine/publish/control.py). Every
@@ -184,7 +204,7 @@ let theme = "dark";
 // the server first and comes back here via applyControl, so there is only
 // ever one source of truth.
 let control = {
-  theme: "dark", verify: false, hud: false, calibrate: false, interchanges: true, stops: false, stop_history: false, stop_metric: "median", routes: [], route_slots: {},
+  theme: "dark", basemap: "plain", verify: false, hud: false, calibrate: false, interchanges: true, stops: false, stop_history: false, stop_metric: "median", routes: [], route_slots: {},
   lens: "adherence", line_layer: "none", area_layer: "none", area_unit: "zones", boam_period: "am", weights: {}, modes: {}, nudge: { dx: 0, dy: 0, scale: 1 },
 };
 let modeToGroup = {}; // feed mode -> controller group, from /config
@@ -200,6 +220,12 @@ const SEGMENT_POLL_MS = 10000;
 // into an offscreen canvas per (layer, unit, theme, projection).
 let areas = null;
 let areaLayerCanvas = null;
+
+// Detailed background map from /basemap (static, fetched the first time it is
+// switched on), drawn once per theme/projection like the corridors.
+let basemap = null;
+let basemapCanvas = null;
+let basemapLabelsCanvas = null;
 
 // BOAM sections from /boam (static), drawn once per layer/period/theme/projection.
 let boam = null;
@@ -412,6 +438,7 @@ function applyControl(next) {
     next.stop_history !== control.stop_history || next.lens !== control.lens || next.stop_metric !== control.stop_metric;
   const routesChanged = JSON.stringify(next.routes || []) !== JSON.stringify(control.routes || []);
   const stopLayersChanged = next.stops !== control.stops || next.stop_history !== control.stop_history;
+  const basemapChanged = next.basemap !== control.basemap;
   const layoutChanged =
     next.theme !== control.theme ||
     next.calibrate !== control.calibrate ||
@@ -436,6 +463,7 @@ function applyControl(next) {
     else if (!layoutChanged) stopHistoryCanvas = drawStopHistoryLayer();
   }
   if (LIVE_LINE_LAYERS.has(control.line_layer) && !segments.length) pollSegments();
+  if (basemapChanged && control.basemap !== "plain" && !basemap) loadBasemap();
 }
 
 let lastSegmentPoll = 0;
@@ -548,6 +576,8 @@ function rebuildLayers() {
   stopsLayerCanvas = drawStopsLayer();
   stopHistoryCanvas = drawStopHistoryLayer();
   routeFocusCanvas = drawRouteFocusLayer();
+  basemapCanvas = drawBasemapLayer();
+  basemapLabelsCanvas = drawBasemapLabels();
 }
 
 function clipToFootprint() {
@@ -709,6 +739,123 @@ function drawCorridorLayer(strokeStyle, lineWidth) {
       if (i === 0) octx.moveTo(x, y); else octx.lineTo(x, y);
     }
     octx.stroke();
+  }
+  return off;
+}
+
+async function loadBasemap() {
+  try {
+    const resp = await fetch("/basemap");
+    if (!resp.ok) return; // not downloaded: the plain background stays
+    basemap = await resp.json();
+    basemapCanvas = drawBasemapLayer();
+    basemapLabelsCanvas = drawBasemapLabels();
+  } catch (_) { /* switching it off and on again retries */ }
+}
+
+function drawBasemapLayer() {
+  if (!basemap || !projector) return null;
+  const off = document.createElement("canvas");
+  off.width = canvas.width;
+  off.height = canvas.height;
+  const octx = off.getContext("2d");
+  const colors = BASEMAP_THEME[theme];
+  const L = basemap.layers;
+  const trace = (pts) => {
+    for (let i = 0; i < pts.length; i++) {
+      const [x, y] = projector.project(pts[i][0], pts[i][1]);
+      if (i === 0) octx.moveTo(x, y); else octx.lineTo(x, y);
+    }
+  };
+  // One fill per ring: in a single path, overlapping rings wound in opposite
+  // directions cancel out (the harbour vanished that way).
+  const fill = (rings, color) => {
+    octx.fillStyle = color;
+    for (const ring of rings) {
+      octx.beginPath();
+      trace(ring);
+      octx.closePath();
+      octx.fill();
+    }
+  };
+  const stroke = (lines, color, width) => {
+    octx.strokeStyle = color;
+    octx.lineWidth = width;
+    octx.beginPath();
+    for (const line of lines) trace(line);
+    octx.stroke();
+  };
+  octx.lineJoin = "round";
+  octx.lineCap = "round";
+  fill(L.parks, colors.parks);
+  fill(L.water, colors.water);
+  stroke(L.coastline, colors.coastline, 1.4);
+  stroke(L.roads_minor, colors.roadsMinor, 0.7);
+  stroke(L.roads_major, colors.roadsMajor, 1.5);
+  stroke(L.rail, colors.rail, 1.1);
+  return off;
+}
+
+// Text stays upright on screen whatever the calibration does; road names
+// follow the road's direction. Placed greedily in LABEL_KINDS order, skipping
+// any whose box would overlap one already placed.
+function drawBasemapLabels() {
+  if (!basemap || !projector || !basemap.layers.labels) return null;
+  const off = document.createElement("canvas");
+  off.width = canvas.width;
+  off.height = canvas.height;
+  const octx = off.getContext("2d");
+  const colors = BASEMAP_THEME[theme].label;
+  const placed = [];
+  const PAD = 3;
+  const overlaps = (b) => placed.some((q) => b[0] < q[2] && b[2] > q[0] && b[1] < q[3] && b[3] > q[1]);
+  // Only labels that fit wholly on the model: half a name cut off at the
+  // edge reads worse than none. The footprint is a convex quad on screen.
+  const bb = cfg.bounding_box;
+  const quad = [[bb.north, bb.west], [bb.north, bb.east], [bb.south, bb.east], [bb.south, bb.west]]
+    .map(([lat, lon]) => projector.project(lat, lon));
+  const side = (p, a, b) => Math.sign((b[0] - a[0]) * (p[1] - a[1]) - (b[1] - a[1]) * (p[0] - a[0]));
+  const inside = (p) => {
+    const s = quad.map((a, i) => side(p, a, quad[(i + 1) % 4]));
+    return s.every((v) => v >= 0) || s.every((v) => v <= 0);
+  };
+  const onModel = (b) => [[b[0], b[1]], [b[2], b[1]], [b[2], b[3]], [b[0], b[3]]].every(inside);
+  octx.textAlign = "center";
+  octx.textBaseline = "middle";
+  octx.lineJoin = "round";
+  octx.strokeStyle = CANVAS_THEME[theme].bg;
+  octx.lineWidth = 3;
+  for (const [kind, font, upper] of LABEL_KINDS) {
+    octx.font = `${font} ${LABEL_FONT}`;
+    octx.fillStyle = colors[kind];
+    const size = parseInt(font.match(/(\d+)px/)[1], 10);
+    for (const lab of basemap.layers.labels) {
+      if (lab.k !== kind) continue;
+      const text = upper ? lab.t.toUpperCase() : lab.t;
+      const [x, y] = projector.project(lab.lat, lab.lon);
+      if (x < 0 || y < 0 || x > off.width || y > off.height) continue;
+      let angle = 0;
+      if (lab.lat2 !== undefined) {
+        const [x2, y2] = projector.project(lab.lat2, lab.lon2);
+        angle = Math.atan2(y2 - y, x2 - x);
+        if (angle > Math.PI / 2) angle -= Math.PI; else if (angle < -Math.PI / 2) angle += Math.PI;
+      }
+      const w = octx.measureText(text).width + (upper ? text.length * 1.2 : 0);
+      const h = size + 2;
+      // axis-aligned box around the (possibly rotated) text
+      const cos = Math.abs(Math.cos(angle)), sin = Math.abs(Math.sin(angle));
+      const bw = w * cos + h * sin, bh = w * sin + h * cos;
+      const box = [x - bw / 2 - PAD, y - bh / 2 - PAD, x + bw / 2 + PAD, y + bh / 2 + PAD];
+      if (!onModel(box) || overlaps(box)) continue;
+      placed.push(box);
+      octx.save();
+      octx.translate(x, y);
+      octx.rotate(angle);
+      if (upper) octx.letterSpacing = "1.2px";
+      octx.strokeText(text, 0, 0);
+      octx.fillText(text, 0, 0);
+      octx.restore();
+    }
   }
   return off;
 }
@@ -908,6 +1055,7 @@ function render() {
   // table rather than the model. Calibration sees the whole screen.
   ctx.save();
   if (!calibrateMode) clipToFootprint();
+  if (control.basemap !== "plain" && basemapCanvas && !verificationMode) ctx.drawImage(basemapCanvas, 0, 0);
   if (areaLayerCanvas && !verificationMode) ctx.drawImage(areaLayerCanvas, 0, 0);
   ctx.drawImage(verificationMode ? corridorLayerBright : corridorLayerDim, 0, 0);
   if (focusActive() && routeFocusCanvas) ctx.drawImage(routeFocusCanvas, 0, 0);
@@ -916,6 +1064,8 @@ function render() {
 
   drawSegments();
   if (control.interchanges) drawInterchangePulses(performance.now());
+  // Names sit above the street colours but under the vehicles.
+  if (control.basemap === "full" && basemapLabelsCanvas && !verificationMode) ctx.drawImage(basemapLabelsCanvas, 0, 0);
 
   if (calibrateMode) drawCalibrationCrosshairs();
 
@@ -1300,7 +1450,7 @@ document.getElementById("cal-save").addEventListener("click", async () => {
 // Keyboard backup for the team; the tablet controller is the main way in.
 // Every key sends a patch to the server rather than changing this page
 // directly, so the tablet shows the same state.
-//   C calibrate   V verification overlay   H status line   T theme   P pulses
+//   C calibrate   V verification overlay   H status line   T theme   P pulses   M background map (plain / detailed / full)
 //   L dot colour (schedule / congestion / crowding)   K street lines (off / congestion / crowding)
 //   A areas (off / jobs / service gap / Opal 2016 / pressure)   G areas on travel zones / 150m grid
 //   K also reaches the BOAM streets (typical load / time lost)   B BOAM peak: AM / PM
@@ -1311,6 +1461,7 @@ const KEY_MODE_GROUPS = ["trains", "metro", "lightrail", "buses", "ferries"];
 const LENSES = ["adherence", "congestion", "crowding"];
 const LINE_LAYERS = ["none", "congestion", "derived", "crowding", "boam_load", "boam_lost"];
 const AREA_LAYERS = ["none", "jobs", "service_gap", "opal", "pressure"];
+const BASEMAPS = ["plain", "detailed", "full"];
 const nextOf = (list, current) => list[(list.indexOf(current) + 1) % list.length];
 const NUDGE_STEP_PX = 2;
 const SCALE_STEP = 0.002;
@@ -1325,6 +1476,7 @@ document.addEventListener("keydown", (ev) => {
   else if (key === "h") sendControl({ hud: !control.hud });
   else if (key === "t") sendControl({ theme: control.theme === "dark" ? "light" : "dark" });
   else if (key === "p") sendControl({ interchanges: !control.interchanges });
+  else if (key === "m") sendControl({ basemap: nextOf(BASEMAPS, control.basemap) });
   else if (key === "s") sendControl({ stops: !control.stops });
   else if (key === "o") sendControl({ stop_history: !control.stop_history });
   else if (key === "l") sendControl({ lens: nextOf(LENSES, control.lens) });
