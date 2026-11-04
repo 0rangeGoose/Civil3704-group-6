@@ -2,6 +2,77 @@
 
 Judgment calls made without stopping to ask, per the project brief. Newest first.
 
+## 2026-11-04 — Street directions: one colour (default), side by side, or one way only; one line per stretch
+
+The owner disliked colours overlapping (red over green, the lower one peeking out at the
+edges). Of 1,882 overlapping pairs with different colours at the 8:00 am peak on 4 Nov,
+**72% were a street's two directions** drawn on top of each other, 28% different routes'
+pieces in the same direction (offset along the street, so pooled over slightly different
+stretches). Both ways of showing directions were asked for, switchable
+(`street_directions`; tablet: Street directions; keyboard **D**):
+
+- **One colour** (default, `combined`): both directions pooled into one value per street
+  (`*_all` from `engine/normalise/segments.py`; for BOAM, `load_all_bin`/`lost_all_bin`,
+  trip-weighted over every section whose midpoint lies on the line, either way, from
+  `engine/demand/boam.py`). Loses the inbound/outbound difference.
+- **Side by side** (`split`): each direction its own 4 px line, shifted to its own
+  left-hand side so the two just touch.
+- **To city / From city** (`inbound`/`outbound`): one direction only. "Towards the city"
+  means heading towards Town Hall (`CITY_CENTRE`); inside the CBD itself that is close to
+  arbitrary.
+- **One line per stretch, whatever the mode**: lines are laid down best evidence first
+  (solid before faint, more vehicles or trips, then the worse level), and a later line only
+  draws the parts of itself that no earlier line runs *beside* (within 5 px across, same
+  way, or either way for One colour). "Beside", not "near": the next piece of the same
+  route starts where the last ended and mustn't leave a gap. Built into one cached canvas
+  when the data, layer, mode or layout changes, instead of redrawing every frame.
+- Checked on the paused 4 Nov AM replay in all four modes and on the BOAM load layer.
+
+## 2026-11-04 — Street colours: pooled along shared streets, faint when thin, no glow
+
+A concern was raised that street colours misrepresent sparse areas, where one bus or
+one stop stands for a long stretch of road. Measured before changing anything (decided
+with the project owner):
+
+- **Live layers** (Traffic, Traffic (our measure), Crowding): a reading only ever colours
+  the 200 m piece it's in, so it is never stretched along the road. But at the 8:00 am
+  peak on Wed 4 Nov, **~80% of coloured pieces rested on one vehicle, in the CBD as much
+  as the suburbs** (79% within 1.5 km of Town Hall, 84% beyond 4 km; 89–94% at 8 pm).
+  Pieces are per route shape, so a street served by ten routes had ten overlapping sets
+  of pieces with about one bus each, and drawn worst-on-top it showed its worst single
+  bus: a level worse than the pooled average at 28% of places where pieces overlap.
+- **BOAM layers**: one value per stop-to-stop section (median 278 m). 76 sections over
+  800 m (express routes on motorways and bridges, up to 4.9 km) are 5% of sections but
+  24% of the coloured length.
+
+Changes:
+
+1. **Pooled along shared streets** (`engine/normalise/segments.py`): each piece's value
+   pools every vehicle on pieces of the same street heading the same way: midpoints
+   within 100 m along and 25 m across (parallel CBD streets are ~100 m apart), headings
+   within 30°, checked along both pieces so the result doesn't depend on order. The two
+   directions stay separate (inbound and outbound traffic differ); the worse is still
+   drawn on top. The same-street relation is worked out once per piece (geometry never
+   changes): ~110 ms once, then ~40 ms per snapshot at peak. At the same 8:00 peak, pieces
+   resting on one bus fell to **11% in the CBD, 20% at 1.5–4 km, 32% beyond 4 km**.
+2. **Faint when thin**: each layer's value carries how many vehicles it rests on
+   (`congestion_n`, `crowding_n`, `derived_n`); pieces with fewer than 2 are drawn at
+   35% opacity under the solid ones. So faint streets now cluster where data really is
+   thin, and a solid colour means at least two buses agree.
+3. **BOAM "Where buses lose time" leaves out sections over 800 m**: an average over that
+   distance can't show where the time goes. **"Typical bus load" keeps them**: nobody
+   boards or alights between stops, so the load really is constant along a section.
+4. **Legend** says what pooling and faint mean, and that long BOAM sections are left out.
+
+Earlier the same day, at the owner's request: **street layers lost their glow** (a 9 px,
+25% opacity halo under a 3.5 px line). Shared streets stacked one halo per route, so
+busy streets glowed brighter at the same level. Now one solid 4.5 px line. The halo had
+also given some tolerance to calibration drift, so check alignment on the model.
+
+Removing the feature was considered and rejected: the coloured streets are the
+projection's main statement about congestion and crowding, and these changes address
+the flaws found.
+
 ## 2026-11-04 — Optional background map: Plain (default), Detailed, Full
 
 Asked for by the project owner, for a richer picture on a laptop or flat screen. This

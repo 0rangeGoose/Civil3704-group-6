@@ -111,3 +111,95 @@ def test_lens_and_line_layer_controls():
         c.apply({"lens": "none"})
     with pytest.raises(ControlError):
         c.apply({"line_layer": "demand"})
+
+
+class _StraightShapes:
+    """Straight shapes for pooling tests: shape id -> (start lat, lon, end lat, lon)."""
+    M_PER_DEG = 111_320.0
+
+    def __init__(self, lines):
+        self.lines = lines
+
+    def _length(self, shape_id):
+        lat1, lon1, lat2, lon2 = self.lines[shape_id]
+        kx = self.M_PER_DEG * 0.8303  # cos(33.87 deg)
+        return ((lat2 - lat1) ** 2 * self.M_PER_DEG ** 2 + ((lon2 - lon1) * kx) ** 2) ** 0.5
+
+    def shape_length_m(self, shape_id):
+        return self._length(shape_id)
+
+    def section_latlon(self, shape_id, start, end):
+        lat1, lon1, lat2, lon2 = self.lines[shape_id]
+        total = self._length(shape_id)
+        at = lambda d: (lat1 + (lat2 - lat1) * d / total, lon1 + (lon2 - lon1) * d / total)
+        return [at(start), at(end)]
+
+
+STREET = (-33.870, 151.207, -33.860, 151.207)  # ~1.1 km due north
+
+
+@pytest.fixture
+def street_aggregator():
+    d90 = 90 / 111_320  # 90 m in latitude
+    return SegmentAggregator(_StraightShapes({
+        "A": STREET,
+        "B": (STREET[0] + d90, STREET[1], STREET[2], STREET[3]),  # same street and way, sections offset 90 m
+        "back": (STREET[2], STREET[3], STREET[0], STREET[1]),     # same street, other direction
+        "parallel": (STREET[0], STREET[1] + 0.00108, STREET[2], STREET[3] + 0.00108),  # ~100 m east
+        "cross": (-33.8691, 151.2060, -33.8691, 151.2080),        # crosses it
+    }), segment_m=200, window_s=600)
+
+
+def test_routes_sharing_a_street_pool_their_vehicles(street_aggregator):
+    street_aggregator.record(_vehicle("a", 100, congestion="SEVERE_CONGESTION", shape="A"), at=0)
+    street_aggregator.record(_vehicle("b", 100, congestion="RUNNING_SMOOTHLY", shape="B"), at=0)
+    by_id = {s["id"]: s for s in street_aggregator.snapshot(now=1)}
+    # each route's section now shows the street, not its own single bus
+    assert by_id["A:0"]["congestion"] == by_id["B:0"]["congestion"] == 1.5
+    assert by_id["A:0"]["congestion_n"] == by_id["B:0"]["congestion_n"] == 2
+
+
+@pytest.mark.parametrize("shape, along", [("back", 1000), ("parallel", 100), ("cross", 100)])
+def test_other_directions_parallel_and_crossing_streets_stay_separate(street_aggregator, shape, along):
+    street_aggregator.record(_vehicle("a", 100, congestion="SEVERE_CONGESTION", shape="A"), at=0)
+    street_aggregator.record(_vehicle("o", along, congestion="RUNNING_SMOOTHLY", shape=shape), at=0)
+    by_id = {s["id"]: s for s in street_aggregator.snapshot(now=1)}
+    assert by_id["A:0"]["congestion"] == 3 and by_id["A:0"]["congestion_n"] == 1
+
+
+def test_each_layer_counts_its_own_vehicles(street_aggregator):
+    street_aggregator.record(_vehicle("a", 100, congestion="CONGESTION", occupancy="FEW_SEATS_AVAILABLE", shape="A"), at=0)
+    street_aggregator.record(_vehicle("m", 100, mode="metro", occupancy="STANDING_ROOM_ONLY", shape="B"), at=0)
+    s = {s["id"]: s for s in street_aggregator.snapshot(now=1)}["A:0"]
+    assert (s["congestion_n"], s["crowding_n"], s["vehicles"]) == (1, 2, 2)
+
+
+def test_same_street_check_does_not_depend_on_which_section_asks():
+    import math, random
+    from engine.normalise.segments import _same_street
+    rng = random.Random(4)
+    for _ in range(2000):
+        frames = []
+        for _ in range(2):
+            angle = rng.uniform(-0.6, 0.6)
+            frames.append((rng.uniform(-120, 120), rng.uniform(-40, 40), math.cos(angle), math.sin(angle)))
+        assert _same_street(*frames) == _same_street(*reversed(frames))
+
+
+def test_both_directions_value_pools_the_other_way_too(street_aggregator):
+    street_aggregator.record(_vehicle("a", 100, congestion="SEVERE_CONGESTION", shape="A"), at=0)
+    street_aggregator.record(_vehicle("o", 1000, congestion="RUNNING_SMOOTHLY", shape="back"), at=0)
+    by_id = {s["id"]: s for s in street_aggregator.snapshot(now=1)}
+    a = by_id["A:0"]
+    assert (a["congestion"], a["congestion_n"]) == (3, 1)          # this way only
+    assert (a["congestion_all"], a["congestion_all_n"]) == (1.5, 2)  # both ways
+    assert by_id["back:5"]["congestion_all"] == 1.5
+
+
+def test_inbound_means_heading_towards_town_hall(street_aggregator):
+    # STREET runs north from -33.870 to -33.860; Town Hall is at -33.873, i.e. south of it
+    street_aggregator.record(_vehicle("a", 100, congestion="CONGESTION", shape="A"), at=0)
+    street_aggregator.record(_vehicle("o", 1000, congestion="CONGESTION", shape="back"), at=0)
+    by_id = {s["id"]: s for s in street_aggregator.snapshot(now=1)}
+    assert by_id["A:0"]["inbound"] is False
+    assert by_id["back:5"]["inbound"] is True

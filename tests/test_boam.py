@@ -50,3 +50,34 @@ def test_boam_period_control():
     c.apply({"boam_period": "pm", "line_layer": "boam_lost"})
     with pytest.raises(ControlError):
         c.apply({"boam_period": "midday"})
+
+
+def _section(pid, pts, length_m, trips, load, lost):
+    return {"id": pid, "pts": pts, "length_m": length_m,
+            "am": {"trips": trips, "load": load, "lost_s_per_100m": lost}}
+
+
+def test_both_directions_pool_the_other_way_and_skip_long_sections_for_time_lost():
+    from engine.demand.boam import add_both_directions
+    north = [[-33.870, 151.207], [-33.868, 151.207]]          # ~220 m heading north (away from Town Hall)
+    south = list(reversed(north))
+    express = [[-33.872, 151.207], [-33.860, 151.207]]        # ~1.3 km along the same street
+    elsewhere = [[-33.870, 151.220], [-33.868, 151.220]]      # ~1.2 km east
+    sections = [
+        _section("n", north, 220, 30, 0.10, 2.0),
+        _section("s", south, 220, 10, 0.50, 20.0),
+        _section("x", express, 1300, 100, 0.90, 50.0),
+        _section("e", elsewhere, 220, 50, 0.90, 50.0),
+    ]
+    add_both_directions(sections)
+    n, s, x, e = sections
+    # "n" pools itself and the opposite "s" (both midpoints on its line), trip-weighted;
+    # the long express section's midpoint isn't on n's line, and "e" is another street
+    assert n["am"]["load_all_bin"] == band((30 * 0.10 + 10 * 0.50) / 40, LOAD_BANDS)
+    assert n["am"]["lost_all_bin"] == band((30 * 2.0 + 10 * 20.0) / 40, LOST_BANDS)
+    # the express section collects the short ones along it for load, but its own
+    # (and only its) time lost is left out: it's too long to say where time goes
+    assert x["am"]["load_all_bin"] == band((30 * 0.10 + 10 * 0.50 + 100 * 0.90) / 140, LOAD_BANDS)
+    assert x["am"]["lost_all_bin"] == band((30 * 2.0 + 10 * 20.0) / 40, LOST_BANDS)
+    assert e["am"]["load_all_bin"] == band(0.90, LOAD_BANDS)
+    assert (n["inbound"], s["inbound"]) == (False, True)

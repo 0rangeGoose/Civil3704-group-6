@@ -43,7 +43,7 @@ cd ~/pulse-cbd && git status -sb && git log --oneline -3
 lsof -nP -iTCP:8765 -sTCP:LISTEN           # is the server running?
 curl -s http://127.0.0.1:8765/health        # vehicles, feed age, API quota use, playback mode
 tail -5 data/recordings/recorder.log        # scheduled peak recordings
-source .venv/bin/activate && pytest -q      # 193 tests should pass
+source .venv/bin/activate && pytest -q      # 203 tests should pass
 ```
 
 **Open decisions waiting on the owner** are listed in §16; **remaining work** in §14.
@@ -67,7 +67,7 @@ Pulse CBD projects Sydney's live public transport network onto a physical scale 
 | 7. Model testing, report figures, rehearsal | Not started — needs the physical model |
 | Extras | BOAM bus-load layers; quota-aware polling; timetable refreshed; teammate's stop history, route filter and arrows (merged 30 Oct); optional background map (4 Nov) |
 
-- **Tests:** 193 automated tests pass in about 2 seconds, no network needed.
+- **Tests:** 203 automated tests pass in about 2 seconds, no network needed.
 - **Data recorded:** 15 weekday peaks so far (14 complete, 1 partial; Tue 3 Nov PM lost — see §12), plus nights, middays and weekends.
 - **Biggest risks now:** nothing has been tested on the physical model yet; the merged build (`w12merge`) has had little use; showcase networking (a Mac can't host a hotspot and join Wi-Fi at once); Wi-Fi drops during peaks.
 
@@ -182,7 +182,7 @@ The owner and Claude worked through the design question by question. Key outcome
 
 ### 5.4 Laptop keyboard (backup; every key goes through the server)
 
-C calibrate · V verification overlay · H status line · T theme · M background map · P pulses · S stop markers · O stop history · L dot colour · K street layer · A area layer · G zones/grid · B BOAM peak · Space pause/play · 1–5 mode groups · arrows nudge (Shift ×10) · [ ] scale · 0 reset nudge.
+C calibrate · V verification overlay · H status line · T theme · M background map · P pulses · S stop markers · O stop history · L dot colour · K street layer · A area layer · G zones/grid · B BOAM peak · D street directions · Space pause/play · 1–5 mode groups · arrows nudge (Shift ×10) · [ ] scale · 0 reset nudge.
 
 ---
 
@@ -210,7 +210,7 @@ Distinct vehicles within 300 m of each of nine interchanges over a rolling windo
 Traffic counts **buses only** (Metro's level isn't road traffic). Trains without a vehicle-level crowding value use the **median carriage**.
 
 ### 6.5 Street segments (`engine/normalise/segments.py`)
-Each shape is cut into **200 m** sections by distance along it. A section's value = mean level over the vehicles reporting there in the last **10 minutes**, each counted once at its latest reading; rounded to a level for colour. Overlapping routes are drawn worst-on-top.
+Each shape is cut into **200 m** sections by distance along it. A section's value = mean level over the vehicles reporting in the last **10 minutes** on it **and on other routes' sections of the same street heading the same way** (midpoints within 100 m along, 25 m across, headings within 30°), each vehicle counted once at its latest reading; rounded to a level for colour. Sections resting on **one vehicle are drawn faint**. **Directions** (tablet, or D): one colour per street, both directions pooled (default); side by side; or only towards / away from Town Hall. Whatever the mode, each stretch gets one line per direction shown, so no colour sits under another. Before pooling (4 Nov), ~80% of sections rested on one bus even at peak and shared streets showed their worst single bus; after, 11% in the CBD and 32% beyond 4 km (`DECISIONS.md`, 4 Nov).
 
 ### 6.6 Jobs, departures, service gap (`engine/demand/areas.py`)
 - Jobs: zone's TZP24 2026 figure; grid cells take an area-weighted share.
@@ -224,7 +224,7 @@ Average weekday tap-ons + tap-offs, 7:00–9:00, 21–25 Nov 2016. Stations plac
 Inputs: traffic, crowding, service gap, Opal 2016, BOAM load — each a percentile rank across areas. Areas with no live or BOAM reading get the neutral **0.5** (dropping missing inputs put empty areas at the top of the ranking). Score = Σ wᵢ·rᵢ ÷ Σ wᵢ, weights 0–3 (default 1). Jobs excluded (already in the service gap). Colours = fifths of the scores (averaged ranks bunch around 0.5).
 
 ### 6.9 BOAM sections (`engine/demand/boam.py`)
-For consecutive stops a → b, weekdays only, per peak: **load** = occupancy band midpoint at a ÷ total capacity; **time lost per 100 m** = ((actual_b − sched_b) − (actual_a − sched_a)) ÷ section length × 100. Changes > 900 s discarded; ≥ 3 trips per section. Joined on **stop ID** (100% match; trip IDs don't match). Bands: load 15/30/45/60%; time lost 0/3/8/15 s per 100 m.
+For consecutive stops a → b, weekdays only, per peak: **load** = occupancy band midpoint at a ÷ total capacity; **time lost per 100 m** = ((actual_b − sched_b) − (actual_a − sched_a)) ÷ section length × 100. Changes > 900 s discarded; ≥ 3 trips per section. Joined on **stop ID** (100% match; trip IDs don't match). Bands: load 15/30/45/60%; time lost 0/3/8/15 s per 100 m. Sections over **800 m** (express routes; 5% of sections, 24% of the length) are left out of the time-lost layer, since the average can't show where on them time is lost; the load layer keeps them (load is constant between stops).
 
 ### 6.10 Our congestion measure — travel-time index (`engine/normalise/travel_time.py`)
 - For each bus on a route shape: average speed over each stretch of **≥ 300 m**, stops and lights included.
@@ -317,7 +317,7 @@ Outputs: `data/analysis/congestion_agreement.json`, `congestion_disagreements.ge
 
 ## 9. Validation, testing and performance
 
-- **193 automated tests** (`pytest`, ~2 s): static filter, map matching, adherence, aggregates, homography, footprint trimming, control state, segments/levels, replay (pacing, looping, coverage, seek, pause, writer choice), area maths, pressure, BOAM maths, API budget, travel-time tracker, agreement statistics, the teammate's stop tracker/history/trip updates/route focus, and the background map build. None cover the projector or tablet pages' JavaScript; those are checked by eye in a browser.
+- **203 automated tests** (`pytest`, ~2 s): static filter, map matching, adherence, aggregates, homography, footprint trimming, control state, segments/levels, replay (pacing, looping, coverage, seek, pause, writer choice), area maths, pressure, BOAM maths, API budget, travel-time tracker, agreement statistics, the teammate's stop tracker/history/trip updates/route focus, and the background map build. None cover the projector or tablet pages' JavaScript; those are checked by eye in a browser.
 - **Live checks:** TfNSW field coverage (23 Oct): 164/269 buses with a traffic level; crowding on all buses and Metro, ~half of Sydney Trains, none for light rail/ferries. After the 30 Oct timetable refresh, all 324 live vehicles matched with route names.
 - **Visual checks in Chrome** of the projector view (all layers) and the tablet (Display, Team, legend, timeline). Found and fixed: lines spilling past the model edge, a hidden row showing, recordings list missing after startup, nudge button layout.
 
@@ -422,7 +422,7 @@ python scripts/fetch_basemap.py [--cached]                         # background 
 **Method**
 - Service gap and pressure are **relative to the footprint**, not planning standards.
 - Departures count once per stop within reach — service reachable, not distinct trips.
-- Overlapping route segments are drawn worst-on-top; no physical street network.
+- Street colours rest on few vehicles: at the AM peak 11% of CBD sections and 32% beyond 4 km rest on one bus (drawn faint); off-peak far more. Pooling along shared streets is geometric (no street network). The default one-colour-per-street view averages both directions, hiding inbound/outbound differences (use Side by side or To/From city).
 - Adherence thresholds are simplified defaults (§6.2); early running counts as on time.
 - Our TTI uses a night baseline (fewer passengers → peak reads slower everywhere); 38% of peak readings have no baseline; agreement with TfNSW is weak (§8).
 

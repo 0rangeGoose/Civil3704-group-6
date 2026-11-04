@@ -220,6 +220,15 @@
         <button class="toggle" data-line="boam_load">Typical bus load</button>
         <button class="toggle" data-line="boam_lost">Where buses lose time</button>
       </div>
+      <div class="row">
+        <div class="label">Street directions<small>Inbound and outbound in one colour, side by side, or one direction only (towards or away from Town Hall)</small></div>
+        <div class="seg" id="directions-seg">
+          <button data-directions="combined">One colour</button>
+          <button data-directions="split">Side by side</button>
+          <button data-directions="inbound">To city</button>
+          <button data-directions="outbound">From city</button>
+        </div>
+      </div>
       <div class="row" id="boam-period-row">
         <div class="label">Typical weekday peak<small>For the bus load and time-lost streets, and pressure</small></div>
         <div class="seg" id="boam-period-seg">
@@ -401,19 +410,19 @@ const LEGENDS = {
   },
   congestion: {
     title: "Traffic (reported by Transport for NSW)",
-    note: "Buses only: trains and metro aren't in road traffic. Streets show the last 10 minutes.",
+    note: "Buses only: trains and metro aren't in road traffic. Streets show the last 10 minutes. Each street pools every bus on it heading the same way; faint = only one bus seen there, so treat it as a hint.",
     colors: ["#3ddc84", "#ffd23f", "#ff8c1a", "#ff2e4d"],
     labelsKey: "congestion_labels",
   },
   derived: {
     title: "Traffic, our measure: how much slower than at night",
-    note: "Bus speed over each 300 m stretch compared with the same street's free-flow speed at night (from our recordings). 1.5× or less = smooth, up to 2× = slow, up to 3× = congested, more = severe. Streets without a night-time baseline stay grey. Compare with TfNSW's Traffic layer.",
+    note: "Bus speed over each 300 m stretch compared with the same street's free-flow speed at night (from our recordings). 1.5× or less = smooth, up to 2× = slow, up to 3× = congested, more = severe. Streets without a night-time baseline stay grey. Compare with TfNSW's Traffic layer. Each street pools every bus on it heading the same way; faint = only one bus seen there, so treat it as a hint.",
     colors: ["#3ddc84", "#ffd23f", "#ff8c1a", "#ff2e4d"],
     labelsKey: "congestion_labels",
   },
   crowding: {
     title: "Crowding (reported by Transport for NSW)",
-    note: "Trains report each carriage; the middle carriage is shown. Streets show the last 10 minutes.",
+    note: "Trains report each carriage; the middle carriage is shown. Streets show the last 10 minutes. Each street pools every vehicle on it heading the same way; faint = only one vehicle seen there, so treat it as a hint.",
     colors: ["#5ec8ff", "#b48cff", "#ff7ad9", "#ff2e4d"],
     labelsKey: "crowding_labels",
   },
@@ -433,7 +442,7 @@ const BOAM_LEGENDS = {
     title: "Where buses lose time (TfNSW BOAM)",
     colors: ["#3ddc84", "#c8e04a", "#ffd23f", "#ff8c1a", "#ff2e4d"],
     labels: ["Held or gained time", "Up to 3 s per 100 m", "3–8 s", "8–15 s", "Over 15 s per 100 m"],
-    note: "How much further behind timetable buses typically fall between stops, per 100 m of street.",
+    note: "How much further behind timetable buses typically fall between stops, per 100 m of street. Stretches over 800 m between stops (express routes) aren't shown: an average over that distance can't say where the time is lost.",
   },
 };
 
@@ -599,6 +608,7 @@ function render(next) {
   document.querySelectorAll("[data-unit]").forEach((b) => b.setAttribute("aria-pressed", String(b.dataset.unit === control.area_unit)));
   document.querySelectorAll("[data-boam-period]").forEach((b) => b.setAttribute("aria-pressed", String(b.dataset.boamPeriod === control.boam_period)));
   document.querySelectorAll("[data-stop-metric]").forEach((b) => b.setAttribute("aria-pressed", String(b.dataset.stopMetric === control.stop_metric)));
+  document.querySelectorAll("[data-directions]").forEach((b) => b.setAttribute("aria-pressed", String(b.dataset.directions === control.street_directions)));
   document.querySelectorAll("[data-basemap]").forEach((b) => {
     b.setAttribute("aria-pressed", String(b.dataset.basemap === control.basemap));
     if (b.dataset.basemap !== "plain") b.disabled = !(cfg && cfg.basemap_available);
@@ -639,6 +649,10 @@ document.getElementById("area-choices").addEventListener("click", (ev) => {
 document.getElementById("boam-period-seg").addEventListener("click", (ev) => {
   const b = ev.target.closest("[data-boam-period]");
   if (b) sendControl({ boam_period: b.dataset.boamPeriod });
+});
+document.getElementById("directions-seg").addEventListener("click", (ev) => {
+  const b = ev.target.closest("[data-directions]");
+  if (b) sendControl({ street_directions: b.dataset.directions });
 });
 document.getElementById("basemap-seg").addEventListener("click", (ev) => {
   const b = ev.target.closest("[data-basemap]");

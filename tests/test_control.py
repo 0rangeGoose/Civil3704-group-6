@@ -34,6 +34,16 @@ def test_basemap_defaults_to_plain_and_accepts_detailed_and_full():
         c.apply({"basemap": "satellite"})
 
 
+def test_street_directions_default_to_one_colour_per_street():
+    c = ControlState()
+    assert c.state["street_directions"] == "combined"
+    for value in ("split", "inbound", "outbound", "combined"):
+        c.apply({"street_directions": value})
+        assert c.state["street_directions"] == value
+    with pytest.raises(ControlError):
+        c.apply({"street_directions": "north"})
+
+
 def test_stop_metric_defaults_to_median_and_accepts_mean():
     c = ControlState()
     assert c.state["stop_metric"] == "median"

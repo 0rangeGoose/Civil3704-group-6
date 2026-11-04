@@ -204,7 +204,7 @@ let theme = "dark";
 // the server first and comes back here via applyControl, so there is only
 // ever one source of truth.
 let control = {
-  theme: "dark", basemap: "plain", verify: false, hud: false, calibrate: false, interchanges: true, stops: false, stop_history: false, stop_metric: "median", routes: [], route_slots: {},
+  theme: "dark", basemap: "plain", street_directions: "combined", verify: false, hud: false, calibrate: false, interchanges: true, stops: false, stop_history: false, stop_metric: "median", routes: [], route_slots: {},
   lens: "adherence", line_layer: "none", area_layer: "none", area_unit: "zones", boam_period: "am", weights: {}, modes: {}, nudge: { dx: 0, dy: 0, scale: 1 },
 };
 let modeToGroup = {}; // feed mode -> controller group, from /config
@@ -213,6 +213,21 @@ let modeToGroup = {}; // feed mode -> controller group, from /config
 // from /segments while a line layer is on. [{id, pts, congestion, crowding}]
 let segments = [];
 const LIVE_LINE_LAYERS = new Set(["congestion", "derived", "crowding"]);
+// Street layers (live and BOAM) are one solid line each. They used to have a
+// wide faint halo underneath, but several routes share most streets, so the
+// halos stacked and busy streets glowed brighter at the same level.
+const STREET_LINE_WIDTH = 4.5;
+const STREET_LINE_ALPHA = 0.95;
+// Live street colours rest on the buses seen in the last 10 minutes, pooled
+// along shared streets (engine/normalise/segments.py). Fewer than this many
+// and the street is drawn faint: one bus is a hint, not a measurement.
+const MIN_SOLID_VEHICLES = 2;
+const STREET_LINE_FAINT_ALPHA = 0.35;
+// BOAM gives one value per stop-to-stop section. Time lost averaged over a
+// long section (express routes on motorways, up to ~5 km) can't show where
+// on it the time goes, so those aren't drawn for that layer. Load is constant
+// between stops, so long sections are kept for it.
+const BOAM_LOST_MAX_SECTION_M = 800;
 const SEGMENT_POLL_MS = 10000;
 
 // Static area layers from /areas: {zones: [...], grid: [...]}, each unit
@@ -229,7 +244,6 @@ let basemapLabelsCanvas = null;
 
 // BOAM sections from /boam (static), drawn once per layer/period/theme/projection.
 let boam = null;
-let boamCanvas = null;
 
 // Stop markers from /stops (static for the life of a run, like shapes).
 // stopScreenPositions is a parallel [{name, x, y}, ...] in the SAME
@@ -349,41 +363,13 @@ async function loadBoam() {
     const body = resp.ok ? await resp.json() : null;
     if (body && body.sections.length) {
       boam = body;
-      boamCanvas = drawBoamLayer();
+      streetCanvas = buildStreetCanvas();
       return;
     }
   } catch (_) { /* retry below */ }
   setTimeout(loadBoam, 5000); // still building, or nothing imported yet
 }
 
-function drawBoamLayer() {
-  const layer = control.line_layer;
-  if (!(layer in BOAM_COLOR) || !boam || !projector) return null;
-  const field = BOAM_BIN_FIELD[layer];
-  const period = control.boam_period || "am";
-  const drawable = boam.sections
-    .filter((s) => s[period] && s[period][field] !== null && s[period][field] !== undefined)
-    .sort((a, b) => a[period][field] - b[period][field]); // worst on top
-  const off = document.createElement("canvas");
-  off.width = canvas.width;
-  off.height = canvas.height;
-  const octx = off.getContext("2d");
-  octx.lineCap = "round";
-  octx.lineJoin = "round";
-  for (const pass of [{ width: 9, alpha: 0.25 }, { width: 3.5, alpha: 0.95 }]) {
-    octx.lineWidth = pass.width;
-    for (const sec of drawable) {
-      octx.strokeStyle = withAlpha(BOAM_COLOR[layer][sec[period][field]], pass.alpha);
-      octx.beginPath();
-      sec.pts.forEach(([lat, lon], i) => {
-        const [x, y] = projector.project(lat, lon);
-        if (i === 0) octx.moveTo(x, y); else octx.lineTo(x, y);
-      });
-      octx.stroke();
-    }
-  }
-  return off;
-}
 
 // The combined pressure layer is live: its bins come from /pressure (scores
 // per area for the current unit and weights) and are written onto the same
@@ -439,6 +425,7 @@ function applyControl(next) {
   const routesChanged = JSON.stringify(next.routes || []) !== JSON.stringify(control.routes || []);
   const stopLayersChanged = next.stops !== control.stops || next.stop_history !== control.stop_history;
   const basemapChanged = next.basemap !== control.basemap;
+  const directionsChanged = next.street_directions !== control.street_directions;
   const layoutChanged =
     next.theme !== control.theme ||
     next.calibrate !== control.calibrate ||
@@ -453,7 +440,7 @@ function applyControl(next) {
   if (layoutChanged) rebuildLayers();
   else if (areaChanged) areaLayerCanvas = drawAreaLayer();
   if (control.area_layer === "pressure" && (areaChanged || weightsChanged || boamChanged)) pollPressure();
-  if (boamChanged && !layoutChanged) boamCanvas = drawBoamLayer();
+  if ((boamChanged || directionsChanged) && !layoutChanged) streetCanvas = buildStreetCanvas();
   if (routesChanged) loadRouteFocus();
   else if (!layoutChanged && focusActive() && stopLayersChanged) {
     routeFocusCanvas = drawRouteFocusLayer();
@@ -472,7 +459,10 @@ async function pollSegments() {
   lastSegmentPoll = performance.now();
   try {
     const resp = await fetch("/segments", { cache: "no-store" });
-    if (resp.ok) segments = await resp.json();
+    if (resp.ok) {
+      segments = await resp.json();
+      streetCanvas = buildStreetCanvas();
+    }
   } catch (_) { /* keep the last good set; the next poll retries */ }
 }
 // Every 10s live; faster during a time-lapse (but no more than every 2s),
@@ -496,32 +486,127 @@ function dotColor(entry) {
   return ADHERENCE_COLOR[theme][entry.adherence] || unknown;
 }
 
-// Worst-on-top, so where several routes share a street the most congested
-// (or crowded) reading is the one you see.
-function drawSegments() {
+// Street lines (live layers and BOAM alike), built into one canvas whenever
+// the data, the layer, the directions setting or the layout changes. Each
+// stretch of street gets exactly one line per direction shown: lines are laid
+// down best evidence first (solid before faint, more vehicles or trips first,
+// then the worse level), and a later line only draws the parts of itself that
+// no earlier line runs beside -- going the same way, or either way for "one
+// colour per street". So no colour ever sits under another and peeks out.
+// Side by side: each direction on its own (left-hand) side, the two lines
+// just touching (offset = half the width), so the street reads as one band.
+const SIDE_LINE_WIDTH = 4;
+const SIDE_OFFSET_PX = SIDE_LINE_WIDTH / 2;
+const SAMPLE_STEP_PX = 2;
+const COVER_ACROSS_PX = 5;      // an earlier line this close beside a point covers it
+const COVER_CELL_PX = 6;
+const SAME_HEADING_COS = Math.cos(Math.PI / 6);
+const STREET_DIRECTIONS = ["combined", "split", "inbound", "outbound"];
+let streetCanvas = null;
+
+function streetItems() {
   const layer = control.line_layer;
+  const mode = control.street_directions || "combined";
+  const keep = (inbound) => (mode === "inbound" ? inbound === true : mode === "outbound" ? inbound === false : true);
   if (layer in BOAM_COLOR) {
-    if (boamCanvas) ctx.drawImage(boamCanvas, 0, 0);
-    return;
+    if (!boam) return [];
+    const period = control.boam_period || "am";
+    const field = mode === "combined" ? BOAM_BIN_FIELD[layer].replace("_bin", "_all_bin") : BOAM_BIN_FIELD[layer];
+    return boam.sections
+      .filter((s) => s[period] && s[period][field] !== null && s[period][field] !== undefined && keep(s.inbound))
+      .filter((s) => layer !== "boam_lost" || !(s.length_m > BOAM_LOST_MAX_SECTION_M))
+      .map((s) => ({ pts: s.pts, color: BOAM_COLOR[layer][s[period][field]], alpha: STREET_LINE_ALPHA,
+                     rank: [1, s[period].trips || 0, s[period][field]] }));
   }
-  if (layer === "none" || !segments.length) return;
-  const drawable = segments
-    .filter((s) => s[layer] !== null && s.pts.length >= 2)
-    .sort((a, b) => a[layer] - b[layer]);
-  ctx.lineCap = "round";
-  ctx.lineJoin = "round";
-  for (const pass of [{ width: 9, alpha: 0.25 }, { width: 3.5, alpha: 0.95 }]) {
-    ctx.lineWidth = pass.width;
-    for (const seg of drawable) {
-      ctx.strokeStyle = withAlpha(levelColor(layer, seg[layer]), pass.alpha);
-      ctx.beginPath();
-      seg.pts.forEach(([lat, lon], i) => {
-        const [x, y] = projector.project(lat, lon);
-        if (i === 0) ctx.moveTo(x, y); else ctx.lineTo(x, y);
-      });
-      ctx.stroke();
+  if (!LIVE_LINE_LAYERS.has(layer)) return [];
+  const value = mode === "combined" ? `${layer}_all` : layer;
+  return segments
+    .filter((s) => s[value] !== null && s[value] !== undefined && s.pts.length >= 2 && keep(s.inbound))
+    .map((s) => {
+      const n = s[`${value}_n`] ?? s.vehicles;
+      const solid = n >= MIN_SOLID_VEHICLES;
+      return { pts: s.pts, color: levelColor(layer, s[value]), alpha: solid ? STREET_LINE_ALPHA : STREET_LINE_FAINT_ALPHA,
+               rank: [solid ? 1 : 0, n, s[value]] };
+    });
+}
+
+// Points every SAMPLE_STEP_PX along a screen polyline, with its direction,
+// shifted `offset` px to the left of travel (traffic keeps left).
+function sampleLine(pts, offset) {
+  const out = [];
+  let next = 0; // distance into the current piece of line at which the next sample falls
+  for (let i = 1; i < pts.length; i++) {
+    const [x1, y1] = pts[i - 1], [x2, y2] = pts[i];
+    const len = Math.hypot(x2 - x1, y2 - y1);
+    if (len === 0) continue;
+    const ux = (x2 - x1) / len, uy = (y2 - y1) / len;
+    for (; next <= len; next += SAMPLE_STEP_PX) {
+      out.push({ x: x1 + ux * next + uy * offset, y: y1 + uy * next - ux * offset, ux, uy });
     }
+    next -= len;
   }
+  return out;
+}
+
+function buildStreetCanvas() {
+  if (!projector || control.line_layer === "none") return null;
+  const items = streetItems();
+  if (!items.length) return null;
+  const mode = control.street_directions || "combined";
+  const eitherWay = mode === "combined";
+  items.sort((a, b) => b.rank[0] - a.rank[0] || b.rank[1] - a.rank[1] || b.rank[2] - a.rank[2]);
+  const off = document.createElement("canvas");
+  off.width = canvas.width;
+  off.height = canvas.height;
+  const octx = off.getContext("2d");
+  octx.lineCap = "round";
+  octx.lineJoin = "round";
+  octx.lineWidth = mode === "split" ? SIDE_LINE_WIDTH : STREET_LINE_WIDTH;
+  const grid = new Map(); // cell -> drawn samples
+  const cell = (x, y) => (Math.floor(x / COVER_CELL_PX) + 2000) * 10000 + (Math.floor(y / COVER_CELL_PX) + 2000);
+  const covered = (s) => {
+    const cx = Math.floor(s.x / COVER_CELL_PX), cy = Math.floor(s.y / COVER_CELL_PX);
+    for (let gx = cx - 1; gx <= cx + 1; gx++) {
+      for (let gy = cy - 1; gy <= cy + 1; gy++) {
+        for (const q of grid.get((gx + 2000) * 10000 + (gy + 2000)) || []) {
+          const dot = s.ux * q.ux + s.uy * q.uy;
+          if ((eitherWay ? Math.abs(dot) : dot) < SAME_HEADING_COS) continue;
+          const dx = s.x - q.x, dy = s.y - q.y;
+          // beside it, not ahead of or behind it: the next piece of the same
+          // route starts where the last one ended, and must not leave a gap
+          if (Math.abs(dx * q.ux + dy * q.uy) <= SAMPLE_STEP_PX / 2 && Math.abs(dx * q.uy - dy * q.ux) <= COVER_ACROSS_PX) return true;
+        }
+      }
+    }
+    return false;
+  };
+  const offset = mode === "split" ? SIDE_OFFSET_PX : 0;
+  for (const item of items) {
+    const samples = sampleLine(item.pts.map(([lat, lon]) => projector.project(lat, lon)), offset);
+    const free = samples.map((s) => !covered(s));
+    octx.strokeStyle = withAlpha(item.color, item.alpha);
+    let run = [];
+    const flush = () => {
+      if (run.length >= 2) {
+        octx.beginPath();
+        run.forEach((s, i) => (i ? octx.lineTo(s.x, s.y) : octx.moveTo(s.x, s.y)));
+        octx.stroke();
+        for (const s of run) {
+          const k = cell(s.x, s.y);
+          if (!grid.has(k)) grid.set(k, []);
+          grid.get(k).push(s);
+        }
+      }
+      run = [];
+    };
+    samples.forEach((s, i) => (free[i] ? run.push(s) : flush()));
+    flush();
+  }
+  return off;
+}
+
+function drawSegments() {
+  if (control.line_layer !== "none" && streetCanvas) ctx.drawImage(streetCanvas, 0, 0);
 }
 
 function sendControl(patch) {
@@ -572,7 +657,7 @@ function rebuildLayers() {
   corridorLayerDim = drawCorridorLayer(CANVAS_THEME[theme].corridorDim, 1);
   corridorLayerBright = drawCorridorLayer(CANVAS_THEME[theme].corridorBright, 1.6);
   areaLayerCanvas = drawAreaLayer();
-  boamCanvas = drawBoamLayer();
+  streetCanvas = buildStreetCanvas();
   stopsLayerCanvas = drawStopsLayer();
   stopHistoryCanvas = drawStopHistoryLayer();
   routeFocusCanvas = drawRouteFocusLayer();
@@ -1454,6 +1539,7 @@ document.getElementById("cal-save").addEventListener("click", async () => {
 //   L dot colour (schedule / congestion / crowding)   K street lines (off / congestion / crowding)
 //   A areas (off / jobs / service gap / Opal 2016 / pressure)   G areas on travel zones / 150m grid
 //   K also reaches the BOAM streets (typical load / time lost)   B BOAM peak: AM / PM
+//   D street directions (one colour / side by side / towards the city / away from it)
 //   Space pause / play a replay
 //   1-5 trains / metro / light rail / buses / ferries
 //   arrows nudge (shift = x10)   [ ] scale   0 reset nudge
@@ -1477,6 +1563,7 @@ document.addEventListener("keydown", (ev) => {
   else if (key === "t") sendControl({ theme: control.theme === "dark" ? "light" : "dark" });
   else if (key === "p") sendControl({ interchanges: !control.interchanges });
   else if (key === "m") sendControl({ basemap: nextOf(BASEMAPS, control.basemap) });
+  else if (key === "d") sendControl({ street_directions: nextOf(STREET_DIRECTIONS, control.street_directions) });
   else if (key === "s") sendControl({ stops: !control.stops });
   else if (key === "o") sendControl({ stop_history: !control.stop_history });
   else if (key === "l") sendControl({ lens: nextOf(LENSES, control.lens) });
