@@ -2,6 +2,42 @@
 
 Judgment calls made without stopping to ask, per the project brief. Newest first.
 
+## 2026-11-05 — Tablet legend: a stated definition for every colour
+
+"What the colours mean" now gives each colour its cut-off, not just a name. Where the
+engine sets a number, the tablet reads it rather than repeating it: `/config` now sends
+`adherence_thresholds_seconds` and `thresholds_tti`, and `/areas?meta=1` sends `ranges`,
+the lowest and highest jobs / Opal value in each fifth, per unit (computed per request
+from the built layers, so no cache change). Stop-history bands are copied from
+`renderer/index.html` with a comment, as the colours already were.
+
+- **TfNSW traffic and crowding have no numbers to give**: the feed sends categories,
+  and TfNSW doesn't publish the speeds or passenger counts behind them. The legend says
+  so and names the feed value behind each colour, rather than inventing ranges; our own
+  traffic measure is the one with stated cut-offs.
+- **Streets** state the rounding rule (mean of levels: under 0.5 → 0, 0.5 to under 1.5
+  → 1, …) and solid = 2+ vehicles, faint = 1.
+- **Areas** in fifths show the real range for the unit on show (e.g. jobs per 150 m
+  square: up to 14, 14–28, 28–54, 54–128, 128–11,761). The bottom fifth reads "up to",
+  since partial-job shares round to 0. Pressure is only relative, and says so.
+- Stop history had no legend on the tablet; it has one now. The street legend also now
+  shows when an area layer hides the vehicle legend (before, a street layer matching the
+  vehicle colouring went unexplained then).
+
+## 2026-11-05 — Replays: every recorded day, picked from a dropdown
+
+The tablet showed only the first 7 sessions from `/recordings` (latest + 3 days), so
+anything before 1 Nov couldn't be chosen even though the server listed all 25 peaks over
+14 days. Now **Live now** and **Latest 2 hours** stay as buttons, next to a **Replay mode**
+button (same style) that opens the recorded peaks: a **day dropdown** (newest first) next
+to **AM peak / PM peak**. Opening it changes nothing on the model; it stays open while a
+recorded peak plays and closes when Live now or Latest is tapped. A dropdown rather
+than more buttons because 25 buttons would fill the tablet's Time section and grow every
+day of recording. Changing the day while a peak is playing jumps to the same peak on the
+new day (or the one it has); while live it only picks the day, so nothing changes on the
+model until a peak is tapped. A missing peak's button is greyed out, and the note under
+"Recorded peak" flags peaks under 90% recorded (e.g. 31 Oct–1 Nov at 66%). No server change.
+
 ## 2026-11-04 — Street directions: one colour (default), side by side, or one way only; one line per stretch
 
 The owner disliked colours overlapping (red over green, the lower one peeking out at the
