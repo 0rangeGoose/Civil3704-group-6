@@ -22,13 +22,14 @@ from aiohttp import WSMsgType, web
 from engine.config import Config, load_config
 from engine.normalise.levels import CONGESTION_LABELS, CROWDING_LABELS, congestion_level, crowding_level
 from engine.normalise.segments import CONGESTION_MODES
+from engine.normalise.travel_time import DEFAULT_THRESHOLDS
 from engine.publish.calibration import CalibrationPoint, compute_and_save_calibration, load_calibration
 from engine.publish.control import MODE_GROUPS, ControlError, ControlState
 from engine.publish.feed import LiveVehicleFeed
 from engine.publish.homography import HomographyError
 from engine.publish.route_focus import load_route_catalog, route_detail
 from engine.publish.shapes_export import build_render_shapes
-from engine.demand.areas import build_area_layers
+from engine.demand.areas import bin_ranges, build_area_layers
 from engine.demand.pressure import PressureModel
 from engine.demand.boam import build_boam_layers
 from engine.history import store as stop_visit_store
@@ -164,7 +165,9 @@ async def areas_handler(request: web.Request) -> web.Response:
     startup, so this is empty for the first few seconds on a fresh build."""
     layers = request.app["areas"] or {"available": {}, "zones": [], "grid": [], "meta": {}}
     if request.query.get("meta"):  # the tablet only needs what's available and how it was built
-        return web.json_response({"available": layers["available"], "meta": layers["meta"]})
+        ranges = {unit: {layer: bin_ranges(layers[unit], layer) for layer in ("jobs", "opal")}
+                  for unit in ("zones", "grid")}
+        return web.json_response({"available": layers["available"], "meta": {**layers["meta"], "ranges": ranges}})
     return web.json_response(layers)
 
 
@@ -342,6 +345,9 @@ async def config_handler(request: web.Request) -> web.Response:
             "mode_groups": MODE_GROUPS,
             "congestion_labels": CONGESTION_LABELS,
             "crowding_labels": CROWDING_LABELS,
+            # so the tablet legend states the cut-offs the engine actually uses
+            "adherence_thresholds_seconds": cfg.raw["adherence_thresholds_seconds"],
+            "thresholds_tti": cfg.raw.get("derived_congestion", {}).get("thresholds_tti", list(DEFAULT_THRESHOLDS)),
             "basemap_available": _basemap_path(cfg).exists(),
             # Keeps visitors out of the team panel; not a security boundary.
             "team_pin": str(cfg.raw.get("controller", {}).get("team_pin", "")),

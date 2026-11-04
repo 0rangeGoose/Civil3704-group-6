@@ -63,6 +63,10 @@
   .toggle:disabled { opacity: 0.4; cursor: default; }
   .legend { display: grid; grid-template-columns: repeat(auto-fill, minmax(150px, 1fr)); gap: 8px 16px; font-size: 15px; }
   .legend div { display: flex; align-items: center; gap: 10px; }
+  .legend.defs { grid-template-columns: repeat(auto-fill, minmax(260px, 1fr)); gap: 12px 20px; }
+  .legend.defs div { align-items: flex-start; }
+  .legend.defs .swatch { margin-top: 3px; flex-shrink: 0; }
+  .legend.defs small { display: block; color: var(--muted); font-size: 13px; line-height: 1.35; margin-top: 2px; }
   .swatch { width: 16px; height: 16px; border-radius: 50%; flex-shrink: 0; background: #000; }
   #now-showing { font-size: 17px; font-weight: 600; margin-bottom: 10px; }
   #now-showing small { display: block; font-size: 13px; font-weight: 400; color: var(--muted); }
@@ -95,6 +99,11 @@
   .seg button + button { border-left: 1px solid var(--panel-border); }
   .seg button[aria-pressed="true"] { background: var(--on-bg); color: var(--on-fg); }
   .seg button:disabled { opacity: 0.4; cursor: default; }
+  .day-pick { display: flex; gap: 8px; flex-wrap: wrap; justify-content: flex-end; }
+  .day-pick select {
+    font: inherit; font-size: 15px; min-height: 48px; padding: 0 10px; cursor: pointer;
+    background: var(--track-bg); color: var(--fg); border: 1px solid var(--panel-border); border-radius: 8px;
+  }
   .btn.warn { color: var(--warn); }
 
   .nudge { display: grid; grid-template-columns: repeat(3, 64px); grid-template-rows: repeat(3, 56px); gap: 6px; }
@@ -188,6 +197,16 @@
         <div class="timeline-labels"><span id="tl-start"></span><span id="tl-now"></span><span id="tl-end"></span></div>
       </div>
       <div class="toggles" id="session-choices"></div>
+      <div class="row" id="peak-row" hidden>
+        <div class="label">Recorded peak<small id="peak-note"></small></div>
+        <div class="day-pick">
+          <select id="peak-day" aria-label="Recorded day"></select>
+          <div class="seg" id="peak-seg">
+            <button data-peak="am">AM peak</button>
+            <button data-peak="pm">PM peak</button>
+          </div>
+        </div>
+      </div>
       <div class="row" id="speed-row">
         <div class="label">Replay speed</div>
         <div class="seg" id="speed-seg">
@@ -290,7 +309,7 @@
     <section>
       <h2>What the colours mean</h2>
       <div id="legend"></div>
-      <p class="note">Bigger dots are trains, metro and light rail; smaller dots are buses and ferries. Glowing rings are major interchanges, brighter when more services pass through.</p>
+      <p class="note">Bigger dots are trains, metro and light rail; smaller dots are buses and ferries. Glowing rings are major interchanges: bigger and brighter the more vehicles came within 300 m in the last 5 minutes, at full strength from 25.</p>
     </section>
   </div>
 
@@ -401,32 +420,84 @@ const WINDOWS = [300, 900, 3600];
 const UNLOCK_KEY = "pulse-cbd-team-unlocked";
 
 // Same dark-theme colours as the projector (renderer/index.html), so the
-// legend matches what's on the model.
+// legend matches what's on the model. Each item is [colour, name, definition];
+// the cut-offs come from /config and /areas?meta=1 where the engine sets them,
+// so they can't drift from what's drawn.
+const GREY = "#93a3b5";
+const ADHERENCE_NAMES = {
+  suburban_rail: "trains", intercity: "intercity trains", metro: "metro",
+  light_rail: "light rail", bus: "buses", ferry: "ferries",
+};
+const minutes = (s) => `${+(s / 60).toFixed(1)}`;
+
+// "5 min trains, buses & ferries; 2 min metro & light rail", from {category: seconds}
+function perMode(fmt) {
+  const t = cfg.adherence_thresholds_seconds;
+  const byValue = new Map();
+  for (const [cat, name] of Object.entries(ADHERENCE_NAMES)) {
+    if (t[cat] == null) continue;
+    if (!byValue.has(t[cat])) byValue.set(t[cat], []);
+    byValue.get(t[cat]).push(name);
+  }
+  const join = (names) => names.length > 1 ? `${names.slice(0, -1).join(", ")} & ${names.at(-1)}` : names[0];
+  return [...byValue].map(([s, names]) => `${fmt(s)} ${join(names)}`).join("; ");
+}
+
 const LEGENDS = {
   adherence: {
     title: "Vehicles: on schedule?",
-    note: "Compared with the timetable at the vehicle's next stop.",
-    items: [["#39ff6a", "On time"], ["#ffb020", "Running late"], ["#c81c2e", "Very late / cancelled"], ["#93a3b5", "No schedule data"]],
+    items: () => {
+      const k = cfg.adherence_thresholds_seconds.very_late_multiplier;
+      return [
+        ["#39ff6a", "On time", `Up to ${perMode((s) => `${minutes(s)} min`)} behind the timetable. Running early counts as on time.`],
+        ["#ffb020", "Running late", `Later than that, up to ${k}× it: ${perMode((s) => `${minutes(s)}–${minutes(s * k)} min`)}.`],
+        ["#c81c2e", "Very late / cancelled", `More than ${k}× it (over ${perMode((s) => `${minutes(s * k)} min`)}), or TfNSW has cancelled the trip.`],
+        [GREY, "No schedule data", "No live delay prediction for the vehicle's trip, so it can't be compared with the timetable."],
+      ];
+    },
+    note: "Delay is TfNSW's live prediction for the vehicle's next stop, compared with the timetable.",
   },
   congestion: {
     title: "Traffic (reported by Transport for NSW)",
-    note: "Buses only: trains and metro aren't in road traffic. Streets show the last 10 minutes. Each street pools every bus on it heading the same way; faint = only one bus seen there, so treat it as a hint.",
-    colors: ["#3ddc84", "#ffd23f", "#ff8c1a", "#ff2e4d"],
-    labelsKey: "congestion_labels",
+    items: () => [
+      ["#3ddc84", cfg.congestion_labels[0], "Level 0: the bus reports RUNNING_SMOOTHLY."],
+      ["#ffd23f", cfg.congestion_labels[1], "Level 1: STOP_AND_GO."],
+      ["#ff8c1a", cfg.congestion_labels[2], "Level 2: CONGESTION."],
+      ["#ff2e4d", cfg.congestion_labels[3], "Level 3: SEVERE_CONGESTION."],
+      [GREY, "Not reported", "UNKNOWN or missing. Always the case for trains and metro on tracks, which aren't in road traffic."],
+    ],
+    note: "Each bus's own congestion field in TfNSW's live feed. TfNSW doesn't publish the speeds or delays behind its four levels, so there are no numbers to give; \"Traffic (our measure)\" is the version with stated cut-offs.",
   },
   derived: {
     title: "Traffic, our measure: how much slower than at night",
-    note: "Bus speed over each 300 m stretch compared with the same street's free-flow speed at night (from our recordings). 1.5× or less = smooth, up to 2× = slow, up to 3× = congested, more = severe. Streets without a night-time baseline stay grey. Compare with TfNSW's Traffic layer. Each street pools every bus on it heading the same way; faint = only one bus seen there, so treat it as a hint.",
-    colors: ["#3ddc84", "#ffd23f", "#ff8c1a", "#ff2e4d"],
-    labelsKey: "congestion_labels",
+    items: () => {
+      const [a, b, c] = cfg.thresholds_tti;
+      return [
+        ["#3ddc84", cfg.congestion_labels[0], `Takes up to ${a}× as long as the same street at night.`],
+        ["#ffd23f", cfg.congestion_labels[1], `More than ${a}×, up to ${b}× as long.`],
+        ["#ff8c1a", cfg.congestion_labels[2], `More than ${b}×, up to ${c}× as long.`],
+        ["#ff2e4d", cfg.congestion_labels[3], `More than ${c}× as long.`],
+        [GREY, "No baseline", "Buses seen there, but we have no night-time speed for that street to compare with."],
+      ];
+    },
+    note: "A reading is a bus's average speed over at least 300 m (stops and lights included), compared with the street's free-flow speed: the 85th-percentile bus speed there between 10pm and 5am, from our recordings. E.g. a street buses cover at 30 km/h at night, now at 12 km/h, takes 2.5× as long. Compare with TfNSW's Traffic layer.",
   },
   crowding: {
     title: "Crowding (reported by Transport for NSW)",
-    note: "Trains report each carriage; the middle carriage is shown. Streets show the last 10 minutes. Each street pools every vehicle on it heading the same way; faint = only one vehicle seen there, so treat it as a hint.",
-    colors: ["#5ec8ff", "#b48cff", "#ff7ad9", "#ff2e4d"],
-    labelsKey: "crowding_labels",
+    items: () => [
+      ["#5ec8ff", cfg.crowding_labels[0], "Level 0: EMPTY or MANY_SEATS_AVAILABLE."],
+      ["#b48cff", cfg.crowding_labels[1], "Level 1: FEW_SEATS_AVAILABLE."],
+      ["#ff7ad9", cfg.crowding_labels[2], "Level 2: STANDING_ROOM_ONLY."],
+      ["#ff2e4d", cfg.crowding_labels[3], "Level 3: CRUSHED_STANDING_ROOM_ONLY, FULL or NOT_ACCEPTING_PASSENGERS."],
+      [GREY, "Not reported", "The vehicle sends no occupancy."],
+    ],
+    note: "Each vehicle's occupancy field in TfNSW's live feed: categories, not passenger counts. Trains report each carriage; the middle carriage is shown.",
   },
 };
+
+// Streets average the levels above (0-3) and round, the same rule for every live street layer
+const STREET_RULE = (what) => `On streets: the average level of every ${what} seen on that street in the same direction in the last 10 minutes, rounded: under 0.5 → level 0, 0.5 to under 1.5 → 1, 1.5 to under 2.5 → 2, 2.5 and over → 3 (e.g. readings of 0, 0 and 2 average 0.67 → level 1). Solid line = 2 or more ${what}s; faint = only 1, so treat it as a hint.`;
+const STREET_WHAT = { congestion: "bus", derived: "bus reading", crowding: "vehicle" };
 
 let areaMeta = null; // {available, meta} from /areas?meta=1
 let boamMeta = null; // {days, periods, note} from /boam?meta=1
@@ -434,87 +505,130 @@ let boamMeta = null; // {days, periods, note} from /boam?meta=1
 const BOAM_LEGENDS = {
   boam_load: {
     title: "Typical bus load (TfNSW BOAM)",
-    colors: ["#5ec8ff", "#8fa8ff", "#b48cff", "#ff7ad9", "#ff2e4d"],
-    labels: ["Under 15% full", "15–30%", "30–45%", "45–60%", "Over 60% full"],
-    note: "How full buses typically are leaving each stop, as a share of the bus's capacity, averaged over the peak. From Opal tap data, so passengers who don't tap aren't counted.",
+    items: [
+      ["#5ec8ff", "Under 15% full", "15% or less of the bus's total capacity."],
+      ["#8fa8ff", "15–30%", "More than 15%, up to 30%."],
+      ["#b48cff", "30–45%", "More than 30%, up to 45%."],
+      ["#ff7ad9", "45–60%", "More than 45%, up to 60%."],
+      ["#ff2e4d", "Over 60% full", "More than 60% of capacity."],
+    ],
+    note: "Passengers on board leaving each stop ÷ the bus's total capacity, averaged over every weekday trip on that stretch in the peak. BOAM gives passengers in bands (0–20, 21–40, …); the middle of the band is used (e.g. 21–40 → 30.5). From Opal tap data, so passengers who don't tap aren't counted. Stretches with fewer than 3 trips aren't shown.",
   },
   boam_lost: {
     title: "Where buses lose time (TfNSW BOAM)",
-    colors: ["#3ddc84", "#c8e04a", "#ffd23f", "#ff8c1a", "#ff2e4d"],
-    labels: ["Held or gained time", "Up to 3 s per 100 m", "3–8 s", "8–15 s", "Over 15 s per 100 m"],
-    note: "How much further behind timetable buses typically fall between stops, per 100 m of street. Stretches over 800 m between stops (express routes) aren't shown: an average over that distance can't say where the time is lost.",
+    items: [
+      ["#3ddc84", "Held or gained time", "0 s or less per 100 m: buses kept to the timetable or caught up."],
+      ["#c8e04a", "Up to 3 s per 100 m", "More than 0, up to 3 s lost per 100 m."],
+      ["#ffd23f", "3–8 s", "More than 3, up to 8 s per 100 m."],
+      ["#ff8c1a", "8–15 s", "More than 8, up to 15 s per 100 m."],
+      ["#ff2e4d", "Over 15 s per 100 m", "e.g. over a minute lost on a 400 m stretch."],
+    ],
+    note: "How much further behind timetable buses fall between two stops (delay at the next stop minus delay at this one), ÷ the distance, averaged over weekday trips. Stretches over 800 m between stops (express routes) aren't shown: an average over that distance can't say where the time is lost. Jumps of more than 15 min are treated as data errors.",
   },
 };
 
+// round swatches for dots and lines, square ones for areas
+function defItems(items, round = false) {
+  const shape = round ? "" : ";border-radius:3px";
+  return `<div class="legend defs">${items.map(([c, name, def]) =>
+    `<div><span class="swatch" style="background:${c}${shape}"></span><span>${name}${def ? `<small>${def}</small>` : ""}</span></div>`).join("")}</div>`;
+}
+
 function boamLegend(key) {
   const def = BOAM_LEGENDS[key];
-  const items = def.colors.map((c, i) => `<div><span class="swatch" style="background:${c}"></span>${def.labels[i]}</div>`).join("");
   const period = control.boam_period === "pm" ? "PM peak (4:30–6:30pm)" : "AM peak (7–9am)";
   const days = boamMeta && boamMeta.days && boamMeta.days.length
     ? ` Average of ${boamMeta.days.length} weekday(s): ${boamMeta.days.map((d) => `${d.slice(6)}/${d.slice(4, 6)}`).join(", ")}. ${boamMeta.note || ""}`
     : "";
-  return `<h3>Streets: ${def.title}, ${period}</h3><div class="legend">${items}</div><p class="note">${def.note}${days}</p>`;
+  return `<h3>Streets: ${def.title}, ${period}</h3>${defItems(def.items, true)}<p class="note">${def.note}${days}</p>`;
+}
+
+const FIFTHS = ["Lowest fifth", "Second fifth", "Middle fifth", "Fourth fifth", "Highest fifth"];
+const fmt = (n) => Math.round(n).toLocaleString("en-AU");
+
+// "120–1,450 jobs" per fifth, from the server's actual ranges for the unit on show
+function rangeItems(colors, layer, noun) {
+  const unit = control.area_unit === "grid" ? "grid" : "zones";
+  const ranges = areaMeta && areaMeta.meta.ranges ? areaMeta.meta.ranges[unit][layer] : null;
+  const per = unit === "grid" ? `per ${areaMeta ? areaMeta.meta.grid_cell_m : 150} m square` : "per travel zone";
+  return colors.map((c, i) => {
+    const r = ranges && ranges[i];
+    const span = i === 0 ? `Up to ${fmt(r && r[1])}` : r && `${fmt(r[0])}–${fmt(r[1])}`; // area shares of a job round down to 0
+    return [c, FIFTHS[i], r ? `${span} ${noun} ${per}` : ""];
+  });
 }
 
 const AREA_LEGENDS = {
   jobs: {
     title: "Jobs (TfNSW TZP24 projections)",
-    colors: ["#2a2f6b", "#43449e", "#6a56c9", "#9d6be3", "#d892ff"],
-    labels: ["Fewest jobs", "", "", "", "Most jobs"],
-    note: (m) => `People employed in each area in ${m.jobs_year}, ranked into fifths. Where jobs are, not where people live.`,
+    items: () => rangeItems(["#2a2f6b", "#43449e", "#6a56c9", "#9d6be3", "#d892ff"], "jobs", "jobs"),
+    note: (m) => `People employed in each area in ${m.jobs_year}: where jobs are, not where people live. Areas are ranked and split into five equal-sized groups; areas with no jobs aren't coloured. Zones differ in size, so a big zone can rank high on size alone.`,
   },
   service_gap: {
     title: "Service gap: jobs vs. public transport",
-    colors: ["#2f7bff", "#86b4ff", "#62666e", "#ffb066", "#ff6a00"],
-    labels: ["Much more service than jobs", "More service", "Balanced", "More jobs", "Much more jobs than service"],
-    note: (m) => `Jobs compared with scheduled departures within ${m.walk_m} m, ${m.peak} on a weekday (${m.service_day}). Orange areas have many workers and little service.`,
+    items: () => [
+      ["#2f7bff", "Much more service than jobs", "Gap −0.40 or less."],
+      ["#86b4ff", "More service", "Gap more than −0.40, up to −0.15."],
+      ["#62666e", "Balanced", "Gap between −0.15 and +0.15."],
+      ["#ffb066", "More jobs", "Gap more than +0.15, up to +0.40."],
+      ["#ff6a00", "Much more jobs than service", "Gap more than +0.40."],
+    ],
+    note: (m) => `Gap = the area's rank for jobs minus its rank for public transport, each from 0 (lowest in the footprint) to 1 (highest). Transport = scheduled departures, all modes, from stops within ${m.walk_m} m, ${m.peak} on a weekday (${m.service_day.slice(6)}/${m.service_day.slice(4, 6)}/${m.service_day.slice(0, 4)}). E.g. more jobs than 90% of areas (0.9) but more departures than only 30% (0.3) = +0.6, much more jobs than service. Only areas with jobs are ranked.`,
   },
   pressure: {
     title: "Network pressure (combined score)",
-    colors: ["#3a2a12", "#6b3d0f", "#a4520c", "#e0610c", "#ff3b1f"],
-    labels: ["Lowest fifth", "", "", "", "Highest fifth"],
+    items: () => FIFTHS.map((f, i) => [["#3a2a12", "#6b3d0f", "#a4520c", "#e0610c", "#ff3b1f"][i], f, ""]),
     note: () => {
       const w = control.weights;
       const peak = control.boam_period === "pm" ? "PM" : "AM";
       const parts = [["traffic now", w.congestion], ["crowding now", w.crowding], ["service gap", w.service_gap], ["Opal 2016", w.opal], [`typical ${peak}-peak bus load`, w.boam_load]]
         .filter(([, x]) => x > 0).map(([n, x]) => (x === 1 ? n : `${n} ×${x}`));
-      return `Combines ${parts.join(", ")}, each ranked across the areas that have it. Areas with no vehicles right now (or no BOAM bus sections) count as average for those inputs. Relative to the footprint, updated every few seconds.`;
+      return `Combines ${parts.join(", ")}. Each input is ranked from 0 to 1 across the areas that have it, the ranks are averaged with these weights, and areas are split into five equal-sized groups by that score. So it's relative to the rest of the footprint: there's no fixed "high" number. Areas with no vehicles right now (or no BOAM bus sections) count as average (0.5) for those inputs. Updated every few seconds.`;
     },
   },
   opal: {
     title: "Opal taps, November 2016",
-    colors: ["#123f3b", "#16716a", "#1fa89e", "#4fd8ca", "#b0fff6"],
-    labels: ["Fewest taps", "", "", "", "Most taps"],
-    note: (m) => `Tap-ons and tap-offs ${m.peak}, average weekday 21–25 Nov 2016. Before the Metro and CBD light rail opened. Buses are by postcode, spread across its bus stops.`,
+    items: () => rangeItems(["#123f3b", "#16716a", "#1fa89e", "#4fd8ca", "#b0fff6"], "opal", "taps"),
+    note: (m) => `Tap-ons plus tap-offs ${m.peak}, average weekday 21–25 Nov 2016, ranked and split into five equal-sized groups; areas with none aren't coloured. Before the Metro and CBD light rail opened. Buses are by postcode, spread across its bus stops.`,
   },
 };
 
 function areaLegend(key) {
   const def = AREA_LEGENDS[key];
-  const items = def.colors.map((c, i) => [c, def.labels[i]]).filter(([, l]) => l);
-  const swatches = `<div class="legend">${items.map(([c, l]) => `<div><span class="swatch" style="background:${c};border-radius:3px"></span>${l}</div>`).join("")}</div>`;
   const note = areaMeta && areaMeta.meta.peak ? `<p class="note">${def.note(areaMeta.meta)}</p>` : "";
-  return `<h3>Areas: ${def.title}</h3>${swatches}${note}<p class="note">Vehicles turn white while an area layer is on.</p>`;
+  return `<h3>Areas: ${def.title}</h3>${defItems(def.items())}${note}<p class="note">Vehicles turn white while an area layer is on.</p>`;
 }
 
-function legendItems(key) {
+// Stop history: same bands as renderer/index.html (STOP_DELAY_BANDS_S, STOP_CROWDED_BANDS)
+function stopHistoryLegend() {
+  const crowding = control.lens === "crowding";
+  const items = crowding
+    ? [["#5ec8ff", "Under 10%"], ["#b48cff", "10% to under 25%"], ["#ff7ad9", "25% to under 50%"], ["#ff2e4d", "50% or more"]]
+    : [["#39ff6a", "Under 1 min late"], ["#ffd23f", "1 to under 2 min"], ["#ff8c1a", "2 to under 4 min"], ["#c81c2e", "4 min or more late"]];
+  const what = crowding
+    ? "Share of arrivals with few seats or fuller (crowding level 1 or more)"
+    : `${control.stop_metric === "mean" ? "Mean" : "Median"} delay on arrival (early counts as under 1 min)`;
+  return `<h3>Stops: history</h3>${defItems(items.map(([c, n]) => [c, n, ""]), true)}<p class="note">${what}, over every stop visit recorded live so far. Stops with fewer than 20 visits aren't coloured.</p>`;
+}
+
+function lensLegend(key) {
   const def = LEGENDS[key];
-  const items = def.items || def.colors.map((c, i) => [c, cfg[def.labelsKey][i]]);
-  if (!def.items) items.push(["#93a3b5", "Not reported"]);
-  return items.map(([c, label]) => `<div><span class="swatch" style="background:${c}"></span>${label}</div>`).join("");
+  const street = control.line_layer === key ? ` ${STREET_RULE(STREET_WHAT[key])}` : "";
+  return `${defItems(def.items(), true)}<p class="note">${def.note}${street}</p>`;
 }
 
 function renderLegend() {
   const parts = [];
   if (control.area_layer !== "none") parts.push(areaLegend(control.area_layer));
   const lens = control.lens;
-  if (control.area_layer === "none") parts.push(`<h3>${LEGENDS[lens].title}</h3><div class="legend">${legendItems(lens)}</div><p class="note">${LEGENDS[lens].note}</p>`);
+  if (control.area_layer === "none") parts.push(`<h3>${LEGENDS[lens].title}</h3>${lensLegend(lens)}`);
   if (control.line_layer in BOAM_LEGENDS) {
     parts.push(boamLegend(control.line_layer));
-  } else if (control.line_layer !== "none" && control.line_layer !== lens) {
+  } else if (control.line_layer !== "none" && (control.line_layer !== lens || control.area_layer !== "none")) {
     const line = control.line_layer;
-    parts.push(`<h3>Streets: ${LEGENDS[line].title.toLowerCase()}</h3><div class="legend">${legendItems(line)}</div><p class="note">${LEGENDS[line].note}</p>`);
+    parts.push(`<h3>Streets: ${LEGENDS[line].title[0].toLowerCase()}${LEGENDS[line].title.slice(1)}</h3>${lensLegend(line)}`);
   }
+  if (control.stop_history) parts.push(stopHistoryLegend());
   document.getElementById("legend").innerHTML = parts.join("");
 }
 const NUDGE_STEPS = [2, 20];
@@ -814,23 +928,111 @@ async function refreshSessions() {
   renderSessions();
 }
 
+// A recorded peak's id is "<YYYY-MM-DD>-<am|pm>"; anything else (live, latest) gets a button
+const PEAK_ID = /^(\d{4}-\d{2}-\d{2})-(am|pm)$/;
+let replayOpen = false; // "Replay mode" tapped: show the day picker (always shown while a recorded peak plays)
+let pickedDay = null; // the day in the dropdown, which can differ from what's showing until a peak is tapped
+let dayOptionsKey = "";
+
+function peakDays() {
+  const days = new Map(); // newest first, as /recordings lists them
+  for (const s of sessions) {
+    const m = PEAK_ID.exec(s.id);
+    if (!m) continue;
+    if (!days.has(m[1])) days.set(m[1], { label: s.label.split(" · ")[1] || m[1], peaks: {} });
+    days.get(m[1]).peaks[m[2]] = s;
+  }
+  return days;
+}
+
 function renderSessions() {
   const box = document.getElementById("session-choices");
   const current = control ? control.playback.session : "live";
-  const choices = [{ id: "live", label: "Live now", coverage: 1 }, ...sessions.slice(0, 7)];
+  const choices = [{ id: "live", label: "Live now", coverage: 1 }, ...sessions.filter((s) => !PEAK_ID.test(s.id))];
   box.innerHTML = "";
   for (const c of choices) {
     const b = document.createElement("button");
     b.className = "toggle";
-    b.setAttribute("aria-pressed", String(c.id === current));
+    b.setAttribute("aria-pressed", String(c.id === current && !replayOpen)); // one button lit at a time
     const [title, when] = c.label.split(" · ");
     const partial = c.coverage < 1 ? " (partly recorded)" : "";
     b.innerHTML = `${title}${when ? `<small>${when}${partial}</small>` : ""}`;
-    b.addEventListener("click", () => sendControl({ playback: { session: c.id } }));
+    b.addEventListener("click", () => {
+      replayOpen = false;
+      renderSessions(); // already live: the server may not send a change back
+      sendControl({ playback: { session: c.id } });
+    });
+    box.appendChild(b);
+  }
+  const playingPeak = PEAK_ID.test(current);
+  if (peakDays().size) {
+    // opens the picker only; nothing changes on the model until a peak is tapped
+    const b = document.createElement("button");
+    b.className = "toggle";
+    b.setAttribute("aria-pressed", String(replayOpen || playingPeak));
+    b.innerHTML = `Replay mode<small>${playingPeak ? "pick another day" : "pick a recorded day"}</small>`;
+    b.addEventListener("click", () => {
+      if (playingPeak) return;
+      replayOpen = !replayOpen;
+      renderSessions();
+    });
     box.appendChild(b);
   }
   document.getElementById("speed-row").hidden = current === "live";
+  renderPeakPicker(current);
 }
+
+function renderPeakPicker(current) {
+  const days = peakDays();
+  const showing = PEAK_ID.exec(current);
+  document.getElementById("peak-row").hidden = !days.size || !(replayOpen || showing);
+  if (!days.size) return;
+  if (showing) pickedDay = showing[1];
+  if (!days.has(pickedDay)) pickedDay = days.keys().next().value;
+
+  const select = document.getElementById("peak-day");
+  const key = [...days.keys()].join();
+  if (key !== dayOptionsKey) { // rebuild only when the list changes, so an open dropdown isn't reset
+    dayOptionsKey = key;
+    select.innerHTML = "";
+    for (const [day, d] of days) {
+      const o = document.createElement("option");
+      o.value = day;
+      o.textContent = d.label;
+      select.appendChild(o);
+    }
+  }
+  select.value = pickedDay;
+
+  const peaks = days.get(pickedDay).peaks;
+  document.querySelectorAll("#peak-seg button").forEach((b) => {
+    const s = peaks[b.dataset.peak];
+    b.disabled = !s;
+    b.setAttribute("aria-pressed", String(!!s && s.id === current));
+  });
+  const partial = Object.entries(peaks).filter(([, s]) => s.coverage < 0.9) // a few missed polls isn't worth flagging
+    .map(([k, s]) => `${k.toUpperCase()} ${Math.round(s.coverage * 100)}%`);
+  const missing = ["am", "pm"].filter((k) => !peaks[k]).map((k) => `no ${k.toUpperCase()}`);
+  const notes = [...(partial.length ? [`partly recorded: ${partial.join(", ")}`] : []), ...missing];
+  document.getElementById("peak-note").textContent = notes.length ? notes.join(" · ") : `${days.size} days recorded`;
+}
+
+document.getElementById("peak-day").addEventListener("change", (e) => {
+  pickedDay = e.target.value;
+  // already watching a peak: jump to the same peak on the new day (or the one it has)
+  const showing = PEAK_ID.exec(control ? control.playback.session : "");
+  const peaks = peakDays().get(pickedDay).peaks;
+  if (showing) {
+    const s = peaks[showing[2]] || peaks.am || peaks.pm;
+    sendControl({ playback: { session: s.id } });
+  }
+  renderPeakPicker(control ? control.playback.session : "live");
+});
+
+document.querySelectorAll("#peak-seg button").forEach((b) => b.addEventListener("click", () => {
+  const s = peakDays().get(pickedDay)?.peaks[b.dataset.peak];
+  if (s) sendControl({ playback: { session: s.id } });
+}));
 
 let seekPendingUntil = 0; // after a tap, hold the thumb where it was tapped until the replay catches up
 

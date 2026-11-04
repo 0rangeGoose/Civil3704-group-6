@@ -237,7 +237,8 @@ sudo sh scripts/wake_schedule.sh                    # once: wakes the Mac before
 python scripts/install_recording_schedule.py --uninstall
 ```
 
-Recordings replay from the tablet (Display → Time): any recorded AM/PM peak, or the
+Recordings replay from the tablet (Display → Time): any recorded AM/PM peak (tap Replay mode,
+pick the day from the dropdown, then AM peak or PM peak), or the
 latest two hours, in real time or as a 10× / 25× / 50× time-lapse that loops. Replays can be
 paused (Play/Pause, or Space on the laptop) and scrubbed: tap the timeline, or −5/+5 min.
 Live polling, and the server's own recording, pause while a replay is on, so switch back to

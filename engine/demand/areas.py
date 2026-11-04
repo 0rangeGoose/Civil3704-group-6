@@ -102,6 +102,20 @@ def quintile_bins(values: dict[str, float]) -> dict[str, int]:
     return {k: min(4, int(r * 5)) for k, r in percentile_ranks(positive).items()}
 
 
+def bin_ranges(units: list[dict], layer: str) -> list[list[int] | None]:
+    """[lowest, highest] of a layer's value (jobs, opal) in each of its five
+    colour bins, for the tablet legend; None for a bin no unit falls in."""
+    ranges: list[list[int] | None] = [None] * 5
+    for u in units:
+        b = u["bins"].get(layer)
+        if b is None:
+            continue
+        v = u[layer]
+        r = ranges[b]
+        ranges[b] = [min(r[0], v), max(r[1], v)] if r else [v, v]
+    return ranges
+
+
 def service_gap(jobs: dict[str, float], departures: dict[str, float]) -> dict[str, float]:
     with_jobs = {k: v for k, v in jobs.items() if v > 0}
     job_rank = percentile_ranks(with_jobs)

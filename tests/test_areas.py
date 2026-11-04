@@ -1,6 +1,6 @@
 import pytest
 
-from engine.demand.areas import gap_bin, opal_base_name, percentile_ranks, quintile_bins, service_gap
+from engine.demand.areas import bin_ranges, gap_bin, opal_base_name, percentile_ranks, quintile_bins, service_gap
 from engine.publish.control import ControlError, ControlState
 
 
@@ -51,3 +51,8 @@ def test_area_controls():
         c.apply({"area_layer": "population"})
     with pytest.raises(ControlError):
         c.apply({"area_unit": "hexagons"})
+
+
+def test_bin_ranges_give_each_fifth_its_lowest_and_highest_value():
+    units = [{"jobs": v, "bins": {"jobs": b}} for v, b in [(5, 0), (12, 0), (40, 1), (900, 4), (0, None)]]
+    assert bin_ranges(units, "jobs") == [[5, 12], [40, 40], None, None, [900, 900]]
