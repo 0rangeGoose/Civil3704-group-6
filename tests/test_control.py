@@ -14,7 +14,7 @@ def test_defaults_are_the_safe_showcase_state():
     assert s["nudge"] == {"dx": 0.0, "dy": 0.0, "scale": 1.0}
 
 
-@pytest.mark.parametrize("key", ["stops", "stop_history"])
+@pytest.mark.parametrize("key", ["stops", "stop_history", "corners"])
 def test_stop_toggles_validate_like_the_other_boolean_flags(key):
     c = ControlState()
     assert c.state[key] is False
@@ -105,9 +105,39 @@ def test_nudge_persists_across_restarts_but_nothing_else_does(tmp_path):
 
 def test_reset_nudge(tmp_path):
     c = ControlState(tmp_path / "nudge.json")
-    c.apply({"nudge": {"dx": 6, "dy": -2, "scale": 0.9}})
+    c.apply({"nudge": {"dx": 6, "dy": -2, "scale": 0.9}, "warp": {"tl": [5, 5]}})
     c.reset_nudge()
     assert c.state["nudge"] == {"dx": 0.0, "dy": 0.0, "scale": 1.0}
+    assert c.state["warp"]["tl"] == [0.0, 0.0]
+
+
+def test_warp_moves_one_corner_and_validates():
+    c = ControlState()
+    assert all(offset == [0.0, 0.0] for offset in c.state["warp"].values())
+    c.apply({"warp": {"br": [12, -3.5]}})
+    assert c.state["warp"]["br"] == [12.0, -3.5]
+    assert c.state["warp"]["tl"] == [0.0, 0.0]
+    c.apply({"warp": {"tl": [99999, 0]}})
+    assert c.state["warp"]["tl"] == [2000.0, 0.0]
+    for bad in [{"middle": [0, 0]}, {"tl": [1]}, {"tl": "1,2"}, {"tl": [True, 0]}, [1, 2]]:
+        with pytest.raises(ControlError):
+            c.apply({"warp": bad})
+
+
+def test_warp_persists_with_the_nudge(tmp_path):
+    path = tmp_path / "nudge.json"
+    ControlState(path).apply({"warp": {"bl": [-4, 8]}, "nudge": {"dy": 3}})
+    restarted = ControlState(path).state
+    assert restarted["warp"]["bl"] == [-4.0, 8.0]
+    assert restarted["nudge"]["dy"] == 3.0
+
+
+def test_old_nudge_only_file_still_loads(tmp_path):
+    path = tmp_path / "nudge.json"
+    path.write_text(json.dumps({"dx": 6, "dy": 0, "scale": 1.0}))
+    state = ControlState(path).state
+    assert state["nudge"]["dx"] == 6.0
+    assert state["warp"]["tl"] == [0.0, 0.0]
 
 
 def test_corrupt_nudge_file_is_ignored(tmp_path):

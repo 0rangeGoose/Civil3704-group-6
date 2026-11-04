@@ -94,7 +94,7 @@
   .nudge-wrap { display: flex; flex-wrap: wrap; gap: 20px; align-items: center; }
   .nudge-side { display: flex; flex-direction: column; gap: 8px; }
   .nudge-side .seg { align-self: flex-start; }
-  #nudge-readout { font: 13px ui-monospace, monospace; color: var(--muted); }
+  #nudge-readout, #corners-readout { font: 13px ui-monospace, monospace; color: var(--muted); }
 
   #pin-gate input {
     font: inherit; font-size: 24px; letter-spacing: 0.3em; width: 160px; min-height: 52px; text-align: center;
@@ -285,6 +285,20 @@
 
       <section>
         <h2>Alignment</h2>
+        <div class="row">
+          <div class="label">Corner fit<small>Drag the four corners on the laptop onto the model's corners (or F)</small></div>
+          <button class="btn warn" id="corners-toggle">Start</button>
+        </div>
+        <div class="row">
+          <div class="label">Arrows move<small>The whole map, or one corner for fine fitting</small></div>
+          <div class="seg" id="target-seg">
+            <button data-target="map">Whole map</button>
+            <button data-target="tl">NW</button>
+            <button data-target="tr">NE</button>
+            <button data-target="bl">SW</button>
+            <button data-target="br">SE</button>
+          </div>
+        </div>
         <div class="nudge-wrap">
           <div class="nudge">
             <span></span><button class="btn" data-nudge="0,-1">↑</button><span></span>
@@ -299,7 +313,9 @@
               <button data-scale="1">Bigger</button>
             </div>
             <button class="btn" id="nudge-reset">Reset nudge</button>
+            <button class="btn" id="corners-reset">Reset corners</button>
             <div id="nudge-readout"></div>
+            <div id="corners-readout"></div>
           </div>
         </div>
         <p class="note">Nudge fixes small drift between sessions. If it's off by more than a few centimetres on the model, recalibrate.</p>
@@ -479,6 +495,7 @@ let cfg = null;
 let control = null; // server's display-control state; null until the first message
 let ws = null;
 let nudgeStep = NUDGE_STEPS[0];
+let nudgeTarget = "map"; // or a corner: "tl", "tr", "br", "bl"
 let sessions = []; // replayable recordings, from /recordings
 let lastPlayback = null;
 
@@ -578,6 +595,15 @@ function render(next) {
   const n = control.nudge;
   document.getElementById("nudge-readout").textContent =
     `x ${n.dx >= 0 ? "+" : ""}${n.dx}px  y ${n.dy >= 0 ? "+" : ""}${n.dy}px  scale ${n.scale.toFixed(3)}`;
+  document.getElementById("corners-toggle").textContent = control.corners ? "Done" : "Start";
+  document.querySelectorAll("#target-seg button").forEach((b) => {
+    b.setAttribute("aria-pressed", String(b.dataset.target === nudgeTarget));
+  });
+  const w = control.warp;
+  const moved = ["tl", "tr", "bl", "br"].filter((c) => w[c][0] || w[c][1]);
+  document.getElementById("corners-readout").textContent = moved.length
+    ? "corners " + moved.map((c) => `${CORNER_NAMES[c]} ${w[c][0]},${w[c][1]}`).join("  ")
+    : "corners not moved";
 }
 
 document.addEventListener("click", (ev) => {
@@ -720,7 +746,12 @@ document.querySelectorAll("[data-nudge]").forEach((b) => {
   b.addEventListener("click", () => {
     if (!control) return;
     const [x, y] = b.dataset.nudge.split(",").map(Number);
-    sendControl({ nudge: { dx: control.nudge.dx + x * nudgeStep, dy: control.nudge.dy + y * nudgeStep } });
+    if (nudgeTarget === "map") {
+      sendControl({ nudge: { dx: control.nudge.dx + x * nudgeStep, dy: control.nudge.dy + y * nudgeStep } });
+    } else {
+      const [cx, cy] = control.warp[nudgeTarget];
+      sendControl({ warp: { [nudgeTarget]: [cx + x * nudgeStep, cy + y * nudgeStep] } });
+    }
   });
 });
 document.getElementById("step-toggle").addEventListener("click", (ev) => {
@@ -734,6 +765,19 @@ document.querySelectorAll("[data-scale]").forEach((b) => {
 });
 document.getElementById("nudge-reset").addEventListener("click", () => {
   sendControl({ nudge: { dx: 0, dy: 0, scale: 1 } });
+});
+const CORNER_NAMES = { tl: "NW", tr: "NE", br: "SE", bl: "SW" };
+document.getElementById("target-seg").addEventListener("click", (ev) => {
+  const b = ev.target.closest("[data-target]");
+  if (!b) return;
+  nudgeTarget = b.dataset.target;
+  if (control) render(control);
+});
+document.getElementById("corners-toggle").addEventListener("click", () => {
+  if (control) sendControl({ corners: !control.corners, calibrate: false });
+});
+document.getElementById("corners-reset").addEventListener("click", () => {
+  sendControl({ warp: { tl: [0, 0], tr: [0, 0], br: [0, 0], bl: [0, 0] } });
 });
 document.getElementById("calibrate-toggle").addEventListener("click", () => {
   if (control) sendControl({ calibrate: !control.calibrate });
