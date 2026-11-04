@@ -287,7 +287,7 @@ pulse-cbd/
     run_phase3.py             + map matching/adherence (dev/debug tool)
     run_publish.py            The real entry point — starts everything
 
-  tests/                     193 tests, one file per module
+  tests/                     203 tests, one file per module
   docs/DECISIONS.md          Every non-obvious judgment call made during the build,
                               and why — read this for the "why" behind anything
                               that looks like it could've been done differently
@@ -341,7 +341,7 @@ tablet stays in sync): **C** calibrate, **V** verification overlay, **H** status
 **T** theme, **M** background map (plain / detailed / full), **P** interchange pulses,
 **S** stop markers, **O** stop history, **L** dot colour (schedule / traffic / crowding),
 **K** street lines (off / traffic / crowding), **A** areas (off / jobs / service gap / Opal 2016 / pressure),
-**G** areas on travel zones / grid, **B** BOAM peak AM / PM, **Space** pause/play a replay, **1–5** trains / metro / light rail / buses /
+**G** areas on travel zones / grid, **B** BOAM peak AM / PM, **D** street directions (one colour / side by side / to city / from city), **Space** pause/play a replay, **1–5** trains / metro / light rail / buses /
 ferries, **arrows** nudge (shift ×10), **[ ]** scale, **0** reset nudge.
 
 **Headless dev/debug tools** (no rendering, just prove the data pipeline works and
@@ -355,7 +355,7 @@ python scripts/run_phase3.py --cycles 7            # + map matching/adherence + 
 **Tests**:
 
 ```bash
-pytest        # 193 tests, ~2s, no network required
+pytest        # 203 tests, ~2s, no network required
 ```
 
 ### Calibrating onto a physical model (once one exists)
@@ -405,7 +405,7 @@ stopping to ask, in the order they were made, each with its reasoning. Highlight
 
 ## Current status
 
-All six phases from the original design brief are built, tested (193 automated
+All six phases from the original design brief are built, tested (203 automated
 tests, as of 4 Nov 2026), and live-verified against the real Transport for NSW API:
 
 1. ✅ Static GTFS foundation

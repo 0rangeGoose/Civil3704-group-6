@@ -39,6 +39,7 @@ from pathlib import Path
 
 from engine.config import Config
 from engine.normalise.map_match import ShapeIndex
+from engine.normalise.segments import _KX, _M_PER_DEG, _POOL_COS, heads_to_centre
 
 logger = logging.getLogger("pulse_cbd.boam")
 
@@ -51,7 +52,9 @@ LOAD_BANDS = (0.15, 0.30, 0.45, 0.60)
 LOST_BANDS = (0.0, 3.0, 8.0, 15.0)         # seconds lost per 100m; <= 0 means held or gained time
 MAX_ABS_GAIN_S = 900                        # bigger jumps are data errors, not traffic
 MIN_TRIPS = 3                               # sections with fewer trips in a period aren't shown
-CACHE_VERSION = 2
+CACHE_VERSION = 3  # 3: both-directions values and the inbound flag
+LONG_SECTION_M = 800  # time lost over a longer section can't say where; left out of that layer (and its pooling)
+POOL_ACROSS_M = 25.0  # a section's midpoint this close to another's line is on the same street
 
 
 def _secs(t: str) -> int | None:
@@ -141,6 +144,66 @@ def _pair_geometry(conn: sqlite3.Connection, pairs: set[tuple[str, str]]) -> dic
     return found
 
 
+def _xy(pts: list[list[float]]) -> list[tuple[float, float]]:
+    return [(lon * _KX, lat * _M_PER_DEG) for lat, lon in pts]
+
+
+def _midpoint_frame(xy: list[tuple[float, float]]) -> tuple[float, float, float, float] | None:
+    """Half-way point along a line and the line's direction there."""
+    steps = [math.hypot(x2 - x1, y2 - y1) for (x1, y1), (x2, y2) in zip(xy, xy[1:])]
+    remaining = sum(steps) / 2
+    for (x1, y1), (x2, y2), step in zip(xy, xy[1:], steps):
+        if step >= remaining and step > 0:
+            t = remaining / step
+            return x1 + (x2 - x1) * t, y1 + (y2 - y1) * t, (x2 - x1) / step, (y2 - y1) / step
+        remaining -= step
+    return None
+
+
+def add_both_directions(sections: list[dict]) -> None:
+    """For the renderer's "one colour per street": each section's load and
+    time lost pooled (trip-weighted) with every section whose midpoint lies on
+    its line, heading either way -- the other direction, and shorter or longer
+    stop pairs of other routes along the same street. Also whether it heads
+    towards the city centre. Sections over LONG_SECTION_M stay out of the
+    time-lost pool, as they're out of that layer."""
+    lines = [_xy(sec["pts"]) for sec in sections]
+    frames = [_midpoint_frame(xy) for xy in lines]
+    cell = 100.0
+    grid: dict[tuple[int, int], list[int]] = {}
+    for i, f in enumerate(frames):
+        if f:
+            grid.setdefault((int(f[0] // cell), int(f[1] // cell)), []).append(i)
+    for sec, xy, frame in zip(sections, lines, frames):
+        sec["inbound"] = heads_to_centre(frame) if frame else None
+        members = set()
+        for (x1, y1), (x2, y2) in zip(xy, xy[1:]):
+            length = math.hypot(x2 - x1, y2 - y1)
+            if length == 0:
+                continue
+            ux, uy = (x2 - x1) / length, (y2 - y1) / length
+            for gx in range(int((min(x1, x2) - POOL_ACROSS_M) // cell), int((max(x1, x2) + POOL_ACROSS_M) // cell) + 1):
+                for gy in range(int((min(y1, y2) - POOL_ACROSS_M) // cell), int((max(y1, y2) + POOL_ACROSS_M) // cell) + 1):
+                    for j in grid.get((gx, gy), ()):
+                        bx, by, bux, buy = frames[j]
+                        along = (bx - x1) * ux + (by - y1) * uy
+                        across = abs((bx - x1) * uy - (by - y1) * ux)
+                        if 0 <= along <= length and across <= POOL_ACROSS_M and abs(bux * ux + buy * uy) >= _POOL_COS:
+                            members.add(j)
+        for period in PERIODS:
+            mine = sec.get(period)
+            if not mine:
+                continue
+            pool = [sections[j][period] | {"length_m": sections[j]["length_m"]} for j in members if sections[j].get(period)]
+            load = [(m["trips"], m["load"]) for m in pool if m["load"] is not None]
+            lost = [(m["trips"], m["lost_s_per_100m"]) for m in pool
+                    if m["lost_s_per_100m"] is not None and m["length_m"] <= LONG_SECTION_M]
+            load_all = sum(t * v for t, v in load) / sum(t for t, _ in load) if load else None
+            lost_all = sum(t * v for t, v in lost) / sum(t for t, _ in lost) if lost else None
+            mine["load_all_bin"] = band(load_all, LOAD_BANDS) if load_all is not None else None
+            mine["lost_all_bin"] = band(lost_all, LOST_BANDS) if lost_all is not None else None
+
+
 def build_boam_layers(cfg: Config, shapes: ShapeIndex) -> dict:
     """{"sections": [...], "meta": {...}}, cached in data/boam/boam_layers.json."""
     boam_dir = cfg.root / "data" / "boam"
@@ -199,8 +262,10 @@ def build_boam_layers(cfg: Config, shapes: ShapeIndex) -> dict:
             "lost_bin": band(lost, LOST_BANDS) if lost is not None else None,
         }
 
+    sections = list(by_pair.values())
+    add_both_directions(sections)
     result = {
-        "sections": list(by_pair.values()),
+        "sections": sections,
         "meta": {
             "days": days,
             "periods": {"am": "07:00-09:00", "pm": "16:30-18:30"},
