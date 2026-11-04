@@ -271,6 +271,22 @@ async def shapes_handler(request: web.Request) -> web.Response:
     return web.json_response(request.app["shapes"])
 
 
+def _basemap_path(cfg: Config) -> Path:
+    return cfg.root / "data" / "basemap" / "basemap.json"
+
+
+async def basemap_handler(request: web.Request) -> web.Response:
+    """The detailed background map (scripts/fetch_basemap.py), read once and
+    served as-is. 404 until it has been downloaded."""
+    cache = request.app["basemap_cache"]
+    if "body" not in cache:
+        path = _basemap_path(request.app["cfg"])
+        if not path.exists():
+            raise web.HTTPNotFound(text="no basemap -- run scripts/fetch_basemap.py")
+        cache["body"] = await asyncio.to_thread(path.read_text, encoding="utf-8")
+    return web.Response(text=cache["body"], content_type="application/json")
+
+
 async def stops_handler(request: web.Request) -> web.Response:
     """Every stop in the footprint, for the optional stop-markers layer --
     static for the life of a run (loaded once in LiveVehicleFeed.__init__),
@@ -326,6 +342,7 @@ async def config_handler(request: web.Request) -> web.Response:
             "mode_groups": MODE_GROUPS,
             "congestion_labels": CONGESTION_LABELS,
             "crowding_labels": CROWDING_LABELS,
+            "basemap_available": _basemap_path(cfg).exists(),
             # Keeps visitors out of the team panel; not a security boundary.
             "team_pin": str(cfg.raw.get("controller", {}).get("team_pin", "")),
         }
@@ -449,6 +466,7 @@ def build_app(cfg: Config) -> web.Application:
     app["websockets"] = set()
     app["stop_history_cache"] = {"at": float("-inf"), "body": {}}
     app["route_cache"] = {}
+    app["basemap_cache"] = {}
     app["control"] = ControlState(cfg.root / "data" / "projection_nudge.json")
     app["replay"] = None
     app["areas"] = None
@@ -465,6 +483,7 @@ def build_app(cfg: Config) -> web.Application:
     app.router.add_get("/ws", websocket_handler)
     app.router.add_get("/snapshot", snapshot_handler)
     app.router.add_get("/shapes", shapes_handler)
+    app.router.add_get("/basemap", basemap_handler)
     app.router.add_get("/stops", stops_handler)
     app.router.add_get("/stop_history", stop_history_handler)
     app.router.add_get("/routes", routes_handler)

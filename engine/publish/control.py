@@ -39,6 +39,10 @@ LINE_LAYERS = ("none", "congestion", "derived", "crowding", "boam_load", "boam_l
 # layer's BOAM input use.
 BOAM_PERIODS = ("am", "pm")
 STOP_METRICS = ("median", "mean")
+# Background under everything: plain fill (the default -- the model has the
+# streets), the detailed OpenStreetMap layer from scripts/fetch_basemap.py, or
+# "full": the detailed map plus place, station, landmark and street names.
+BASEMAPS = ("plain", "detailed", "full")
 MAX_FOCUSED_ROUTES = 8
 # Static area layers (engine/demand/areas.py) and the unit they're drawn on.
 AREA_LAYERS = ("none", "jobs", "service_gap", "opal", "pressure")
@@ -57,6 +61,7 @@ _NUDGE_LIMITS = {"dx": (-2000.0, 2000.0), "dy": (-2000.0, 2000.0), "scale": (0.5
 
 DEFAULT_STATE: dict[str, Any] = {
     "theme": "dark",
+    "basemap": "plain",
     "verify": False,
     "hud": False,
     "calibrate": False,
@@ -127,6 +132,10 @@ class ControlState:
                 if value not in BOAM_PERIODS:
                     raise ControlError("boam_period must be 'am' or 'pm'")
                 updated["boam_period"] = value
+            elif key == "basemap":
+                if value not in BASEMAPS:
+                    raise ControlError(f"basemap must be one of {', '.join(BASEMAPS)}")
+                updated["basemap"] = value
             elif key == "stop_metric":
                 if value not in STOP_METRICS:
                     raise ControlError("stop_metric must be 'median' or 'mean'")
