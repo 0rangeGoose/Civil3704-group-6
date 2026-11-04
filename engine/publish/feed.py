@@ -97,6 +97,9 @@ class LiveVehicleFeed:
 
     async def run_forever(self, source=None) -> None:
         bbox = self._cfg.bounding_box
+        # Stop visits are history: only live polling adds to it. A replay
+        # would write the recorded visits again on every pass (and loop).
+        record_stop_visits = source is None
         source = source or self.live_source()
         async for raw in source.stream():
             if raw.feed_type == RESTART:
@@ -130,7 +133,7 @@ class LiveVehicleFeed:
                 trip_update_info = trip_updates.get(enriched.trip_id) if enriched.trip_id else None
                 next_stop_id = trip_update_info.next_stop_id if trip_update_info else None
                 visit = self.stop_visits.record(enriched, next_stop_id)
-                if visit is not None:
+                if visit is not None and record_stop_visits:
                     stop_visit_store.record_stop_visit(self.stop_visits_db_path,**visit, recorded_at=now)
 
                 position_lat = enriched.matched_lat if enriched.matched_lat is not None else enriched.lat
