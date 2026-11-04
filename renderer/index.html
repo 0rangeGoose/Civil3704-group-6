@@ -33,7 +33,7 @@
      projector attached here) -- restore `cursor: none;` before the real rig
      is used, or the mouse will show up on the projected model. */
   /* body { cursor: none; } */
-  body.calibrating { cursor: crosshair; }
+  body.calibrating, body.fitting-corners { cursor: crosshair; }
   canvas { display: block; }
   #status[hidden] { display: none; }
   #status {
@@ -180,6 +180,7 @@ let theme = "dark";
 let control = {
   theme: "dark", verify: false, hud: false, calibrate: false, interchanges: true, stops: false, stop_history: false, stop_metric: "median", routes: [], route_slots: {},
   lens: "adherence", line_layer: "none", area_layer: "none", area_unit: "zones", boam_period: "am", weights: {}, modes: {}, nudge: { dx: 0, dy: 0, scale: 1 },
+  corners: false, warp: { tl: [0, 0], tr: [0, 0], br: [0, 0], bl: [0, 0] },
 };
 let modeToGroup = {}; // feed mode -> controller group, from /config
 
@@ -394,7 +395,8 @@ function applyControl(next) {
   const layoutChanged =
     next.theme !== control.theme ||
     next.calibrate !== control.calibrate ||
-    JSON.stringify(next.nudge) !== JSON.stringify(control.nudge);
+    JSON.stringify(next.nudge) !== JSON.stringify(control.nudge) ||
+    JSON.stringify(next.warp) !== JSON.stringify(control.warp);
   control = next;
   theme = control.theme === "light" ? "light" : "dark";
   document.documentElement.setAttribute("data-theme", theme);
@@ -402,6 +404,9 @@ function applyControl(next) {
   statusEl.hidden = !control.hud;
   if (control.calibrate && !calibrateMode) enterCalibrateMode();
   if (!control.calibrate && calibrateMode) exitCalibrateMode();
+  fittingCorners = control.corners && !calibrateMode;
+  document.body.classList.toggle("fitting-corners", fittingCorners);
+  if (draggingCorner === null) dragWarp = null; // the server's copy has caught up
   if (layoutChanged) rebuildLayers();
   else if (areaChanged) areaLayerCanvas = drawAreaLayer();
   if (control.area_layer === "pressure" && (areaChanged || weightsChanged || boamChanged)) pollPressure();
@@ -529,12 +534,16 @@ function rebuildLayers() {
   routeFocusCanvas = drawRouteFocusLayer();
 }
 
-function clipToFootprint() {
+// Screen positions of the footprint's corners, in WARP_CORNERS order.
+function footprintCorners(proj) {
   const bb = cfg.bounding_box;
-  const corners = [[bb.north, bb.west], [bb.north, bb.east], [bb.south, bb.east], [bb.south, bb.west]];
+  return [[bb.north, bb.west], [bb.north, bb.east], [bb.south, bb.east], [bb.south, bb.west]]
+    .map(([lat, lon]) => proj.project(lat, lon));
+}
+
+function clipToFootprint() {
   ctx.beginPath();
-  corners.forEach(([lat, lon], i) => {
-    const [x, y] = projector.project(lat, lon);
+  footprintCorners(projector).forEach(([x, y], i) => {
     if (i === 0) ctx.moveTo(x, y); else ctx.lineTo(x, y);
   });
   ctx.closePath();
@@ -606,9 +615,12 @@ async function loadAreas() {
 // code."
 function selectProjector() {
   const base = calibration ? makeHomographyProjector(calibration) : makeProjector(cfg.bounding_box, canvas.width, canvas.height);
-  // Crosshairs are placed in raw screen pixels, so the nudge is switched off
-  // while calibrating (and reset by the server once a calibration is saved).
-  return calibrateMode ? base : withNudge(base, control.nudge);
+  // Crosshairs are placed in raw screen pixels, so the nudge and corner warp
+  // are switched off while calibrating (and reset by the server once a
+  // calibration is saved).
+  if (calibrateMode) return base;
+  unwarpedProjector = withNudge(base, control.nudge);
+  return withWarp(unwarpedProjector, dragWarp || control.warp);
 }
 
 // A small shift/scale about the screen centre on top of whichever projector
@@ -623,6 +635,71 @@ function withNudge(base, nudge) {
       return [cx + (x - cx) * nudge.scale + nudge.dx, cy + (y - cy) * nudge.scale + nudge.dy];
     },
   };
+}
+
+// Corner pin on top of the nudge: each footprint corner is moved by its
+// offset in control.warp and everything in between follows the homography
+// through those four points. This is what takes out projector keystone
+// (a trapezoid instead of a rectangle), which shift/scale can't.
+const WARP_CORNERS = ["tl", "tr", "br", "bl"];
+
+function warpIsIdentity(warp) {
+  return !warp || WARP_CORNERS.every((c) => !warp[c] || (warp[c][0] === 0 && warp[c][1] === 0));
+}
+
+function warpedCorners(src, warp) {
+  return src.map(([x, y], i) => [x + warp[WARP_CORNERS[i]][0], y + warp[WARP_CORNERS[i]][1]]);
+}
+
+function withWarp(base, warp) {
+  if (warpIsIdentity(warp)) return base;
+  const src = footprintCorners(base);
+  const h = quadHomography(src, warpedCorners(src, warp));
+  if (!h) return base;
+  return {
+    project(lat, lon) {
+      const [x, y] = base.project(lat, lon);
+      return applyHomography(h, x, y);
+    },
+  };
+}
+
+// Homography taking four screen points onto four others: 8 unknowns (h33 =
+// 1), two equations per point, solved by Gaussian elimination. Null when the
+// points are degenerate (three in a line).
+function quadHomography(src, dst) {
+  const a = [];
+  for (let i = 0; i < 4; i++) {
+    const [x, y] = src[i], [u, v] = dst[i];
+    a.push([x, y, 1, 0, 0, 0, -u * x, -u * y, u]);
+    a.push([0, 0, 0, x, y, 1, -v * x, -v * y, v]);
+  }
+  for (let col = 0; col < 8; col++) {
+    let pivot = col;
+    for (let r = col + 1; r < 8; r++) if (Math.abs(a[r][col]) > Math.abs(a[pivot][col])) pivot = r;
+    if (Math.abs(a[pivot][col]) < 1e-9) return null;
+    [a[col], a[pivot]] = [a[pivot], a[col]];
+    for (let r = 0; r < 8; r++) {
+      if (r === col) continue;
+      const f = a[r][col] / a[col][col];
+      for (let c = col; c < 9; c++) a[r][c] -= f * a[col][c];
+    }
+  }
+  const h = a.map((row, i) => row[8] / row[i]);
+  return [[h[0], h[1], h[2]], [h[3], h[4], h[5]], [h[6], h[7], 1]];
+}
+
+// A corner dragged past its neighbours would fold the map over itself.
+function isConvexQuad(pts) {
+  let sign = 0;
+  for (let i = 0; i < 4; i++) {
+    const [ax, ay] = pts[i], [bx, by] = pts[(i + 1) % 4], [cx, cy] = pts[(i + 2) % 4];
+    const cross = (bx - ax) * (cy - by) - (by - ay) * (cx - bx);
+    if (Math.abs(cross) < 1e-6) return false;
+    if (sign === 0) sign = Math.sign(cross);
+    else if (Math.sign(cross) !== sign) return false;
+  }
+  return true;
 }
 
 // Aspect-correct fit of the bounding box into the canvas: a naive
@@ -878,6 +955,7 @@ function currentRenderPosition(entry, nowMs) {
 
 function render() {
   requestAnimationFrame(render);
+  if (cornerDragDirty) { cornerDragDirty = false; rebuildLayers(); }
   if (!projector || !corridorLayerDim) return;
 
   ctx.fillStyle = CANVAS_THEME[theme].bg;
@@ -910,7 +988,7 @@ function render() {
   // this frame, not a stale copy of it.
   let hoveredKey = null;
   let hoveredDist = Infinity;
-  const hoverActive = !calibrateMode && hoverX !== null && hoverY !== null;
+  const hoverActive = !calibrateMode && !fittingCorners && hoverX !== null && hoverY !== null;
 
   const focusSet = focusActive() ? new Set(control.routes) : null;
 
@@ -973,6 +1051,7 @@ function render() {
 
   ctx.restore();
   for (const key of toDelete) vehicles.delete(key);
+  if (fittingCorners) drawCornerHandles();
 
   // Stops are checked only when no vehicle was hit (vehicles take priority
   // when a comet tail and a tiny stop marker happen to overlap) and only
@@ -998,6 +1077,7 @@ function render() {
     const n = control.nudge;
     const modeFlags = [
       calibrateMode ? "CALIBRATING" : null,
+      fittingCorners ? "FITTING CORNERS" : (warpIsIdentity(control.warp) ? null : "CORNERS"),
       verificationMode ? "VERIFY" : null,
       n.dx || n.dy || n.scale !== 1 ? `NUDGE ${n.dx},${n.dy} x${n.scale.toFixed(3)}` : null,
     ].filter(Boolean);
@@ -1149,6 +1229,72 @@ canvas.addEventListener("mousemove", (ev) => {
 });
 window.addEventListener("mouseup", () => { draggingPointIndex = null; });
 
+// --- Corner fit --------------------------------------------------------------
+// Drag each corner of the footprint onto the matching corner of the model.
+// The map follows live while dragging (rebuilt at most once a frame); the
+// offset goes to the server on release, which saves it with the nudge and
+// sends it to every page. Fine moves are on the tablet's arrow pad.
+
+let fittingCorners = false;
+let unwarpedProjector = null; // calibration + nudge, before the corner warp
+let dragWarp = null;          // local warp while a corner is being dragged
+let draggingCorner = null;    // index into WARP_CORNERS
+let cornerDragDirty = false;
+const CORNER_HIT_PX = 24;
+const CORNER_LABELS = ["NW", "NE", "SE", "SW"];
+
+function drawCornerHandles() {
+  const pts = footprintCorners(projector);
+  ctx.save();
+  ctx.strokeStyle = "#5cf7ff";
+  ctx.lineWidth = 2;
+  ctx.setLineDash([8, 6]);
+  ctx.beginPath();
+  pts.forEach(([x, y], i) => { if (i === 0) ctx.moveTo(x, y); else ctx.lineTo(x, y); });
+  ctx.closePath();
+  ctx.stroke();
+  ctx.setLineDash([]);
+  ctx.font = "12px ui-monospace, monospace";
+  pts.forEach(([x, y], i) => {
+    ctx.strokeStyle = ctx.fillStyle = i === draggingCorner ? "#ff2d9c" : "#5cf7ff";
+    ctx.beginPath();
+    ctx.arc(x, y, 12, 0, Math.PI * 2);
+    ctx.moveTo(x - 18, y); ctx.lineTo(x + 18, y);
+    ctx.moveTo(x, y - 18); ctx.lineTo(x, y + 18);
+    ctx.stroke();
+    ctx.fillText(CORNER_LABELS[i], x + 16, y + (i < 2 ? 22 : -12));
+  });
+  ctx.restore();
+}
+
+canvas.addEventListener("mousedown", (ev) => {
+  if (!fittingCorners || !projector) return;
+  const pts = footprintCorners(projector);
+  let best = null, bestDist = CORNER_HIT_PX;
+  pts.forEach(([x, y], i) => {
+    const d = Math.hypot(x - ev.offsetX, y - ev.offsetY);
+    if (d <= bestDist) { best = i; bestDist = d; }
+  });
+  if (best === null) return;
+  draggingCorner = best;
+  dragWarp = JSON.parse(JSON.stringify(control.warp));
+});
+canvas.addEventListener("mousemove", (ev) => {
+  if (draggingCorner === null || !unwarpedProjector) return;
+  const src = footprintCorners(unwarpedProjector);
+  const corner = WARP_CORNERS[draggingCorner];
+  const next = { ...dragWarp, [corner]: [ev.offsetX - src[draggingCorner][0], ev.offsetY - src[draggingCorner][1]] };
+  if (!isConvexQuad(warpedCorners(src, next))) return;
+  dragWarp = next;
+  cornerDragDirty = true;
+});
+window.addEventListener("mouseup", () => {
+  if (draggingCorner === null) return;
+  const corner = WARP_CORNERS[draggingCorner];
+  draggingCorner = null;
+  sendControl({ warp: { [corner]: dragWarp[corner].map((v) => Math.round(v * 2) / 2) } });
+});
+
 // Dev-only hover tracking -- separate listener from the calibration one
 // above (both fire independently; this one runs whenever the pointer moves
 // over the canvas at all, calibrating or not, and the render loop itself
@@ -1297,6 +1443,7 @@ document.addEventListener("keydown", (ev) => {
   const n = control.nudge;
   const step = NUDGE_STEP_PX * (ev.shiftKey ? 10 : 1);
   if (key === "c") sendControl({ calibrate: !control.calibrate });
+  else if (key === "f") sendControl({ corners: !control.corners, calibrate: false });
   else if (key === "v") sendControl({ verify: !control.verify });
   else if (key === "h") sendControl({ hud: !control.hud });
   else if (key === "t") sendControl({ theme: control.theme === "dark" ? "light" : "dark" });
