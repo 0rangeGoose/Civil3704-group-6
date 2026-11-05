@@ -1,4 +1,4 @@
-# Pulse CBD configuration
+# Inner Sydney Transit Projection Model configuration
 # Bounding box, thresholds, endpoints, palette and poll intervals live here.
 # Secrets (API keys) stay in .env, never here.
 

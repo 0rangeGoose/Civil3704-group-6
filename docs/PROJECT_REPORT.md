@@ -1,10 +1,11 @@
-# Pulse CBD — Project Report and Handover
+# Inner Sydney Transit Projection Model — Project Report and Handover
 
 **As of:** Thursday 5 November 2026, 4:30 pm (Sydney), during the last recorded PM peak before the showcase  
 **Showcase:** Friday 6 November 2026  
 **Feature freeze:** 30 October 2026. Changes after it, all at the owner's request: background map (4 Nov), street-colour fixes and direction modes (4 Nov), replay day picker and full colour definitions on the tablet (5 Nov)  
 **Build:** branch `w12merge` (the owner's `95c722a` merged with the teammate's corner fit, 5 Nov), 208 automated tests passing  
 **Author:** Yoseph Kim, with Claude Code  
+**Name:** formerly *Pulse CBD*, renamed on 5 November 2026. The folder, code, service and log names still use `pulse-cbd` / `pulsecbd`  
 
 ---
 
@@ -14,7 +15,7 @@ This report is written for someone who has never seen the project: a teammate pi
 
 It is organised in five parts:
 
-- **Part I — Understanding the project** (§1–3): what Pulse CBD is, what someone standing at the model sees, the course and physical setup it was built for, and the ideas needed to follow the rest.
+- **Part I — Understanding the project** (§1–3): what the project is, what someone standing at the model sees, the course and physical setup it was built for, and the ideas needed to follow the rest.
 - **Part II — How it works** (§4–8): the parts of the system and how data moves through them, every data source, every feature, exactly how every number is calculated, and what every colour means.
 - **Part III — Why it is built this way** (§9–11): the main design decisions and the alternatives rejected, the analysis comparing our own congestion measure with Transport for NSW's, and how the system was tested.
 - **Part IV — Running it** (§12–14): how to start, stop, record, calibrate and troubleshoot it, the code repository, and the exact state of the laptop today.
@@ -54,11 +55,11 @@ source .venv/bin/activate && pytest -q      # 208 tests should pass
 
 # Part I — Understanding the project
 
-## 1. What Pulse CBD is
+## 1. What the Inner Sydney Transit Projection Model is
 
 ### 1.1 In one paragraph
 
-Pulse CBD turns a physical scale model of inner Sydney into a live map of its public transport. A projector mounted above the model shines an image straight down onto it. That image shows every train, metro, light rail vehicle, ferry and bus currently inside the model's area — typically 270 to 490 of them at once (487 at 4:27 pm on 5 November) — as a small moving arrow on the street or track it is really on, updated every 15 seconds from Transport for NSW's live data. On top of the vehicles, coloured layers answer planning questions: which streets are congested right now, where buses are full, where buses typically lose time, where lots of jobs are served by little public transport, and how one peak hour compares with another. It can show what is happening now, or replay any recorded morning or evening peak as a sped-up time-lapse. Visitors control it from a tablet beside the model; the projected image itself contains only map content.
+The Inner Sydney Transit Projection Model turns a physical scale model of inner Sydney into a live map of its public transport. A projector mounted above the model shines an image straight down onto it. That image shows every train, metro, light rail vehicle, ferry and bus currently inside the model's area — typically 270 to 490 of them at once (487 at 4:27 pm on 5 November) — as a small moving arrow on the street or track it is really on, updated every 15 seconds from Transport for NSW's live data. On top of the vehicles, coloured layers answer planning questions: which streets are congested right now, where buses are full, where buses typically lose time, where lots of jobs are served by little public transport, and how one peak hour compares with another. It can show what is happening now, or replay any recorded morning or evening peak as a sped-up time-lapse. Visitors control it from a tablet beside the model; the projected image itself contains only map content.
 
 ### 1.2 What a visitor experiences
 
@@ -76,7 +77,7 @@ Someone walking up to the model during the showcase would see, in a typical demo
 
 ### 1.3 What it is for
 
-The course asks for a transport planning tool, and the model is the canvas. Pulse CBD's purpose is to make the network's performance *visible in place*: congestion, crowding and access shown on the actual streets and districts of a model people can walk around, rather than in charts. It answers questions such as:
+The course asks for a transport planning tool, and the model is the canvas. Its purpose is to make the network's performance *visible in place*: congestion, crowding and access shown on the actual streets and districts of a model people can walk around, rather than in charts. It answers questions such as:
 
 - Where are buses delayed during the morning peak, and does it match where Transport for NSW says traffic is congested?
 - Which streets carry the fullest buses?
@@ -113,10 +114,10 @@ This is the CIVIL3704 group project for Group 6, with a final showcase on **Frid
 
 Two pieces of software came out of the team:
 
-- **Pulse CBD** (this codebase), built by the owner, Yoseph Kim, starting as a prototype in August.
+- **This project** (then called Pulse CBD), built by the owner, Yoseph Kim, starting as a prototype in August.
 - **A separate web dashboard** built by teammates (branches `mid-project-demo`, `test-pipline`), which computed its own congestion and demand scores on a map.
 
-On 25 September the team agreed to make Pulse CBD the single codebase, keep the dashboard's *direction* (a planning tool about congestion, demand and peak comparison), and rebuild its calculations, which had flaws (§9.1). Teammate **0rangeGoose** later added stop history, fixes to how delays are read, a route filter and direction arrows to Pulse CBD itself (29–30 Oct); that work is merged in (§13).
+On 25 September the team agreed to make this project the single codebase, keep the dashboard's *direction* (a planning tool about congestion, demand and peak comparison), and rebuild its calculations, which had flaws (§9.1). Teammate **0rangeGoose** later added stop history, fixes to how delays are read, a route filter and direction arrows to this codebase itself (29–30 Oct); that work is merged in (§13).
 
 ### 2.2 The physical setup
 
@@ -129,7 +130,7 @@ On 25 September the team agreed to make Pulse CBD the single codebase, keep the 
 
 On 25 September the owner and Claude Code worked through the design one question at a time (a "grilling" session; recorded in `docs/DECISIONS.md`, 25 Sep). The outcomes that shaped everything since:
 
-- One codebase (Pulse CBD), with the teammates' planning direction but rebuilt calculations.
+- One codebase (this one, then Pulse CBD), with the teammates' planning direction but rebuilt calculations.
 - The footprint from the team's surveyed corners, replacing an earlier 5 × 4 km placeholder box.
 - A projection with map content only; controls on a tablet, with a visitor view, a PIN-locked team panel and a statistics page; the tablet connects over the laptop's own Wi-Fi hotspot; the laptop keyboard as a backup.
 - Congestion first from Transport for NSW's own label, then from a measure of our own, checked against it.
@@ -146,7 +147,7 @@ The rest of the report uses these terms. Each is explained here once.
 ### 3.1 Transport data
 
 - **Transport for NSW (TfNSW).** The NSW government agency that runs Sydney's public transport. It publishes data through its **Open Data Hub**, which needs a free API key (a password-like code identifying who is asking for data). The project's key is in the file `.env` and is never committed to the code repository.
-- **GTFS (General Transit Feed Specification).** The worldwide standard format for timetables. A GTFS "bundle" is a set of tables: **routes** (e.g. bus 333), **trips** (one run of a route, e.g. the 7:42 am 333 to Bondi), **stops**, **stop times** (when each trip is scheduled at each stop), and **shapes** (the line on the map a trip follows). Pulse CBD downloads TfNSW's complete bundle, keeps only what touches the footprint, and stores it in a SQLite database (a single-file database). This is called the **static** timetable because it changes only when the timetable does.
+- **GTFS (General Transit Feed Specification).** The worldwide standard format for timetables. A GTFS "bundle" is a set of tables: **routes** (e.g. bus 333), **trips** (one run of a route, e.g. the 7:42 am 333 to Bondi), **stops**, **stop times** (when each trip is scheduled at each stop), and **shapes** (the line on the map a trip follows). The project downloads TfNSW's complete bundle, keeps only what touches the footprint, and stores it in a SQLite database (a single-file database). This is called the **static** timetable because it changes only when the timetable does.
 - **GTFS-Realtime.** The companion live format. TfNSW publishes three kinds of live feed for each of seven modes (Sydney Trains, NSW TrainLink intercity, Metro, two light rail lines, buses, ferries):
     - **Vehicle positions:** where each vehicle is, which trip it is running, and optional extra fields including `congestion_level` (how congested the traffic around it is) and `occupancy_status` (how full it is).
     - **Trip updates:** predicted delays at upcoming stops — for example "this trip will reach its next stop 4 minutes late".
@@ -160,7 +161,7 @@ The rest of the report uses these terms. Each is explained here once.
 ### 3.2 Places and demand data
 
 - **Travel zones (TZ21).** TfNSW divides NSW into small areas called travel zones (the 2021 version is TZ21) for its transport models. 405 of them touch the footprint. They vary greatly in size: tiny in the CBD, much larger in the suburbs.
-- **TZP24 employment.** TfNSW's travel zone projections (2024 release) estimate how many jobs are located in each zone, by year. Pulse CBD uses the 2026 estimate. It counts people *working* in a zone, not living there, and it is a projection, not a census count.
+- **TZP24 employment.** TfNSW's travel zone projections (2024 release) estimate how many jobs are located in each zone, by year. The project uses the 2026 estimate. It counts people *working* in a zone, not living there, and it is a projection, not a census count.
 - **Opal.** Sydney's ticketing smartcard. Passengers "tap on" when boarding and "tap off" when leaving. TfNSW released anonymised tap counts for one week in November 2016 (Opal Tap On and Tap Off, Release 2), by station for trains, light rail and ferries and by postcode for buses. That is the only public tap data at this level of detail, which is why such old data is used.
 - **BOAM (Bus Opal Assignment Model).** A TfNSW dataset that combines Opal taps with bus tracking to estimate, for every bus trip at every stop, how many people were on board (in bands such as 21–40 passengers), the bus's capacity, and its scheduled and actual arrival times. It is published by day; the project uses 13 weekdays.
 - **Postal areas (ABS POA).** The Australian Bureau of Statistics' postcode boundaries, used to place 2016 bus taps.
@@ -1351,7 +1352,7 @@ These should be stated plainly in the final report.
 | 3 Nov | Mac shut down after 11:30. Server down until 18:33 and the PM peak lost. Server moved to a self-restarting launchd job |
 | 4 Nov | Optional background map (Plain, Detailed, Full). Street glow removed. Streets pooled, faint when thin; long BOAM sections left out of time lost. Street direction modes, with one line per stretch |
 | 4–5 Nov | Teammate: corner fit for aligning the projection on the model (F), merged into `w12merge`; README rewrite |
-| 5 Nov | Tablet: Replay mode with a day dropdown and AM/PM buttons; every colour defined with its cut-off, read from the server; stop-history legend. This report rewritten for readers without prior context, and the teammate's work merged in. Interchange pulses removed from the projection |
+| 5 Nov | Renamed from Pulse CBD to the Inner Sydney Transit Projection Model (pages, tablet, README, report). Tablet: Replay mode with a day dropdown and AM/PM buttons; every colour defined with its cut-off, read from the server; stop-history legend. This report rewritten for readers without prior context, and the teammate's work merged in. Interchange pulses removed from the projection |
 
 ---
 

@@ -3,7 +3,7 @@
 <head>
 <meta charset="utf-8" />
 <meta name="viewport" content="width=device-width, initial-scale=1, maximum-scale=1" />
-<title>Pulse CBD — Controller</title>
+<title>Inner Sydney Transit Projection Model — Controller</title>
 <style>
   /* The tablet next to the model. The projector mirrors the laptop screen, so
      every control lives here instead of on the projected image. Three tabs:
@@ -99,6 +99,13 @@
   .seg button + button { border-left: 1px solid var(--panel-border); }
   .seg button[aria-pressed="true"] { background: var(--on-bg); color: var(--on-fg); }
   .seg button:disabled { opacity: 0.4; cursor: default; }
+  /* Phone width: a row's buttons go under its label and share the width,
+     rather than running off the edge (Street directions has four) */
+  @media (max-width: 560px) {
+    .row { flex-wrap: wrap; }
+    .row > .seg { flex: 1 1 100%; }
+    .row > .seg button { flex: 1; min-width: 0; padding: 0 6px; }
+  }
   .day-pick { display: flex; gap: 8px; flex-wrap: wrap; justify-content: flex-end; }
   .day-pick select {
     font: inherit; font-size: 15px; min-height: 48px; padding: 0 10px; cursor: pointer;
@@ -141,7 +148,7 @@
   .stale { color: var(--warn); }
 
   /* Stats tab -- carried over from the old /stats page. */
-  .mode-row, .headers { display: grid; grid-template-columns: 120px repeat(3, 1fr); gap: 10px; align-items: center; }
+  .mode-row, .headers { display: grid; grid-template-columns: 120px repeat(3, minmax(0, 1fr)); gap: 10px; align-items: center; }
   .mode-row { padding: 8px 0; border-top: 1px solid var(--track-bg); }
   .mode-row:first-of-type { border-top: none; }
   .mode-name { font-weight: 600; font-size: 14px; }
@@ -150,7 +157,12 @@
   .window-stat .pct { font-size: 20px; font-weight: 700; }
   .window-stat .bar { height: 5px; border-radius: 3px; background: var(--track-bg); margin: 5px 0 3px; overflow: hidden; }
   .window-stat .bar-fill { height: 100%; background: var(--bar-green); }
-  .window-stat .breakdown { font-size: 10px; color: var(--muted); }
+  .window-stat .breakdown { font-size: 10px; color: var(--muted); overflow-wrap: break-word; }
+  @media (max-width: 560px) {
+    .mode-row, .headers { grid-template-columns: 72px repeat(3, minmax(0, 1fr)); gap: 8px; }
+    .mode-name { font-size: 13px; }
+    .window-stat .pct { font-size: 16px; }
+  }
   .alert-count { font-size: 42px; font-weight: 700; line-height: 1; }
   .alert-count.zero { color: var(--ok); }
   .alert-count.nonzero { color: var(--warn); }
@@ -163,14 +175,14 @@
   .interchange-bar-fill { height: 100%; background: var(--bar-blue); }
   .interchange-count { width: 28px; text-align: right; font-variant-numeric: tabular-nums; font-size: 13px; }
   .stats-grid { display: grid; grid-template-columns: 1.6fr 1fr; gap: 16px; align-items: start; }
-  @media (max-width: 900px) { .stats-grid { grid-template-columns: 1fr; } }
+  @media (max-width: 900px) { .stats-grid { grid-template-columns: minmax(0, 1fr); } }
   .stats-grid section { margin-bottom: 0; }
   .stats-side { display: flex; flex-direction: column; gap: 16px; }
 </style>
 </head>
 <body>
 <header>
-  <h1>Pulse CBD</h1>
+  <h1>Inner Sydney Transit Projection Model</h1>
   <div id="link">connecting…</div>
 </header>
 <nav role="tablist">

@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Installs (or removes) a launchd agent that keeps the Pulse CBD server running.
+"""Installs (or removes) a launchd agent that keeps the server running.
 
 - Starts scripts/run_publish.py when you log in, and again whenever it exits
   (a crash, or `kill`), after at most THROTTLE_SECONDS. Under `caffeinate -i`
