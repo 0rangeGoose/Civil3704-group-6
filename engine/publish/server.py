@@ -509,7 +509,7 @@ def main() -> None:
     server_cfg = cfg.raw.get("server", {})
     host = server_cfg.get("host", "127.0.0.1")
     port = int(server_cfg.get("port", 8765))
-    logger.info("Pulse CBD projector view: http://127.0.0.1:%d/", port)
+    logger.info("Inner Sydney Transit Projection Model projector view: http://127.0.0.1:%d/", port)
     for address in _lan_addresses() if host == "0.0.0.0" else []:
         logger.info("tablet controller: http://%s:%d/control", address, port)
     web.run_app(app, host=host, port=port, print=None)

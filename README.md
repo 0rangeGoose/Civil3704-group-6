@@ -1,4 +1,6 @@
-# Pulse CBD
+# Inner Sydney Transit Projection Model
+
+*(Formerly Pulse CBD; renamed 5 Nov 2026. The folder, code and service names still say `pulse-cbd`.)*
 
 A real-time, multimodal transit "heartbeat" for Sydney's CBD. It ingests live train,
 metro, light rail, ferry and bus data from Transport for NSW, tracks every vehicle

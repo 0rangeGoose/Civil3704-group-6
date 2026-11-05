@@ -2,6 +2,23 @@
 
 Judgment calls made without stopping to ask, per the project brief. Newest first.
 
+## 2026-11-05 — Tablet fits phone screens
+
+At phone width the four Street directions buttons ran off the right edge, and the Stats
+tab's on-time table was a few pixels too wide at 360 px. Below 560 px a row's buttons
+now drop under its label and share the width, and the on-time table's columns can
+shrink (narrower name column, smaller percentages). Checked in Chrome: no sideways
+scrolling on any tab from 320 px to 1280 px; tablet and laptop layouts unchanged.
+
+## 2026-11-05 — Renamed: Inner Sydney Transit Projection Model
+
+The owner's choice, replacing "Pulse CBD". Changed where people see it: the projector
+and tablet page titles, the tablet header, the projection's status line, the server's
+startup message, the README and the report. **Not** changed: the `pulse-cbd` folder and
+package name, `pulse_cbd` log names, the `com.pulsecbd.*` launchd jobs, the tablet's
+saved team-unlock key (renaming it would re-lock every tablet), and older entries in
+this log, which keep the name used at the time.
+
 ## 2026-11-05 — Interchange pulses removed from the projection
 
 At the owner's request, the glowing rings at the nine interchanges are gone: no longer

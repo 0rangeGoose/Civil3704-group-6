@@ -2,7 +2,7 @@
 <html>
 <head>
 <meta charset="utf-8" />
-<title>Pulse CBD</title>
+<title>Inner Sydney Transit Projection Model</title>
 <style>
   /* Themeable via [data-theme] on <html> -- the canvas fill itself is driven
      from the matching CANVAS_THEME entry in JS (see below), since it's drawn
@@ -1337,7 +1337,7 @@ function render() {
     const when = playback.mode === "replay"
       ? `REPLAY ${playback.label} @ ${new Date(playback.t * 1000).toLocaleTimeString("en-AU", { timeZone: "Australia/Sydney" })} x${playback.speed}${playback.paused ? " PAUSED" : ""}`
       : "LIVE";
-    statusEl.textContent = `pulse-cbd  |  ${when}  |  ${vehicles.size} vehicles  |  ${wsStatus}` +
+    statusEl.textContent = `Inner Sydney Transit Projection Model  |  ${when}  |  ${vehicles.size} vehicles  |  ${wsStatus}` +
       (modeFlags.length ? `  |  ${modeFlags.join(" ")}` : "");
   }
 }
