@@ -34,14 +34,11 @@ def test_basemap_defaults_to_plain_and_accepts_detailed_and_full():
         c.apply({"basemap": "satellite"})
 
 
-def test_street_directions_default_to_one_colour_per_street():
-    c = ControlState()
-    assert c.state["street_directions"] == "combined"
-    for value in ("split", "inbound", "outbound", "combined"):
-        c.apply({"street_directions": value})
-        assert c.state["street_directions"] == value
-    with pytest.raises(ControlError):
-        c.apply({"street_directions": "north"})
+def test_street_layer_settings_are_gone():
+    # street colours, their directions and BOAM peak were removed on 5 Nov 2026
+    for patch in ({"line_layer": "congestion"}, {"street_directions": "split"}, {"boam_period": "pm"}):
+        with pytest.raises(ControlError):
+            ControlState().apply(patch)
 
 
 def test_stop_metric_defaults_to_median_and_accepts_mean():
@@ -97,6 +94,7 @@ def test_patch_merges_nested_fields():
     {"nudge": {"dx": True}},
     {"nudge": {"rotate": 1}},
     {"unknown": 1},
+    {"weights": {"congestion": 1}},  # the pressure layer and its weights were removed
     ["not", "an", "object"],
 ])
 def test_invalid_patch_is_rejected_without_partial_changes(patch):
@@ -164,3 +162,12 @@ def test_corrupt_nudge_file_is_ignored(tmp_path):
     path = tmp_path / "nudge.json"
     path.write_text("{not json")
     assert ControlState(path).state["nudge"] == {"dx": 0.0, "dy": 0.0, "scale": 1.0}
+
+
+def test_early_buses_shown_by_default_and_switchable():
+    c = ControlState()
+    assert c.state["early_buses"] is True
+    c.apply({"early_buses": False})
+    assert c.state["early_buses"] is False
+    with pytest.raises(ControlError):
+        c.apply({"early_buses": "off"})

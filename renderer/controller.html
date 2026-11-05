@@ -7,7 +7,7 @@
 <style>
   /* The tablet next to the model. The projector mirrors the laptop screen, so
      every control lives here instead of on the projected image. Three tabs:
-     Display (visitors), Team (behind a PIN), Stats (what used to be /stats).
+     Display (visitors), Team (alignment, health), Stats (what used to be /stats).
      Sizing is for fingers: every control is at least 48px tall. */
   * { box-sizing: border-box; }
   [hidden] { display: none !important; }
@@ -80,9 +80,10 @@
   .timeline-labels { display: flex; justify-content: space-between; font-size: 13px; color: var(--muted); margin: 2px 0 12px; font-variant-numeric: tabular-nums; }
   #tl-now { color: var(--fg); font-weight: 600; }
   #session-choices { margin-bottom: 8px; }
-  #session-choices .toggle { font-size: 14px; min-height: 56px; padding: 4px 8px; }
-  #session-choices .toggle small { display: block; font-weight: 400; font-size: 12px; opacity: 0.8; }
+  #session-choices .toggle, #export-buttons .toggle { font-size: 14px; min-height: 56px; padding: 4px 8px; }
+  #session-choices .toggle small, #export-buttons .toggle small { display: block; font-weight: 400; font-size: 12px; opacity: 0.8; }
   #legend h3 { font-size: 14px; font-weight: 600; margin: 0 0 8px; }
+  h3.sub { font-size: 14px; font-weight: 600; margin: 16px 0 4px; padding-top: 12px; border-top: 1px solid var(--track-bg); }
   #legend .legend + h3, #legend .note + h3 { margin-top: 16px; }
   .note { color: var(--muted); font-size: 14px; margin: 10px 0 0; }
 
@@ -100,7 +101,7 @@
   .seg button[aria-pressed="true"] { background: var(--on-bg); color: var(--on-fg); }
   .seg button:disabled { opacity: 0.4; cursor: default; }
   /* Phone width: a row's buttons go under its label and share the width,
-     rather than running off the edge (Street directions has four) */
+     rather than running off the edge */
   @media (max-width: 560px) {
     .row { flex-wrap: wrap; }
     .row > .seg { flex: 1 1 100%; }
@@ -120,14 +121,6 @@
   .nudge-side .seg { align-self: flex-start; }
   #nudge-readout, #corners-readout { font: 13px ui-monospace, monospace; color: var(--muted); }
 
-  #pin-gate input {
-    font: inherit; font-size: 24px; letter-spacing: 0.3em; width: 160px; min-height: 52px; text-align: center;
-    background: var(--track-bg); color: var(--fg); border: 1px solid var(--panel-border); border-radius: 8px;
-  }
-  #pin-error { color: var(--bad); font-size: 14px; min-height: 20px; margin-top: 8px; }
-  .weight-row { display: grid; grid-template-columns: 140px 1fr 48px; gap: 12px; align-items: center; min-height: 48px; }
-  .weight-row input[type=range] { width: 100%; height: 32px; accent-color: var(--on-bg); }
-  .weight-row .num { font-variant-numeric: tabular-nums; }
   .health-grid { display: grid; grid-template-columns: 1fr auto auto; gap: 4px 16px; font-size: 14px; }
   .health-grid .head { color: var(--muted); font-size: 12px; text-transform: uppercase; }
   .num { text-align: right; font-variant-numeric: tabular-nums; }
@@ -228,6 +221,25 @@
           <button data-speed="50">50×</button>
         </div>
       </div>
+      <div id="export-block">
+        <h3 class="sub">Download a recorded peak (CSV)</h3>
+        <div class="row">
+          <div class="label">Peak<small id="export-note"></small></div>
+          <div class="day-pick">
+            <select id="export-day" aria-label="Day to export"></select>
+            <div class="seg" id="export-peak-seg">
+              <button data-export-peak="am">AM peak</button>
+              <button data-export-peak="pm">PM peak</button>
+            </div>
+          </div>
+        </div>
+        <div class="toggles" id="export-buttons">
+          <button class="toggle" data-export="vehicles">Vehicles<small>every update · ~40 MB</small></button>
+          <button class="toggle" data-export="stop_visits">Stop visits<small>~4 MB</small></button>
+          <button class="toggle" data-export="trips">Trips on time<small>each trip once · official points</small></button>
+        </div>
+        <p class="note" id="export-status">The first export of a peak replays it, about 2 minutes; after that it downloads straight away. Times are Sydney time. Column details: docs/PROJECT_REPORT.md, Appendix D.</p>
+      </div>
     </section>
     <section>
       <h2>Show on the model</h2>
@@ -240,34 +252,14 @@
         <button class="toggle" data-lens="congestion">Traffic</button>
         <button class="toggle" data-lens="crowding">Crowding</button>
       </div>
+      <div class="row" id="early-row">
+        <div class="label">Early buses<small>On: buses more than 59 s early show in blue. Off: they show as on time. The Stats tab always uses the official first-stop measure.</small></div>
+        <div class="seg"><button data-control="early_buses">On</button></div>
+      </div>
     </section>
     <section>
-      <h2>Colour the streets by</h2>
-      <div class="toggles" id="line-choices">
-        <button class="toggle" data-line="none">Off</button>
-        <button class="toggle" data-line="congestion">Traffic</button>
-        <button class="toggle" data-line="derived">Traffic (our measure)</button>
-        <button class="toggle" data-line="crowding">Crowding</button>
-        <button class="toggle" data-line="boam_load">Typical bus load</button>
-        <button class="toggle" data-line="boam_lost">Where buses lose time</button>
-      </div>
-      <div class="row">
-        <div class="label">Street directions<small>Inbound and outbound in one colour, side by side, or one direction only (towards or away from Town Hall)</small></div>
-        <div class="seg" id="directions-seg">
-          <button data-directions="combined">One colour</button>
-          <button data-directions="split">Side by side</button>
-          <button data-directions="inbound">To city</button>
-          <button data-directions="outbound">From city</button>
-        </div>
-      </div>
-      <div class="row" id="boam-period-row">
-        <div class="label">Typical weekday peak<small>For the bus load and time-lost streets, and pressure</small></div>
-        <div class="seg" id="boam-period-seg">
-          <button data-boam-period="am">AM peak</button>
-          <button data-boam-period="pm">PM peak</button>
-        </div>
-      </div>
-      <div class="toggles" style="margin-top:10px">
+      <h2>Stops</h2>
+      <div class="toggles">
         <button class="toggle" data-control="stops" aria-pressed="false">Stop markers</button>
         <button class="toggle" data-control="stop_history" aria-pressed="false">Stop history</button>
       </div>
@@ -296,8 +288,6 @@
         <button class="toggle" data-area="none">Off</button>
         <button class="toggle" data-area="jobs">Jobs</button>
         <button class="toggle" data-area="service_gap">Service gap</button>
-        <button class="toggle" data-area="opal">Opal 2016</button>
-        <button class="toggle" data-area="pressure">Pressure (combined)</button>
       </div>
       <div class="row">
         <div class="label">Area shape<small>Compare which reads better on the model</small></div>
@@ -325,14 +315,7 @@
   </div>
 
   <div class="tab" id="tab-team" hidden>
-    <section id="pin-gate">
-      <h2>Team panel</h2>
-      <input id="pin-input" type="password" inputmode="numeric" autocomplete="off" placeholder="PIN" />
-      <button class="btn" id="pin-submit">Unlock</button>
-      <div id="pin-error"></div>
-    </section>
-
-    <div id="team-panel" hidden>
+    <div id="team-panel">
       <section>
         <h2>Projection</h2>
         <div class="row">
@@ -395,12 +378,6 @@
       </section>
 
       <section>
-        <h2>Pressure weights</h2>
-        <div id="weights"></div>
-        <p class="note">How much each input counts in the combined pressure layer. 0 leaves it out.</p>
-      </section>
-
-      <section>
         <h2>System health</h2>
         <div id="health"></div>
       </section>
@@ -410,14 +387,15 @@
   <div class="tab" id="tab-stats" hidden>
     <div class="stats-grid">
       <section>
-        <h2>Schedule adherence by mode</h2>
+        <h2>On time by mode (per trip)</h2>
         <div class="headers">
           <div></div>
-          <div class="window-label">5 min</div>
           <div class="window-label">15 min</div>
-          <div class="window-label">60 min</div>
+          <div class="window-label">1 hour</div>
+          <div class="window-label">2 hours</div>
         </div>
         <div id="adherence-table"></div>
+        <p class="note">Each trip counted once, where TfNSW measures it: buses as they leave their first stop (Greater Sydney Bus Contract: 59 s early to 5 min 59 s late), other modes by the predicted delay at their final stop (TfNSW punctuality: within 5 min, 6 min intercity). Trips with no live prediction aren't counted; cancelled ones count as not on time. Buses starting outside the model aren't seen leaving their first stop, so they aren't counted.</p>
       </section>
       <div class="stats-side">
         <section>
@@ -443,8 +421,7 @@ const MODE_LABEL = {
 };
 const MODE_ORDER = ["sydneytrains", "metro", "lightrail_innerwest", "lightrail_cbdandsoutheast", "nswtrains", "buses", "ferries"];
 const GROUP_LABEL = { trains: "Trains", metro: "Metro", lightrail: "Light rail", buses: "Buses", ferries: "Ferries" };
-const WINDOWS = [300, 900, 3600];
-const UNLOCK_KEY = "pulse-cbd-team-unlocked";
+const WINDOWS = [900, 3600, 7200]; // per-trip punctuality windows (engine/normalise/aggregate.py)
 
 // Same dark-theme colours as the projector (renderer/index.html), so the
 // legend matches what's on the model. Each item is [colour, name, definition];
@@ -457,9 +434,8 @@ const ADHERENCE_NAMES = {
 };
 const minutes = (s) => `${+(s / 60).toFixed(1)}`;
 
-// "5 min trains, buses & ferries; 2 min metro & light rail", from {category: seconds}
-function perMode(fmt) {
-  const t = cfg.adherence_thresholds_seconds;
+// "5 min trains, metro, light rail & ferries; 6 min intercity trains", from {category: seconds}
+function perMode(fmt, t = cfg.punctuality.late_seconds) {
   const byValue = new Map();
   for (const [cat, name] of Object.entries(ADHERENCE_NAMES)) {
     if (t[cat] == null) continue;
@@ -474,15 +450,22 @@ const LEGENDS = {
   adherence: {
     title: "Vehicles: on schedule?",
     items: () => {
-      const k = cfg.adherence_thresholds_seconds.very_late_multiplier;
-      return [
-        ["#39ff6a", "On time", `Up to ${perMode((s) => `${minutes(s)} min`)} behind the timetable. Running early counts as on time.`],
-        ["#ffb020", "Running late", `Later than that, up to ${k}× it: ${perMode((s) => `${minutes(s)}–${minutes(s * k)} min`)}.`],
-        ["#c81c2e", "Very late / cancelled", `More than ${k}× it (over ${perMode((s) => `${minutes(s * k)} min`)}), or TfNSW has cancelled the trip.`],
+      const late = cfg.punctuality.late_seconds, early = cfg.punctuality.early_seconds || {};
+      const clock = (s) => (s < 60 ? `${s} s` : s % 60 ? `${Math.floor(s / 60)} min ${s % 60} s` : `${s / 60} min`);
+      const items = [
+        ["#4da3ff", "Early", `Buses more than ${clock(early.bus ?? 59)} early (Greater Sydney Bus Contract). Leaving early means passengers miss the bus. Other modes aren't marked early: TfNSW's rail standard doesn't count running early against a train.`],
+        ["#39ff6a", "On time", `Up to ${clock(late.suburban_rail)} late: Sydney Trains (TfNSW punctuality standard). Up to ${clock(late.intercity)}: intercity trains (TfNSW). Up to ${clock(late.bus)} late and no more than ${clock(early.bus ?? 59)} early: buses (Greater Sydney Bus Contract, 2023). Up to ${clock(late.metro)}: metro, light rail & ferries (no published standard found; TfNSW's Sydney Trains standard applied by the project).`],
+        ["#ffb020", "Late", "Later than the on-time limit for its mode."],
+        ["#c81c2e", "Missed its slot / cancelled", "Later than the on-time limit and also later than the scheduled gap to the next trip on its route and direction, so the next service would have come sooner (the project's own category, from the timetable). Or TfNSW has cancelled the trip. Sydney Trains, Metro and CBD light rail can't be matched to timetabled trips, so they show Late instead."],
         [GREY, "No schedule data", "No live delay prediction for the vehicle's trip, so it can't be compared with the timetable."],
       ];
+      if (!control.early_buses) { // Early buses switch off: early ones are drawn green
+        items.splice(0, 1);
+        items[0][2] += " The Early buses switch is off, so buses running early show as on time too.";
+      }
+      return items;
     },
-    note: "Delay is TfNSW's live prediction for the vehicle's next stop, compared with the timetable.",
+    note: "The colour is TfNSW's live predicted delay at the vehicle's next stop, wherever it is. TfNSW's official figures measure trains at their final destination and buses as they leave their first stop; the Stats tab counts each trip once that way.",
   },
   congestion: {
     title: "Traffic (reported by Transport for NSW)",
@@ -494,20 +477,6 @@ const LEGENDS = {
       [GREY, "Not reported", "UNKNOWN or missing. Always the case for trains and metro on tracks, which aren't in road traffic."],
     ],
     note: "Each bus's own congestion field in TfNSW's live feed. TfNSW doesn't publish the speeds or delays behind its four levels, so there are no numbers to give; \"Traffic (our measure)\" is the version with stated cut-offs.",
-  },
-  derived: {
-    title: "Traffic, our measure: how much slower than at night",
-    items: () => {
-      const [a, b, c] = cfg.thresholds_tti;
-      return [
-        ["#3ddc84", cfg.congestion_labels[0], `Takes up to ${a}× as long as the same street at night.`],
-        ["#ffd23f", cfg.congestion_labels[1], `More than ${a}×, up to ${b}× as long.`],
-        ["#ff8c1a", cfg.congestion_labels[2], `More than ${b}×, up to ${c}× as long.`],
-        ["#ff2e4d", cfg.congestion_labels[3], `More than ${c}× as long.`],
-        [GREY, "No baseline", "Buses seen there, but we have no night-time speed for that street to compare with."],
-      ];
-    },
-    note: "A reading is a bus's average speed over at least 300 m (stops and lights included), compared with the street's free-flow speed: the 85th-percentile bus speed there between 10pm and 5am, from our recordings. E.g. a street buses cover at 30 km/h at night, now at 12 km/h, takes 2.5× as long. Compare with TfNSW's Traffic layer.",
   },
   crowding: {
     title: "Crowding (reported by Transport for NSW)",
@@ -522,52 +491,13 @@ const LEGENDS = {
   },
 };
 
-// Streets average the levels above (0-3) and round, the same rule for every live street layer
-const STREET_RULE = (what) => `On streets: the average level of every ${what} seen on that street in the same direction in the last 10 minutes, rounded: under 0.5 → level 0, 0.5 to under 1.5 → 1, 1.5 to under 2.5 → 2, 2.5 and over → 3 (e.g. readings of 0, 0 and 2 average 0.67 → level 1). Solid line = 2 or more ${what}s; faint = only 1, so treat it as a hint.`;
-const STREET_WHAT = { congestion: "bus", derived: "bus reading", crowding: "vehicle" };
-
 let areaMeta = null; // {available, meta} from /areas?meta=1
-let boamMeta = null; // {days, periods, note} from /boam?meta=1
 
-const BOAM_LEGENDS = {
-  boam_load: {
-    title: "Typical bus load (TfNSW BOAM)",
-    items: [
-      ["#5ec8ff", "Under 15% full", "15% or less of the bus's total capacity."],
-      ["#8fa8ff", "15–30%", "More than 15%, up to 30%."],
-      ["#b48cff", "30–45%", "More than 30%, up to 45%."],
-      ["#ff7ad9", "45–60%", "More than 45%, up to 60%."],
-      ["#ff2e4d", "Over 60% full", "More than 60% of capacity."],
-    ],
-    note: "Passengers on board leaving each stop ÷ the bus's total capacity, averaged over every weekday trip on that stretch in the peak. BOAM gives passengers in bands (0–20, 21–40, …); the middle of the band is used (e.g. 21–40 → 30.5). From Opal tap data, so passengers who don't tap aren't counted. Stretches with fewer than 3 trips aren't shown.",
-  },
-  boam_lost: {
-    title: "Where buses lose time (TfNSW BOAM)",
-    items: [
-      ["#3ddc84", "Held or gained time", "0 s or less per 100 m: buses kept to the timetable or caught up."],
-      ["#c8e04a", "Up to 3 s per 100 m", "More than 0, up to 3 s lost per 100 m."],
-      ["#ffd23f", "3–8 s", "More than 3, up to 8 s per 100 m."],
-      ["#ff8c1a", "8–15 s", "More than 8, up to 15 s per 100 m."],
-      ["#ff2e4d", "Over 15 s per 100 m", "e.g. over a minute lost on a 400 m stretch."],
-    ],
-    note: "How much further behind timetable buses fall between two stops (delay at the next stop minus delay at this one), ÷ the distance, averaged over weekday trips. Stretches over 800 m between stops (express routes) aren't shown: an average over that distance can't say where the time is lost. Jumps of more than 15 min are treated as data errors.",
-  },
-};
-
-// round swatches for dots and lines, square ones for areas
+// round swatches for dots, square ones for areas
 function defItems(items, round = false) {
   const shape = round ? "" : ";border-radius:3px";
   return `<div class="legend defs">${items.map(([c, name, def]) =>
     `<div><span class="swatch" style="background:${c}${shape}"></span><span>${name}${def ? `<small>${def}</small>` : ""}</span></div>`).join("")}</div>`;
-}
-
-function boamLegend(key) {
-  const def = BOAM_LEGENDS[key];
-  const period = control.boam_period === "pm" ? "PM peak (4:30–6:30pm)" : "AM peak (7–9am)";
-  const days = boamMeta && boamMeta.days && boamMeta.days.length
-    ? ` Average of ${boamMeta.days.length} weekday(s): ${boamMeta.days.map((d) => `${d.slice(6)}/${d.slice(4, 6)}`).join(", ")}. ${boamMeta.note || ""}`
-    : "";
-  return `<h3>Streets: ${def.title}, ${period}</h3>${defItems(def.items, true)}<p class="note">${def.note}${days}</p>`;
 }
 
 const FIFTHS = ["Lowest fifth", "Second fifth", "Middle fifth", "Fourth fifth", "Highest fifth"];
@@ -602,22 +532,6 @@ const AREA_LEGENDS = {
     ],
     note: (m) => `Gap = the area's rank for jobs minus its rank for public transport, each from 0 (lowest in the footprint) to 1 (highest). Transport = scheduled departures, all modes, from stops within ${m.walk_m} m, ${m.peak} on a weekday (${m.service_day.slice(6)}/${m.service_day.slice(4, 6)}/${m.service_day.slice(0, 4)}). E.g. more jobs than 90% of areas (0.9) but more departures than only 30% (0.3) = +0.6, much more jobs than service. Only areas with jobs are ranked.`,
   },
-  pressure: {
-    title: "Network pressure (combined score)",
-    items: () => FIFTHS.map((f, i) => [["#3a2a12", "#6b3d0f", "#a4520c", "#e0610c", "#ff3b1f"][i], f, ""]),
-    note: () => {
-      const w = control.weights;
-      const peak = control.boam_period === "pm" ? "PM" : "AM";
-      const parts = [["traffic now", w.congestion], ["crowding now", w.crowding], ["service gap", w.service_gap], ["Opal 2016", w.opal], [`typical ${peak}-peak bus load`, w.boam_load]]
-        .filter(([, x]) => x > 0).map(([n, x]) => (x === 1 ? n : `${n} ×${x}`));
-      return `Combines ${parts.join(", ")}. Each input is ranked from 0 to 1 across the areas that have it, the ranks are averaged with these weights, and areas are split into five equal-sized groups by that score. So it's relative to the rest of the footprint: there's no fixed "high" number. Areas with no vehicles right now (or no BOAM bus sections) count as average (0.5) for those inputs. Updated every few seconds.`;
-    },
-  },
-  opal: {
-    title: "Opal taps, November 2016",
-    items: () => rangeItems(["#123f3b", "#16716a", "#1fa89e", "#4fd8ca", "#b0fff6"], "opal", "taps"),
-    note: (m) => `Tap-ons plus tap-offs ${m.peak}, average weekday 21–25 Nov 2016, ranked and split into five equal-sized groups; areas with none aren't coloured. Before the Metro and CBD light rail opened. Buses are by postcode, spread across its bus stops.`,
-  },
 };
 
 function areaLegend(key) {
@@ -640,8 +554,7 @@ function stopHistoryLegend() {
 
 function lensLegend(key) {
   const def = LEGENDS[key];
-  const street = control.line_layer === key ? ` ${STREET_RULE(STREET_WHAT[key])}` : "";
-  return `${defItems(def.items(), true)}<p class="note">${def.note}${street}</p>`;
+  return `${defItems(def.items(), true)}<p class="note">${def.note}</p>`;
 }
 
 function renderLegend() {
@@ -649,12 +562,6 @@ function renderLegend() {
   if (control.area_layer !== "none") parts.push(areaLegend(control.area_layer));
   const lens = control.lens;
   if (control.area_layer === "none") parts.push(`<h3>${LEGENDS[lens].title}</h3>${lensLegend(lens)}`);
-  if (control.line_layer in BOAM_LEGENDS) {
-    parts.push(boamLegend(control.line_layer));
-  } else if (control.line_layer !== "none" && (control.line_layer !== lens || control.area_layer !== "none")) {
-    const line = control.line_layer;
-    parts.push(`<h3>Streets: ${LEGENDS[line].title[0].toLowerCase()}${LEGENDS[line].title.slice(1)}</h3>${lensLegend(line)}`);
-  }
   if (control.stop_history) parts.push(stopHistoryLegend());
   document.getElementById("legend").innerHTML = parts.join("");
 }
@@ -742,25 +649,19 @@ function render(next) {
     b.setAttribute("aria-pressed", String(b.dataset.themeChoice === control.theme));
   });
   document.querySelectorAll("[data-lens]").forEach((b) => b.setAttribute("aria-pressed", String(b.dataset.lens === control.lens)));
-  document.querySelectorAll("[data-line]").forEach((b) => b.setAttribute("aria-pressed", String(b.dataset.line === control.line_layer)));
+  document.getElementById("early-row").hidden = control.lens !== "adherence";
   document.querySelectorAll("[data-area]").forEach((b) => {
     b.setAttribute("aria-pressed", String(b.dataset.area === control.area_layer));
     if (b.dataset.area !== "none") b.disabled = !(areaMeta && areaMeta.available[b.dataset.area]);
   });
   document.querySelectorAll("[data-unit]").forEach((b) => b.setAttribute("aria-pressed", String(b.dataset.unit === control.area_unit)));
-  document.querySelectorAll("[data-boam-period]").forEach((b) => b.setAttribute("aria-pressed", String(b.dataset.boamPeriod === control.boam_period)));
   document.querySelectorAll("[data-stop-metric]").forEach((b) => b.setAttribute("aria-pressed", String(b.dataset.stopMetric === control.stop_metric)));
-  document.querySelectorAll("[data-directions]").forEach((b) => b.setAttribute("aria-pressed", String(b.dataset.directions === control.street_directions)));
   document.querySelectorAll("[data-basemap]").forEach((b) => {
     b.setAttribute("aria-pressed", String(b.dataset.basemap === control.basemap));
     if (b.dataset.basemap !== "plain") b.disabled = !(cfg && cfg.basemap_available);
   });
   renderRouteChips();
-  document.getElementById("boam-period-row").hidden = !(control.line_layer in BOAM_LEGENDS || control.area_layer === "pressure");
-  const hasBoam = !!(boamMeta && boamMeta.days && boamMeta.days.length);
-  document.querySelectorAll("[data-line^='boam_']").forEach((b) => { b.disabled = !hasBoam; });
   renderLegend();
-  renderWeights();
   renderSessions();
   document.querySelectorAll("#speed-seg button").forEach((b) => {
     b.setAttribute("aria-pressed", String(Number(b.dataset.speed) === control.playback.speed));
@@ -789,21 +690,9 @@ document.getElementById("lens-choices").addEventListener("click", (ev) => {
   const b = ev.target.closest("[data-lens]");
   if (b) sendControl({ lens: b.dataset.lens });
 });
-document.getElementById("line-choices").addEventListener("click", (ev) => {
-  const b = ev.target.closest("[data-line]");
-  if (b) sendControl({ line_layer: b.dataset.line });
-});
 document.getElementById("area-choices").addEventListener("click", (ev) => {
   const b = ev.target.closest("[data-area]");
   if (b && !b.disabled) sendControl({ area_layer: b.dataset.area });
-});
-document.getElementById("boam-period-seg").addEventListener("click", (ev) => {
-  const b = ev.target.closest("[data-boam-period]");
-  if (b) sendControl({ boam_period: b.dataset.boamPeriod });
-});
-document.getElementById("directions-seg").addEventListener("click", (ev) => {
-  const b = ev.target.closest("[data-directions]");
-  if (b) sendControl({ street_directions: b.dataset.directions });
 });
 document.getElementById("basemap-seg").addEventListener("click", (ev) => {
   const b = ev.target.closest("[data-basemap]");
@@ -889,19 +778,6 @@ function renderRouteChips() {
 document.getElementById("route-add").addEventListener("click", addRoute);
 document.getElementById("route-input").addEventListener("keydown", (ev) => { if (ev.key === "Enter") addRoute(); });
 document.getElementById("route-clear").addEventListener("click", () => sendControl({ routes: [] }));
-
-async function loadBoamMeta() {
-  try {
-    const resp = await fetch("/boam?meta=1", { cache: "no-store" });
-    const body = resp.ok ? await resp.json() : null;
-    if (body && body.days && body.days.length) {
-      boamMeta = body;
-      if (control) render(control);
-      return;
-    }
-  } catch (_) { /* retry below */ }
-  setTimeout(loadBoamMeta, 5000);
-}
 
 document.getElementById("unit-seg").addEventListener("click", (ev) => {
   const b = ev.target.closest("[data-unit]");
@@ -1035,6 +911,7 @@ function renderSessions() {
   }
   document.getElementById("speed-row").hidden = current === "live";
   renderPeakPicker(current);
+  renderExportPicker();
 }
 
 function renderPeakPicker(current) {
@@ -1088,6 +965,78 @@ document.querySelectorAll("#peak-seg button").forEach((b) => b.addEventListener(
   const s = peakDays().get(pickedDay)?.peaks[b.dataset.peak];
   if (s) sendControl({ playback: { session: s.id } });
 }));
+
+// --- Team: export a recorded peak as CSV ---------------------------------------
+let exportDay = null;
+let exportPeak = "am";
+let exportDaysKey = "";
+let exportBusy = false;
+
+function renderExportPicker() {
+  const days = peakDays();
+  const select = document.getElementById("export-day");
+  if (!days.size) return;
+  if (!days.has(exportDay)) exportDay = days.keys().next().value;
+  const key = [...days.keys()].join();
+  if (key !== exportDaysKey) { // rebuild only when the list changes, so an open dropdown isn't reset
+    exportDaysKey = key;
+    select.innerHTML = "";
+    for (const [day, d] of days) {
+      const o = document.createElement("option");
+      o.value = day;
+      o.textContent = d.label;
+      select.appendChild(o);
+    }
+  }
+  select.value = exportDay;
+  const peaks = days.get(exportDay).peaks;
+  if (!peaks[exportPeak]) exportPeak = peaks.am ? "am" : "pm";
+  document.querySelectorAll("#export-peak-seg button").forEach((b) => {
+    b.disabled = !peaks[b.dataset.exportPeak];
+    b.setAttribute("aria-pressed", String(b.dataset.exportPeak === exportPeak));
+  });
+  const s = peaks[exportPeak];
+  document.getElementById("export-note").textContent = s && s.coverage < 0.9 ? `only ${Math.round(s.coverage * 100)}% recorded` : "";
+  document.querySelectorAll("#export-buttons button").forEach((b) => { b.disabled = exportBusy; });
+}
+
+document.getElementById("export-day").addEventListener("change", (e) => {
+  exportDay = e.target.value;
+  renderExportPicker();
+});
+document.getElementById("export-peak-seg").addEventListener("click", (ev) => {
+  const b = ev.target.closest("[data-export-peak]");
+  if (b && !b.disabled) { exportPeak = b.dataset.exportPeak; renderExportPicker(); }
+});
+document.getElementById("export-buttons").addEventListener("click", async (ev) => {
+  const b = ev.target.closest("[data-export]");
+  if (!b || exportBusy) return;
+  const session = `${exportDay}-${exportPeak}`;
+  const filename = `${session}-${b.dataset.export}.csv`;
+  const status = document.getElementById("export-status");
+  exportBusy = true;
+  renderExportPicker();
+  status.textContent = `Preparing ${filename}… (the first export of a peak takes about 2 minutes)`;
+  try {
+    const resp = await fetch(`/export?session=${session}&kind=${b.dataset.export}`);
+    if (!resp.ok) throw new Error(await resp.text());
+    const url = URL.createObjectURL(await resp.blob());
+    const a = document.createElement("a");
+    a.href = url;
+    a.download = filename;
+    document.body.appendChild(a);
+    a.click();
+    a.remove();
+    setTimeout(() => URL.revokeObjectURL(url), 60000);
+    status.textContent = `Downloaded ${filename}.`;
+  } catch (err) {
+    status.textContent = `Couldn't export ${filename}: ${err.message}`;
+  } finally {
+    exportBusy = false;
+    renderExportPicker();
+  }
+});
+
 
 let seekPendingUntil = 0; // after a tap, hold the thumb where it was tapped until the replay catches up
 
@@ -1151,56 +1100,6 @@ document.getElementById("speed-seg").addEventListener("click", (ev) => {
   if (b) sendControl({ playback: { speed: Number(b.dataset.speed) } });
 });
 
-// --- Pressure weights ---------------------------------------------------------
-
-const WEIGHT_LABEL = { congestion: "Traffic", crowding: "Crowding", service_gap: "Service gap", opal: "Opal 2016", boam_load: "Bus load (BOAM)" };
-
-function buildWeights() {
-  const box = document.getElementById("weights");
-  box.innerHTML = "";
-  for (const [name, label] of Object.entries(WEIGHT_LABEL)) {
-    const row = document.createElement("div");
-    row.className = "weight-row";
-    row.innerHTML = `<div>${label}</div><input type="range" min="0" max="3" step="0.5" data-weight="${name}"><div class="num" data-weight-value="${name}"></div>`;
-    box.appendChild(row);
-  }
-  box.addEventListener("change", (ev) => {
-    const input = ev.target.closest("[data-weight]");
-    if (input) sendControl({ weights: { [input.dataset.weight]: Number(input.value) } });
-  });
-  box.addEventListener("input", (ev) => {
-    const input = ev.target.closest("[data-weight]");
-    if (input) box.querySelector(`[data-weight-value="${input.dataset.weight}"]`).textContent = `×${input.value}`;
-  });
-}
-
-function renderWeights() {
-  for (const [name, w] of Object.entries(control.weights || {})) {
-    const input = document.querySelector(`[data-weight="${name}"]`);
-    if (input && document.activeElement !== input) input.value = w;
-    const label = document.querySelector(`[data-weight-value="${name}"]`);
-    if (label) label.textContent = `×${w}`;
-  }
-}
-
-// --- Team PIN ----------------------------------------------------------------
-// Keeps visitors out of alignment and calibration. Not a security boundary.
-
-function unlockTeam() {
-  document.getElementById("pin-gate").hidden = true;
-  document.getElementById("team-panel").hidden = false;
-  try { sessionStorage.setItem(UNLOCK_KEY, "1"); } catch (_) {}
-  refreshHealth();
-}
-function tryPin() {
-  const input = document.getElementById("pin-input");
-  if (!cfg.team_pin || input.value === cfg.team_pin) { unlockTeam(); return; }
-  document.getElementById("pin-error").textContent = "Wrong PIN";
-  input.value = "";
-}
-document.getElementById("pin-submit").addEventListener("click", tryPin);
-document.getElementById("pin-input").addEventListener("keydown", (ev) => { if (ev.key === "Enter") tryPin(); });
-
 // --- System health -----------------------------------------------------------
 
 async function refreshHealth() {
@@ -1241,7 +1140,7 @@ function renderAdherenceTable(byWindow) {
   const container = document.getElementById("adherence-table");
   container.innerHTML = "";
   if (!modes.length) {
-    container.innerHTML = `<div class="note">No adherence data yet.</div>`;
+    container.innerHTML = `<div class="note">No trips measured yet: trips are counted as they leave their first stop or near their final stop.</div>`;
     return;
   }
   for (const mode of modes) {
@@ -1254,10 +1153,10 @@ function renderAdherenceTable(byWindow) {
     for (const w of WINDOWS) {
       const states = (byWindow[w] || {})[mode] || {};
       const onTime = states.on_time || 0;
-      const otherBits = Object.entries(states)
-        .filter(([k]) => k !== "on_time")
-        .map(([k, v]) => `${k} ${v.toFixed(0)}%`)
-        .join(" · ");
+      const otherBits = [
+        ...Object.entries(states).filter(([k]) => k !== "on_time" && k !== "trips").map(([k, v]) => `${k.replace("_", " ")} ${v.toFixed(0)}%`),
+        ...(states.trips ? [`${states.trips} trip${states.trips === 1 ? "" : "s"}`] : []),
+      ].join(" · ");
       const cell = document.createElement("div");
       cell.className = "window-stat";
       cell.innerHTML = `
@@ -1307,7 +1206,7 @@ async function refreshStats() {
     const resp = await fetch("/aggregate", { cache: "no-store" });
     if (!resp.ok) throw new Error(`HTTP ${resp.status}`);
     const data = await resp.json();
-    renderAdherenceTable(data.adherence_by_window || {});
+    renderAdherenceTable(data.punctuality_by_window || {});
     renderAlerts(data.alerts || { count: 0, by_severity: {}, route_ids: [] });
     renderInterchanges(data.interchanges || []);
   } catch (e) {
@@ -1320,16 +1219,11 @@ async function refreshStats() {
 async function boot() {
   cfg = await (await fetch("/config")).json();
   buildModeToggles();
-  buildWeights();
-  let unlocked = false;
-  try { unlocked = sessionStorage.getItem(UNLOCK_KEY) === "1"; } catch (_) {}
-  if (unlocked) unlockTeam();
   const start = location.hash.slice(1);
   showTab(["display", "team", "stats"].includes(start) ? start : "display");
   connect();
   refreshSessions();
   loadAreaMeta();
-  loadBoamMeta();
   loadRouteCatalog();
   setInterval(refreshSessions, 60000);
   setInterval(refreshStats, 3000);

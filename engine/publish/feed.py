@@ -22,17 +22,19 @@ from engine.normalise.aggregate import (
     RollingAdherence,
     RollingInterchangeActivity,
     Stop,
+    TripPunctuality,
+    TripReading,
     count_active_alerts,
     load_cbd_ids,
     load_interchanges,
     load_stops,
     nearby_interchanges,
 )
+from engine.normalise.adherence import PunctualityRules, classify
 from engine.normalise.build import build_vehicle_records
 from engine.normalise.enrich import enrich_vehicle_record
+from engine.normalise.headways import TripTimetable
 from engine.normalise.map_match import ShapeIndex
-from engine.normalise.travel_time import DEFAULT_THRESHOLDS, FreeFlow, TravelTimeTracker
-from engine.normalise.segments import SegmentAggregator
 from engine.normalise.static_lookup import StaticLookup
 from engine.normalise.trip_updates import build_trip_update_index
 from engine.normalise.vehicle import VehicleRecord
@@ -52,18 +54,17 @@ class LiveVehicleFeed:
         self._lookup = StaticLookup(db_path)
         self._shapes = ShapeIndex(db_path)
         self._cbd_route_ids, self._cbd_stop_ids = load_cbd_ids(db_path)
-        self._thresholds = cfg.raw["adherence_thresholds_seconds"]
-        self._very_late_multiplier = self._thresholds["very_late_multiplier"]
+        self._rules = PunctualityRules.from_config(cfg.raw)
+        self.timetable = TripTimetable.load(db_path)  # first stops and scheduled gaps per trip
         self._stale_after_seconds = cfg.raw["realtime_gtfs"]["stale_after_seconds"]
 
         self.interchanges: list[Interchange] = load_interchanges(db_path, cfg.raw["interchanges"])
         self._interchange_radius_m = cfg.raw.get("interchange_radius_m", 300)
         self.stops: list[Stop] = load_stops(db_path)
         self.recordings_dir = cfg.root / "data" / "recordings"
-        derived_cfg = cfg.raw.get("derived_congestion", {})
-        self.freeflow_path = cfg.root / derived_cfg.get("freeflow_path", "data/analysis/freeflow.json")
-        self.travel_time = TravelTimeTracker(
-            FreeFlow.load(self.freeflow_path), tuple(derived_cfg.get("thresholds_tti", DEFAULT_THRESHOLDS)))
+        # Called with every enriched vehicle record, if set: the CSV export
+        # (engine/analysis/export.py) listens here.
+        self.on_vehicle = None
         self.api_budget, self.heartbeat = budget_from_config(cfg)
         self.stop_visits_db_path = stop_visit_store.default_db_path(cfg)
 
@@ -79,10 +80,9 @@ class LiveVehicleFeed:
         self.alerts_summary: dict = {"count": 0, "by_severity": {}, "route_ids": []}
         self.last_positions_at: dict[str, float] = {}  # mode -> wall time its latest positions arrived
         self.rolling_adherence = RollingAdherence()
-        self.segments = SegmentAggregator(self._shapes)
+        self.trip_punctuality = TripPunctuality()
         self.rolling_interchange_activity = RollingInterchangeActivity()
         self._trip_update_index_by_mode: dict[str, dict] = {}
-        self.travel_time.reset()
         self.stop_visits = StopVisitTracker()
         self.epoch += 1
 
@@ -120,21 +120,20 @@ class LiveVehicleFeed:
             now = self.clock
             for r in records:
                 enriched = enrich_vehicle_record(
-                    r, trip_updates, self._shapes, self._lookup, self._thresholds, self._very_late_multiplier
+                    r, trip_updates, self._shapes, self._lookup, self._rules, self.timetable
                 )
                 self.snapshot[enriched.vehicle_key] = enriched
                 self.snapshot_updated_at[enriched.vehicle_key] = now
                 self.rolling_adherence.record(enriched.mode, enriched.adherence_state, at=now)
-                self.segments.record(enriched, at=now)
-                interval = self.travel_time.observe(enriched)
-                if interval is not None:
-                    self.segments.record_derived(interval)
+                if self.on_vehicle is not None:
+                    self.on_vehicle(enriched)
 
                 trip_update_info = trip_updates.get(enriched.trip_id) if enriched.trip_id else None
                 next_stop_id = trip_update_info.next_stop_id if trip_update_info else None
                 visit = self.stop_visits.record(enriched, next_stop_id)
                 if visit is not None and record_stop_visits:
                     stop_visit_store.record_stop_visit(self.stop_visits_db_path,**visit, recorded_at=now)
+                self._record_trip_punctuality(enriched, trip_update_info, visit, now)
 
                 position_lat = enriched.matched_lat if enriched.matched_lat is not None else enriched.lat
                 position_lon = enriched.matched_lon if enriched.matched_lon is not None else enriched.lon
@@ -149,12 +148,31 @@ class LiveVehicleFeed:
                 raw.mode, len(records), len(self.snapshot),
             )
 
+    def _record_trip_punctuality(self, v: VehicleRecord, info, visit: dict | None, now: float) -> None:
+        """Each trip once, at TfNSW's measuring point (engine/normalise/aggregate.py)."""
+        if not v.trip_id:
+            return
+        if v.mode == "buses":
+            # leaving the trip's first stop: the bus contract's measuring point
+            if visit is not None and visit["stop_id"] == self.timetable.first_stop(v.trip_id):
+                delay = visit["delay_seconds"]
+                state = classify(delay, v.mode, False, self._rules)
+                self.trip_punctuality.record(f"{v.mode}:{v.trip_id}", TripReading(
+                    now, v.mode, v.route_short_name, "first stop", visit["stop_id"], delay, state))
+        elif info is not None:
+            # predicted delay at the final stop: TfNSW's rail measuring point
+            delay = info.final_stop_delay_seconds
+            state = classify(delay, v.mode, info.cancelled, self._rules)
+            self.trip_punctuality.record(f"{v.mode}:{v.trip_id}", TripReading(
+                now, v.mode, v.route_short_name, "final stop (predicted)", info.final_stop_id, delay, state))
+
     def aggregate_snapshot(self) -> dict:
         """Everything the stats panel needs: rolling adherence by window,
         active alerts, and per-interchange recent activity counts."""
         interchange_counts = self.rolling_interchange_activity.counts(now=self.clock)
         return {
             "adherence_by_window": self.rolling_adherence.breakdown_all_windows(now=self.clock),
+            "punctuality_by_window": self.trip_punctuality.breakdown_all_windows(now=self.clock),
             "alerts": self.alerts_summary,
             "interchanges": [
                 {"name": ic.name, "lat": ic.lat, "lon": ic.lon, "count": interchange_counts.get(ic.name, 0)}

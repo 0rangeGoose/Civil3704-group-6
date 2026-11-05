@@ -15,7 +15,7 @@ seen while that stop was still next).
 since this is written to far more often than config is reloaded (once per
 real stop visit, not once per poll) and it keeps tests simple (pass a
 tmp_path, no Config object needed) -- `default_db_path()` resolves the real
-path once, the same way callers already do for engine.demand.boam's cache.
+path once.
 """
 from __future__ import annotations
 

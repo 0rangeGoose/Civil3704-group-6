@@ -29,8 +29,10 @@ from engine.normalise.aggregate import (
     load_cbd_ids,
     load_interchanges,
 )
+from engine.normalise.adherence import PunctualityRules
 from engine.normalise.build import build_vehicle_records
 from engine.normalise.enrich import enrich_vehicle_record
+from engine.normalise.headways import TripTimetable
 from engine.normalise.map_match import ShapeIndex
 from engine.normalise.static_lookup import StaticLookup
 from engine.normalise.trip_updates import build_trip_update_index
@@ -68,8 +70,8 @@ async def run(max_cycles: int | None, out_path: Path | None, aggregate_every: in
 
     cbd_route_ids, cbd_stop_ids = load_cbd_ids(db_path)
     interchanges = load_interchanges(db_path, cfg.raw["interchanges"])
-    thresholds = cfg.raw["adherence_thresholds_seconds"]
-    very_late_multiplier = thresholds["very_late_multiplier"]
+    rules = PunctualityRules.from_config(cfg.raw)
+    timetable = TripTimetable.load(db_path)
 
     recordings_dir = cfg.root / "data" / "recordings"
     source = RecordingSource(LiveSource(cfg), recordings_dir)
@@ -101,7 +103,7 @@ async def run(max_cycles: int | None, out_path: Path | None, aggregate_every: in
                 trip_updates = trip_update_index_by_mode.get(raw.mode, {})
 
                 enriched = [
-                    enrich_vehicle_record(r, trip_updates, shapes, lookup, thresholds, very_late_multiplier)
+                    enrich_vehicle_record(r, trip_updates, shapes, lookup, rules, timetable)
                     for r in records
                 ]
 

@@ -1,12 +1,35 @@
-"""Classify a vehicle's schedule adherence from its Trip Update delay.
+"""Classify a vehicle's punctuality from its Trip Update delay.
 
-States: on_time, late, very_late, cancelled, unknown -- per the brief.
-Transport for NSW's own on-time definitions differ by mode, so the
-on-time threshold is per-mode (config/config.yaml, adherence_thresholds_seconds),
-not global. The late/very_late split isn't specified in the brief beyond
-"thresholds go in config" -- see docs/DECISIONS.md for the multiplier chosen.
+States: early, on_time, late, very_late, cancelled, unknown.
+
+The on-time window per mode comes from config (``punctuality``), each limit
+from a published source where one exists (docs/DECISIONS.md, 5 Nov):
+
+- Sydney Trains and NSW TrainLink intercity: TfNSW's punctuality standard,
+  within 5 and 6 minutes of the timetable (measured by TfNSW at the final
+  destination). Early running isn't penalised.
+- Buses: the Greater Sydney Bus Contract (Schedule 4, 2023): no more than
+  59 s early and no more than 5 min 59 s late (measured at the first stop).
+  Leaving early is a failure for buses -- passengers miss them -- so it's its
+  own state.
+- Metro, light rail and ferries: no published definition was found, so the
+  Sydney Trains 5-minute standard is applied, and labelled as borrowed.
+
+**very_late** is not a TfNSW category. It means the vehicle has "missed its
+slot": later than both the on-time limit and the scheduled gap to the next
+trip on the same route and direction (engine/normalise/headways.py), so a
+passenger would have done better catching the next service. Without a known
+gap (e.g. Sydney Trains, whose live trip ids don't match the timetable) a
+vehicle past the limit is just late.
+
+Note what the live state measures: TfNSW's *predicted* delay at the vehicle's
+*next* stop, wherever it is -- not TfNSW's official measuring points. The
+per-trip measure at those points is engine/normalise/aggregate.py's
+TripPunctuality.
 """
 from __future__ import annotations
+
+from dataclasses import dataclass
 
 MODE_TO_THRESHOLD_CATEGORY = {
     "sydneytrains": "suburban_rail",
@@ -19,12 +42,25 @@ MODE_TO_THRESHOLD_CATEGORY = {
 }
 
 
+@dataclass(frozen=True)
+class PunctualityRules:
+    """Per category: latest delay still on time, and (where a source sets one)
+    how early a vehicle may run and still be on time, both in seconds."""
+    late_seconds: dict[str, int]
+    early_seconds: dict[str, int]
+
+    @classmethod
+    def from_config(cls, raw: dict) -> "PunctualityRules":
+        p = raw["punctuality"]
+        return cls(dict(p["late_seconds"]), dict(p.get("early_seconds") or {}))
+
+
 def classify(
     deviation_seconds: int | None,
     mode: str,
     cancelled: bool,
-    thresholds: dict[str, int],
-    very_late_multiplier: float,
+    rules: PunctualityRules,
+    headway_seconds: float | None = None,
 ) -> str:
     if cancelled:
         return "cancelled"
@@ -32,12 +68,15 @@ def classify(
         return "unknown"
 
     category = MODE_TO_THRESHOLD_CATEGORY.get(mode)
-    threshold = thresholds.get(category) if category else None
-    if threshold is None:
+    late_limit = rules.late_seconds.get(category) if category else None
+    if late_limit is None:
         return "unknown"
 
-    if deviation_seconds <= threshold:
-        return "on_time"  # includes running early -- the brief's states don't include "early"
-    if deviation_seconds <= threshold * very_late_multiplier:
-        return "late"
-    return "very_late"
+    early_limit = rules.early_seconds.get(category)
+    if early_limit is not None and deviation_seconds < -early_limit:
+        return "early"
+    if deviation_seconds <= late_limit:
+        return "on_time"
+    if headway_seconds is not None and deviation_seconds > headway_seconds:
+        return "very_late"  # missed its slot: the next service would have come sooner
+    return "late"

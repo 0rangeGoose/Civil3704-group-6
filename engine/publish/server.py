@@ -14,24 +14,23 @@ from __future__ import annotations
 import asyncio
 import json
 import logging
+import re
+import sys
 import time
 from pathlib import Path
 
 from aiohttp import WSMsgType, web
 
 from engine.config import Config, load_config
-from engine.normalise.levels import CONGESTION_LABELS, CROWDING_LABELS, congestion_level, crowding_level
-from engine.normalise.segments import CONGESTION_MODES
-from engine.normalise.travel_time import DEFAULT_THRESHOLDS
+from engine.normalise.levels import CONGESTION_LABELS, CONGESTION_MODES, CROWDING_LABELS, congestion_level, crowding_level
 from engine.publish.calibration import CalibrationPoint, compute_and_save_calibration, load_calibration
 from engine.publish.control import MODE_GROUPS, ControlError, ControlState
 from engine.publish.feed import LiveVehicleFeed
 from engine.publish.homography import HomographyError
-from engine.publish.route_focus import load_route_catalog, route_detail
+from engine.publish.route_focus import load_route_catalog, route_detail, stop_routes
 from engine.publish.shapes_export import build_render_shapes
+from engine.analysis.export import KINDS as EXPORT_KINDS
 from engine.demand.areas import bin_ranges, build_area_layers
-from engine.demand.pressure import PressureModel
-from engine.demand.boam import build_boam_layers
 from engine.history import store as stop_visit_store
 from engine.sources.replay import RecordingIndex, ReplaySource
 
@@ -147,47 +146,57 @@ async def broadcast_control(app: web.Application) -> None:
     await _broadcast(app, json.dumps({"control": app["control"].state}))
 
 
-async def segments_handler(request: web.Request) -> web.Response:
-    feed: LiveVehicleFeed = request.app["feed"]
-    return web.json_response(feed.segments.snapshot(feed.clock))
-
-
 async def areas_handler(request: web.Request) -> web.Response:
     """Static area layers; built (or loaded from cache) in the background at
     startup, so this is empty for the first few seconds on a fresh build."""
     layers = request.app["areas"] or {"available": {}, "zones": [], "grid": [], "meta": {}}
     if request.query.get("meta"):  # the tablet only needs what's available and how it was built
-        ranges = {unit: {layer: bin_ranges(layers[unit], layer) for layer in ("jobs", "opal")}
+        ranges = {unit: {layer: bin_ranges(layers[unit], layer) for layer in ("jobs",)}
                   for unit in ("zones", "grid")}
         return web.json_response({"available": layers["available"], "meta": {**layers["meta"], "ranges": ranges}})
     return web.json_response(layers)
-
-
-async def pressure_handler(request: web.Request) -> web.Response:
-    """Live combined score per area for the current unit and weights:
-    {unit_id: {score, bin, inputs}}."""
-    model: PressureModel | None = request.app["pressure_model"]
-    if model is None:
-        return web.json_response({})
-    unit = request.query.get("unit", "zones")
-    feed: LiveVehicleFeed = request.app["feed"]
-    state = request.app["control"].state
-    return web.json_response(model.scores(unit, feed.segments.snapshot(feed.clock), state["weights"], state["boam_period"]))
-
-
-async def boam_handler(request: web.Request) -> web.Response:
-    """Typical load and time lost per stop-to-stop section (BOAM), both peaks.
-    Empty until built in the background at startup, or if none imported."""
-    boam = request.app["boam"] or {"sections": [], "meta": {"days": []}}
-    if request.query.get("meta"):
-        return web.json_response(boam["meta"])
-    return web.json_response(boam)
 
 
 async def recordings_handler(request: web.Request) -> web.Response:
     index: RecordingIndex = request.app["replay_index"]
     sessions = await asyncio.to_thread(index.sessions)
     return web.json_response([s.to_json() for s in sessions])
+
+
+EXPORT_SESSION = re.compile(r"^\d{4}-\d{2}-\d{2}-(am|pm)$")
+
+
+async def export_handler(request: web.Request) -> web.StreamResponse:
+    """One recorded peak as CSV: ?session=2026-11-04-am&kind=vehicles|streets|stop_visits.
+    The first request for a peak replays it in a separate process
+    (scripts/export_peak.py, a minute or two) so the live display isn't
+    slowed; the files are kept in data/exports/<session>/ for next time."""
+    session_id, kind = request.query.get("session", ""), request.query.get("kind", "")
+    if not EXPORT_SESSION.match(session_id) or kind not in EXPORT_KINDS:
+        raise web.HTTPBadRequest(text="session must be a recorded peak (e.g. 2026-11-04-am); kind one of " + ", ".join(EXPORT_KINDS))
+    cfg: Config = request.app["cfg"]
+    path = cfg.root / "data" / "exports" / session_id / f"{kind}.csv"
+    if not path.exists():
+        index: RecordingIndex = request.app["replay_index"]
+        session = await asyncio.to_thread(index.find, session_id)
+        if session is None:
+            raise web.HTTPNotFound(text=f"no recorded peak {session_id}")
+        if session.end.timestamp() > time.time():
+            raise web.HTTPConflict(text="that peak is still being recorded; export it once it has finished")
+        lock = request.app["export_locks"].setdefault(session_id, asyncio.Lock())
+        async with lock:  # a second request for the same peak waits for the first export
+            if not path.exists():
+                proc = await asyncio.create_subprocess_exec(
+                    sys.executable, str(cfg.root / "scripts" / "export_peak.py"), session_id,
+                    stdout=asyncio.subprocess.PIPE, stderr=asyncio.subprocess.PIPE)
+                _, err = await proc.communicate()
+                if proc.returncode != 0:
+                    logger.warning("export of %s failed: %s", session_id, err.decode(errors="replace")[-500:])
+                    raise web.HTTPInternalServerError(text="export failed; see the server log")
+    return web.FileResponse(path, headers={
+        "Content-Type": "text/csv; charset=utf-8",
+        "Content-Disposition": f'attachment; filename="{session_id}-{kind}.csv"',
+    })
 
 
 def _playback_frame(app: web.Application) -> dict:
@@ -283,13 +292,18 @@ async def basemap_handler(request: web.Request) -> web.Response:
 
 
 async def stops_handler(request: web.Request) -> web.Response:
-    """Every stop in the footprint, for the optional stop-markers layer --
-    static for the life of a run (loaded once in LiveVehicleFeed.__init__),
-    same fetch-once-and-cache pattern as /shapes."""
-    feed: LiveVehicleFeed = request.app["feed"]
-    return web.json_response([
-        {"id": s.stop_id, "name": s.name, "lat": s.lat, "lon": s.lon} for s in feed.stops
-    ])
+    """Every stop in the footprint, with the routes serving it, for the stop
+    layers and hover-to-highlight -- static for the life of a run, built once
+    (the routes lookup is ~2.5 s, off the event loop) and cached."""
+    cache = request.app["route_cache"]
+    if "stops" not in cache:
+        feed: LiveVehicleFeed = request.app["feed"]
+        routes = await asyncio.to_thread(stop_routes, request.app["cfg"].path("db_path"))
+        cache["stops"] = [
+            {"id": s.stop_id, "name": s.name, "lat": s.lat, "lon": s.lon, "routes": routes.get(s.stop_id, [])}
+            for s in feed.stops
+        ]
+    return web.json_response(cache["stops"])
 
 
 async def routes_handler(request: web.Request) -> web.Response:
@@ -338,11 +352,8 @@ async def config_handler(request: web.Request) -> web.Response:
             "congestion_labels": CONGESTION_LABELS,
             "crowding_labels": CROWDING_LABELS,
             # so the tablet legend states the cut-offs the engine actually uses
-            "adherence_thresholds_seconds": cfg.raw["adherence_thresholds_seconds"],
-            "thresholds_tti": cfg.raw.get("derived_congestion", {}).get("thresholds_tti", list(DEFAULT_THRESHOLDS)),
+            "punctuality": cfg.raw["punctuality"],
             "basemap_available": _basemap_path(cfg).exists(),
-            # Keeps visitors out of the team panel; not a security boundary.
-            "team_pin": str(cfg.raw.get("controller", {}).get("team_pin", "")),
         }
     )
 
@@ -434,11 +445,6 @@ async def _broadcast_loop(app: web.Application) -> None:
 async def _load_areas(app: web.Application) -> None:
     try:
         app["areas"] = await asyncio.to_thread(build_area_layers, app["cfg"])
-        try:
-            app["boam"] = await asyncio.to_thread(build_boam_layers, app["cfg"], app["feed"].shapes)
-        except Exception:
-            logger.exception("BOAM layers failed to build")
-        app["pressure_model"] = await asyncio.to_thread(PressureModel, app["areas"], app["boam"])
     except Exception:  # the live map must still come up without them
         logger.exception("area layers failed to build")
 
@@ -464,11 +470,10 @@ def build_app(cfg: Config) -> web.Application:
     app["stop_history_cache"] = {"at": float("-inf"), "body": {}}
     app["route_cache"] = {}
     app["basemap_cache"] = {}
+    app["export_locks"] = {}
     app["control"] = ControlState(cfg.root / "data" / "projection_nudge.json")
     app["replay"] = None
     app["areas"] = None
-    app["pressure_model"] = None
-    app["boam"] = None
     app["feed"] = LiveVehicleFeed(cfg)
     app["shapes"] = build_render_shapes(cfg.path("db_path"), cfg.bounding_box)
     app["replay_index"] = RecordingIndex(app["feed"].recordings_dir)
@@ -485,11 +490,9 @@ def build_app(cfg: Config) -> web.Application:
     app.router.add_get("/stop_history", stop_history_handler)
     app.router.add_get("/routes", routes_handler)
     app.router.add_get("/route", route_handler)
-    app.router.add_get("/segments", segments_handler)
     app.router.add_get("/recordings", recordings_handler)
+    app.router.add_get("/export", export_handler)
     app.router.add_get("/areas", areas_handler)
-    app.router.add_get("/pressure", pressure_handler)
-    app.router.add_get("/boam", boam_handler)
     app.router.add_get("/config", config_handler)
     app.router.add_get("/aggregate", aggregate_handler)
     app.router.add_get("/calibration", get_calibration_handler)

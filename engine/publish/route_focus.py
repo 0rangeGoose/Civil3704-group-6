@@ -53,3 +53,21 @@ def route_detail(db_path: Path, name: str) -> dict | None:
         conn.close()
     color = next((c for _, c in routes if c), None)
     return {"name": name, "color": color, "shape_ids": shape_ids, "stop_ids": stop_ids}
+
+
+def stop_routes(db_path: Path) -> dict[str, list[str]]:
+    """{stop_id: [route short names serving it]} for every stop in the footprint,
+    for highlighting a stop's routes on hover. One pass over the timetable (~2.5 s)."""
+    conn = sqlite3.connect(f"file:{db_path}?mode=ro", uri=True)
+    try:
+        rows = conn.execute(
+            "SELECT DISTINCT st.stop_id, r.route_short_name FROM stop_times st "
+            "JOIN trips t ON t.trip_id = st.trip_id JOIN routes r ON r.route_id = t.route_id "
+            "WHERE st.stop_id IN (SELECT stop_id FROM stops) AND r.route_short_name != ''"
+        ).fetchall()
+    finally:
+        conn.close()
+    result: dict[str, list[str]] = {}
+    for stop_id, name in rows:
+        result.setdefault(stop_id, []).append(name)
+    return {stop_id: sorted(names) for stop_id, names in result.items()}

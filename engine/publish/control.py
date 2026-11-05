@@ -33,27 +33,17 @@ MODE_GROUPS: dict[str, list[str]] = {
     "ferries": ["ferries"],
 }
 
-# What vehicle-dot colour shows, and which street-segment layer is drawn (at
-# most one line layer at a time; see docs/DECISIONS.md).
+# What vehicle-dot colour shows. (Street layers, and their direction and BOAM
+# peak settings, were removed on 5 Nov 2026; see docs/DECISIONS.md.)
 LENSES = ("adherence", "congestion", "crowding")
-LINE_LAYERS = ("none", "congestion", "derived", "crowding", "boam_load", "boam_lost")
-# Which BOAM peak the typical-load / time-lost streets and the pressure
-# layer's BOAM input use.
-BOAM_PERIODS = ("am", "pm")
 STOP_METRICS = ("median", "mean")
 # Background under everything: plain fill (the default -- the model has the
 # streets), the detailed OpenStreetMap layer from scripts/fetch_basemap.py, or
 # "full": the detailed map plus place, station, landmark and street names.
 BASEMAPS = ("plain", "detailed", "full")
-# How a street layer shows a street's two directions: one colour for both
-# (the default), side by side, or only the direction towards / away from the city.
-STREET_DIRECTIONS = ("combined", "split", "inbound", "outbound")
 MAX_FOCUSED_ROUTES = 8
 # Static area layers (engine/demand/areas.py) and the unit they're drawn on.
-AREA_LAYERS = ("none", "jobs", "service_gap", "opal", "pressure")
-# Weights for the combined pressure layer (engine/demand/pressure.py).
-PRESSURE_INPUTS = ("congestion", "crowding", "service_gap", "opal", "boam_load")
-WEIGHT_LIMITS = (0.0, 3.0)
+AREA_LAYERS = ("none", "jobs", "service_gap")
 AREA_UNITS = ("zones", "grid")
 
 IDENTITY_NUDGE = {"dx": 0.0, "dy": 0.0, "scale": 1.0}
@@ -72,22 +62,19 @@ IDENTITY_WARP = {corner: [0.0, 0.0] for corner in WARP_CORNERS}
 DEFAULT_STATE: dict[str, Any] = {
     "theme": "dark",
     "basemap": "plain",
-    "street_directions": "combined",
     "verify": False,
     "hud": False,
     "calibrate": False,
     "corners": False,  # corner-fit mode: drag the footprint's corners on the projector
     "stops": False,
+    "early_buses": True,  # show buses more than 59 s early in blue; off: as on time
     "stop_history": False,
     "stop_metric": "median",
     "routes": [],  # route short names singled out; empty shows everything
     "route_slots": {},  # route name -> colour slot 0-7, assigned here, not by clients
     "lens": "adherence",
-    "line_layer": "none",
     "area_layer": "none",
     "area_unit": "zones",
-    "boam_period": "am",
-    "weights": {name: 1.0 for name in PRESSURE_INPUTS},
     "playback": {"session": "live", "speed": DEFAULT_REPLAY_SPEED, "paused": False},
     "modes": {group: True for group in MODE_GROUPS},
     "nudge": dict(IDENTITY_NUDGE),
@@ -130,10 +117,6 @@ class ControlState:
                 if value not in LENSES:
                     raise ControlError(f"lens must be one of {', '.join(LENSES)}")
                 updated["lens"] = value
-            elif key == "line_layer":
-                if value not in LINE_LAYERS:
-                    raise ControlError(f"line_layer must be one of {', '.join(LINE_LAYERS)}")
-                updated["line_layer"] = value
             elif key == "area_layer":
                 if value not in AREA_LAYERS:
                     raise ControlError(f"area_layer must be one of {', '.join(AREA_LAYERS)}")
@@ -142,14 +125,6 @@ class ControlState:
                 if value not in AREA_UNITS:
                     raise ControlError(f"area_unit must be one of {', '.join(AREA_UNITS)}")
                 updated["area_unit"] = value
-            elif key == "boam_period":
-                if value not in BOAM_PERIODS:
-                    raise ControlError("boam_period must be 'am' or 'pm'")
-                updated["boam_period"] = value
-            elif key == "street_directions":
-                if value not in STREET_DIRECTIONS:
-                    raise ControlError(f"street_directions must be one of {', '.join(STREET_DIRECTIONS)}")
-                updated["street_directions"] = value
             elif key == "basemap":
                 if value not in BASEMAPS:
                     raise ControlError(f"basemap must be one of {', '.join(BASEMAPS)}")
@@ -173,16 +148,7 @@ class ControlState:
                         slots[name] = free.pop(0)
                 updated["routes"] = routes
                 updated["route_slots"] = slots
-            elif key == "weights":
-                if not isinstance(value, dict):
-                    raise ControlError("weights must be an object")
-                for name, w in value.items():
-                    if name not in PRESSURE_INPUTS:
-                        raise ControlError(f"unknown pressure input {name!r}")
-                    if isinstance(w, bool) or not isinstance(w, (int, float)):
-                        raise ControlError(f"weights.{name} must be a number")
-                    updated["weights"][name] = _clamp(float(w), WEIGHT_LIMITS)
-            elif key in ("verify", "hud", "calibrate", "corners", "stops", "stop_history"):
+            elif key in ("verify", "hud", "calibrate", "corners", "stops", "stop_history", "early_buses"):
                 if not isinstance(value, bool):
                     raise ControlError(f"{key} must be true/false")
                 updated[key] = value

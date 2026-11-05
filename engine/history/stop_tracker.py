@@ -9,8 +9,7 @@ else (the vehicle has now passed it) -- so the reading attributed to stop A
 is what the vehicle looked like right before leaving A, not an average or
 an estimate of what A is generally like.
 
-Pure accumulator, no I/O, same shape as engine.normalise.segments's
-SegmentAggregator: .record() returns what (if anything) is ready to log;
+Pure accumulator, no I/O: .record() returns what (if anything) is ready to log;
 engine.history.store does the actual writing.
 """
 from __future__ import annotations

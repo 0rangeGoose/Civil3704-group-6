@@ -1,7 +1,7 @@
 import sqlite3
 from pathlib import Path
 
-from engine.publish.route_focus import load_route_catalog, route_detail
+from engine.publish.route_focus import load_route_catalog, route_detail, stop_routes
 
 
 def _add_second_direction(db: Path) -> None:
@@ -45,3 +45,22 @@ def test_detail_groups_every_route_id_sharing_the_short_name(static_db: Path):
 
 def test_unknown_route_has_no_detail(static_db: Path):
     assert route_detail(static_db, "NOPE") is None
+
+
+def test_each_stop_lists_the_routes_serving_it(static_db: Path):
+    # for highlighting a stop's routes on hover (renderer/index.html)
+    _add_second_direction(static_db)
+    conn = sqlite3.connect(static_db)
+    conn.execute("INSERT INTO routes VALUES (?,?,?,?,?,?,?,?)", ("R9", "A1", "380", "Route 380", "", "3", "", ""))
+    conn.execute("INSERT INTO trips VALUES (?,?,?,?,?,?,?,?)", ("T9", "R9", "SVC1", "SH9", "Bondi", "0", None, "1"))
+    conn.execute("INSERT INTO stop_times VALUES (?,?,?,?,?,?,?,?,?)", ("T9", "10:00:00", "10:00:00", "S2", 1, None, None, None, None))
+    have = {r[0] for r in conn.execute("SELECT stop_id FROM stops")}
+    for sid in {"S1", "S2", "S3"} - have:
+        conn.execute("INSERT INTO stops (stop_id, stop_name, stop_lat, stop_lon) VALUES (?, ?, 0, 0)", (sid, sid))
+    conn.commit()
+    conn.close()
+
+    routes = stop_routes(static_db)
+
+    assert routes["S2"] == ["333", "380"]  # both directions of 333 collapse to one name
+    assert routes["S1"] == ["333"] and routes["S3"] == ["333"]

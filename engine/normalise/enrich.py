@@ -13,7 +13,8 @@ from __future__ import annotations
 
 import dataclasses
 
-from engine.normalise.adherence import classify
+from engine.normalise.adherence import PunctualityRules, classify
+from engine.normalise.headways import TripTimetable
 from engine.normalise.map_match import ShapeIndex
 from engine.normalise.static_lookup import StaticLookup
 from engine.normalise.trip_updates import TripUpdateInfo
@@ -27,8 +28,8 @@ def enrich_vehicle_record(
     trip_updates: dict[str, TripUpdateInfo],
     shapes: ShapeIndex,
     lookup: StaticLookup,
-    thresholds: dict[str, int],
-    very_late_multiplier: float,
+    rules: PunctualityRules,
+    timetable: TripTimetable | None = None,
     max_match_distance_m: float = DEFAULT_MAX_MATCH_DISTANCE_M,
 ) -> VehicleRecord:
     shape_id = None
@@ -59,7 +60,8 @@ def enrich_vehicle_record(
     trip_update = trip_updates.get(record.trip_id) if record.trip_id else None
     deviation = trip_update.next_stop_delay_seconds if trip_update else None
     cancelled = trip_update.cancelled if trip_update else False
-    adherence_state = classify(deviation, record.mode, cancelled, thresholds, very_late_multiplier)
+    headway = timetable.headway(record.trip_id) if timetable else None
+    adherence_state = classify(deviation, record.mode, cancelled, rules, headway)
 
     # Sydney Trains never send a bearing. A trip's own shape runs in its
     # direction of travel, so its tangent stands in -- but not a nearest-shape

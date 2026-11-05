@@ -1,9 +1,9 @@
 # Inner Sydney Transit Projection Model — Project Report and Handover
 
-**As of:** Thursday 5 November 2026, 4:30 pm (Sydney), during the last recorded PM peak before the showcase  
+**As of:** Thursday 5 November 2026, 11 pm (Sydney), the night before the showcase  
 **Showcase:** Friday 6 November 2026  
-**Feature freeze:** 30 October 2026. Changes after it, all at the owner's request: background map (4 Nov), street-colour fixes and direction modes (4 Nov), replay day picker and full colour definitions on the tablet (5 Nov)  
-**Build:** branch `w12merge` (the owner's `95c722a` merged with the teammate's corner fit, 5 Nov), 208 automated tests passing  
+**Feature freeze:** 30 October 2026. Every change after it was at the owner's request; §0 lists the ones made on 5 November  
+**Build:** branch `w12merge`, pushed to GitHub (`git log -1` for the exact commit), 173 automated tests passing  
 **Author:** Yoseph Kim, with Claude Code  
 **Name:** formerly *Pulse CBD*, renamed on 5 November 2026. The folder, code, service and log names still use `pulse-cbd` / `pulsecbd`  
 
@@ -15,6 +15,7 @@ This report is written for someone who has never seen the project: a teammate pi
 
 It is organised in five parts:
 
+- **§0 — Handoff**: the state as of 5 November, 11 pm, what changed that day, and what's left. Start here.
 - **Part I — Understanding the project** (§1–3): what the project is, what someone standing at the model sees, the course and physical setup it was built for, and the ideas needed to follow the rest.
 - **Part II — How it works** (§4–8): the parts of the system and how data moves through them, every data source, every feature, exactly how every number is calculated, and what every colour means.
 - **Part III — Why it is built this way** (§9–11): the main design decisions and the alternatives rejected, the analysis comparing our own congestion measure with Transport for NSW's, and how the system was tested.
@@ -48,8 +49,60 @@ cd ~/pulse-cbd && git status -sb && git log --oneline -3
 lsof -nP -iTCP:8765 -sTCP:LISTEN           # is the server running?
 curl -s http://127.0.0.1:8765/health        # vehicles, feed age, API quota use, playback mode
 tail -5 data/recordings/recorder.log        # scheduled peak recordings
-source .venv/bin/activate && pytest -q      # 208 tests should pass
+source .venv/bin/activate && pytest -q      # 173 tests should pass
 ```
+
+---
+
+## 0. Handoff: where things stand (5 November, 11 pm)
+
+Read this first if you are a new Claude Code session picking the project up.
+
+**State right now**
+
+- **Code:** everything below is committed and pushed to `w12merge` on GitHub. `git status` should be clean apart from the untracked teammate file `pulse-cbd-context.md`, if it reappears.
+- **The server** (launchd job `com.pulsecbd.server`) is running that code. It was last restarted at 10:45 pm on 5 Nov, live, with about 150–490 vehicles depending on the hour.
+- **The pages** load fresh code from disk. Any projector or tablet page opened before 10:45 pm needs a **reload**.
+- **Recordings:** the Thursday 5 Nov AM and PM peaks are both recorded at 100%, giving 28 replayable sessions.
+- **The data release** on GitHub (`data-2026-11-05`, 32 files, 27.7 GB) holds everything recorded up to about 6:20 pm on 5 Nov. Today's PM peak isn't in it.
+- **Tests:** `pytest -q` → 173 passed.
+
+**What changed on 5 November** (each with a dated entry in `docs/DECISIONS.md`)
+
+1. **Replays:**
+    - Replay mode button, then a day dropdown and AM/PM peak: every recorded day is selectable.
+    - Only one Time button is lit at a time.
+2. **Legend:** the tablet's "What the colours mean" defines every colour with its cut-off, read from the server (§8).
+3. **Merged the teammate's corner fit** (Team → Alignment, **F**) and README rewrite.
+4. **Removed:**
+    - the interchange "breathing" rings;
+    - the team-tab PIN;
+    - Opal 2016;
+    - the Pressure (combined) layer;
+    - **the street colours, along with their engine code, BOAM and the step 6 analysis code**.
+
+    Each is summarised in its old section, which the report keeps so section numbers stay valid.
+
+5. **Renamed** Pulse CBD to **Inner Sydney Transit Projection Model** wherever people see the name. The folder, code and service names still say `pulse-cbd`.
+6. **The tablet fits phone screens** (320–1280 px).
+7. **Punctuality rebuilt from published standards** (§7.2):
+    - Sydney Trains ≤ 5 min, intercity ≤ 6 min (TfNSW);
+    - buses from 59 s early to 5 min 59 s late (bus contract), with a new **Early** state;
+    - Metro, light rail and ferries ≤ 5 min (borrowed from the rail standard, and labelled as such);
+    - "very late" becomes **missed its slot** (later than the scheduled gap to the next service);
+    - the Stats tab counts **each trip once at TfNSW's measuring points**.
+8. **Early buses switch** (Display → Colour the vehicles by, or **E**): shows or hides the blue Early colour. On by default.
+9. **CSV export of any recorded peak** (Display → Time → Download a recorded peak, or `scripts/export_peak.py`): vehicles, stop visits, trips on time (§12.9, Appendix D).
+10. **Hover highlight:** pointing at a vehicle or stop on the projector page highlights its route(s) (§6.1).
+11. **Data:** everything in `data/` was uploaded to a private GitHub release (§13).
+
+**Still to decide or do before the showcase** (details in §16)
+
+- **Mouse pointer:** the projector page is meant to hide it, but the teammate disabled that on 29 Oct for testing. Hover needs a pointer, so the owner must choose.
+- **The physical model:** every layer still needs checking on it (alignment was done by the teammate). Test the networking (hotspot versus Wi-Fi). Agree with the teammate that `w12merge` is the showcase build.
+- **Showcase replay:** pick the default (e.g. Wed 4 Nov AM or Thu 5 Nov AM, both 100%). Remember to press **Live now** after each demonstration.
+
+**How the owner likes to work:** see the working rules below. In particular, ask before committing unless told to commit, verify with the owner before removing features, and check pages in Chrome after changes.
 
 ---
 
@@ -59,28 +112,26 @@ source .venv/bin/activate && pytest -q      # 208 tests should pass
 
 ### 1.1 In one paragraph
 
-The Inner Sydney Transit Projection Model turns a physical scale model of inner Sydney into a live map of its public transport. A projector mounted above the model shines an image straight down onto it. That image shows every train, metro, light rail vehicle, ferry and bus currently inside the model's area — typically 270 to 490 of them at once (487 at 4:27 pm on 5 November) — as a small moving arrow on the street or track it is really on, updated every 15 seconds from Transport for NSW's live data. On top of the vehicles, coloured layers answer planning questions: which streets are congested right now, where buses are full, where buses typically lose time, where lots of jobs are served by little public transport, and how one peak hour compares with another. It can show what is happening now, or replay any recorded morning or evening peak as a sped-up time-lapse. Visitors control it from a tablet beside the model; the projected image itself contains only map content.
+The Inner Sydney Transit Projection Model turns a physical scale model of inner Sydney into a live map of its public transport. A projector mounted above the model shines an image straight down onto it. That image shows every train, metro, light rail vehicle, ferry and bus currently inside the model's area — typically 270 to 490 of them at once (487 at 4:27 pm on 5 November) — as a small moving arrow on the street or track it is really on, updated every 15 seconds from Transport for NSW's live data. The vehicles' colours show how late each one is, how congested its traffic is or how full it is; stops can be coloured by their typical delay; and area layers show where lots of jobs are served by little public transport. One peak hour can be compared with another. It can show what is happening now, or replay any recorded morning or evening peak as a sped-up time-lapse. Visitors control it from a tablet beside the model; the projected image itself contains only map content.
 
 ### 1.2 What a visitor experiences
 
 Someone walking up to the model during the showcase would see, in a typical demonstration:
 
-1. **The network moving.** Hundreds of arrows travel along the model's streets and rail lines. Bigger arrows are trains, metro and light rail; smaller ones are buses and ferries. Each leaves a short fading tail so its movement is visible even between updates. By default each arrow is coloured by punctuality: green on time, amber running late, red very late or cancelled, grey when there is no schedule information to compare with.
+1. **The network moving.** Hundreds of arrows travel along the model's streets and rail lines. Bigger arrows are trains, metro and light rail; smaller ones are buses and ferries. Each leaves a short fading tail so its movement is visible even between updates. By default each arrow is coloured by punctuality, using Transport for NSW's own on-time standards: blue early (buses only), green on time, amber late, red when it has missed its slot (so late that the next service would have come sooner) or is cancelled, and grey when there is no schedule information to compare with.
 2. **A peak hour in five minutes.** The team taps *Replay mode* on the tablet, picks a day and *AM peak*. The model jumps to 7:00 that morning and plays it back 25 times faster than real time, so two hours of the morning rush pass in under five minutes. The presenter can pause, jump forwards or back, and point out where buses bunch up.
-3. **Coloured streets.** Turning on *Traffic* colours the streets buses are using: green where they are running smoothly, yellow stop-and-go, orange congested, red severely congested. Turning on *Crowding* colours them by how full vehicles are. Other street layers show typical bus loads and where buses typically fall behind the timetable, from Transport for NSW's bus ticketing data.
-4. **Coloured areas.** Turning on an area layer shades the whole model in patches — either Transport for NSW's "travel zones" or a regular 150 m grid — by how many jobs are there, by how well-served those jobs are by public transport (the *service gap*), by how many Opal card taps were made there, or by a combined *pressure* score.
-5. **Stops with a history.** *Stop markers* show every bus, train, light rail and ferry stop on the model. Turning on *Stop history* colours each stop by how late vehicles typically are when they reach it (median or mean), or, with the crowding colours on, by how often they arrive with few seats or fuller. It draws on every stop visit recorded live since 30 October — 865,907 by the afternoon of 5 November — and a stop needs at least 20 visits before it is coloured. The teammate's notes (as of 4 November) report that at 610 of 662 stops (92%) crowded vehicles arrived later than seated ones: an association, not proof that crowding causes delay. A stop's colour shows lateness *inherited* from earlier in the trip, not only delay caused at that stop (§7.13).
-6. **One route at a time.** Typing route names into the *route filter* — for example 333, T1 or L2, up to eight at once — makes those routes' vehicles, line and stops stand out, each in its own fixed colour, while everything else fades back. It is the easiest way to follow one bus route through the peak.
-7. **Both directions of a street.** By default each street shows one colour for both directions. *Street directions* switches to *Side by side*, with each direction drawn on its own side of the street, or to *To city* or *From city*, showing only traffic heading towards or away from Town Hall. On the 4 November AM peak replay, for example, it showed a congested inbound side right next to a clear outbound one, a difference the one-colour view averages away.
-8. **A map underneath, on a screen.** The model already has streets, so the background is plain by default. For a laptop or flat-screen demonstration, *Background map* adds faint roads, rail, water and parks (*Detailed*), or those plus suburb, station, landmark and street names (*Full*).
-9. **A legend that explains everything.** The tablet's *What the colours mean* section explains every colour currently shown, with the exact numbers behind it — for example, "On time: up to 5 min behind the timetable for trains, buses and ferries; 2 min for metro and light rail".
+3. **Coloured areas.** Turning on an area layer shades the whole model in patches — either Transport for NSW's "travel zones" or a regular 150 m grid — by how many jobs are there, or by how well-served those jobs are by public transport (the *service gap*). Each area layer stands on its own.
+4. **Stops with a history.** *Stop markers* show every bus, train, light rail and ferry stop on the model. Turning on *Stop history* colours each stop by how late vehicles typically are when they reach it (median or mean), or, with the crowding colours on, by how often they arrive with few seats or fuller. It draws on every stop visit recorded live since 30 October — 865,907 by the afternoon of 5 November — and a stop needs at least 20 visits before it is coloured. The teammate's notes (as of 4 November) report that at 610 of 662 stops (92%) crowded vehicles arrived later than seated ones: an association, not proof that crowding causes delay. A stop's colour shows lateness *inherited* from earlier in the trip, not only delay caused at that stop (§7.13).
+5. **One route at a time.** Typing route names into the *route filter* — for example 333, T1 or L2, up to eight at once — makes those routes' vehicles, line and stops stand out, each in its own fixed colour, while everything else fades back. It is the easiest way to follow one bus route through the peak.
+6. **A map underneath, on a screen.** The model already has streets, so the background is plain by default. For a laptop or flat-screen demonstration, *Background map* adds faint roads, rail, water and parks (*Detailed*), or those plus suburb, station, landmark and street names (*Full*).
+7. **A legend that explains everything.** The tablet's *What the colours mean* section explains every colour currently shown, with the exact numbers behind it — for example, "On time: up to 5 min behind the timetable for trains, buses and ferries; 2 min for metro and light rail".
 
 ### 1.3 What it is for
 
-The course asks for a transport planning tool, and the model is the canvas. Its purpose is to make the network's performance *visible in place*: congestion, crowding and access shown on the actual streets and districts of a model people can walk around, rather than in charts. It answers questions such as:
+The course asks for a transport planning tool, and the model is the canvas. Its purpose is to make the network's performance *visible in place*: punctuality, congestion, crowding and access shown on the actual streets and districts of a model people can walk around, rather than in charts. It answers questions such as:
 
 - Where are buses delayed during the morning peak, and does it match where Transport for NSW says traffic is congested?
-- Which streets carry the fullest buses?
+- Which stops do vehicles typically reach late or crowded?
 - Which parts of the inner city have many jobs but few nearby public transport departures?
 - How does today's peak compare with last Tuesday's?
 
@@ -91,18 +142,18 @@ The project was planned on 25 September as seven steps. Six are finished; the se
 | Step (agreed 25 Sep) | What it means | Status |
 | --- | --- | --- |
 | 1. Footprint, projector view, tablet controller, scheduled recording | The basic system: the right map area, the projected image, a tablet to control it, automatic recording of peaks | Done |
-| 2. Traffic and crowding on streets | Colour streets by Transport for NSW's live traffic and crowding fields | Done; improved 4 Nov (§7.5) |
+| 2. Traffic and crowding on streets | Colour streets by Transport for NSW's live traffic and crowding fields | Built and improved (pooling, directions, 4 Nov); **removed 5 Nov** at the owner's request (§7.5) |
 | 3. Replay and time-lapse | Play back recorded peaks, sped up | Done; pause and scrub added 30 Oct, any-day picker 5 Nov |
-| 4. Jobs, service gap, Opal 2016 | Area layers from employment, timetable and ticketing data | Done |
-| 5. Combined "pressure" score | One area score combining several inputs, with adjustable weights | Done |
-| 6. Our own congestion measure, compared with Transport for NSW's | An independent measure we can explain, and a statistical comparison | Done; the method changed and agreement turned out weak (§10) |
+| 4. Jobs, service gap, Opal 2016 | Area layers from employment, timetable and ticketing data | Done; the Opal 2016 layer was removed on 5 Nov (§7.7) |
+| 5. Combined "pressure" score | One area score combining several inputs, with adjustable weights | Built, then removed on 5 Nov at the owner's request (§7.8) |
+| 6. Our own congestion measure, compared with Transport for NSW's | An independent measure we can explain, and a statistical comparison | Done; agreement turned out weak. Its code was removed with the street colours on 5 Nov; the results stay in §10 |
 | 7. Testing on the model, report figures, rehearsal | Calibrate onto the real model and rehearse the showcase | **Partly.** The teammate's 5 Nov README says the system is running on the physical model, aligned with their new corner fit (§12.4). Report figures and a rehearsal aren't recorded (§16) |
 
-Beyond the plan, the project also has: bus load and time-lost layers from Transport for NSW's BOAM data; polling that automatically stays within the daily data quota; a refreshed timetable; a teammate's stop history, route filter and direction arrows (merged 30 Oct); an optional background street map; and full colour definitions on the tablet.
+Beyond the plan, the project also has: polling that automatically stays within the daily data quota; a refreshed timetable; a teammate's stop history, route filter, direction arrows and corner fit; an optional background street map; full colour definitions on the tablet; punctuality from published TfNSW standards with per-trip figures; CSV export of any recorded peak; and route highlighting on hover. Several features were built and later removed at the owner's request (street colours, BOAM, pressure, Opal 2016, interchange rings), see §0.
 
-- **Tests:** 208 automated tests run in about 2 seconds without internet access.
-- **Data recorded:** 16 weekday peaks (15 of them at least 98% complete), plus weekends, nights and middays — 26 replayable sessions in total. The Thursday 5 November PM peak is recording as this is written.
-- **Biggest risks:** every layer hasn't been checked on the model in this record (alignment has, per the teammate); the showcase network setup is untested (§16); a Wi-Fi drop during a live demo would freeze the vehicles; every recording is on one laptop disk.
+- **Tests:** 173 automated tests run in about 2 seconds without internet access.
+- **Data recorded:** 17 weekday peaks (16 of them at least 98% complete), plus weekends, nights and middays: 28 replayable sessions in total.
+- **Biggest risks:** not every layer has been checked on the model (alignment has, per the teammate); the showcase network setup is untested (§16); a Wi-Fi drop during a live demo would freeze the vehicles; the mouse pointer currently shows on the projection.
 
 ---
 
@@ -132,9 +183,9 @@ On 25 September the owner and Claude Code worked through the design one question
 
 - One codebase (this one, then Pulse CBD), with the teammates' planning direction but rebuilt calculations.
 - The footprint from the team's surveyed corners, replacing an earlier 5 × 4 km placeholder box.
-- A projection with map content only; controls on a tablet, with a visitor view, a PIN-locked team panel and a statistics page; the tablet connects over the laptop's own Wi-Fi hotspot; the laptop keyboard as a backup.
+- A projection with map content only; controls on a tablet, with a visitor view, a team panel (PIN-locked until 5 November) and a statistics page; the tablet connects over the laptop's own Wi-Fi hotspot; the laptop keyboard as a backup.
 - Congestion first from Transport for NSW's own label, then from a measure of our own, checked against it.
-- Demand layers — live crowding, jobs, service gap, Opal 2016 — each switchable, on both travel zones and a grid, plus a combined pressure layer.
+- Demand layers — live crowding, jobs, service gap, Opal 2016 (removed 5 Nov) — each switchable, on both travel zones and a grid, plus a combined pressure layer (removed 5 Nov).
 - Replays of recorded AM and PM peaks as the showcase default, with weekday peaks recorded automatically.
 - No background map, because the model already has streets. Partly reversed on 4 November with an optional one that is off by default (§6.1).
 
@@ -162,16 +213,12 @@ The rest of the report uses these terms. Each is explained here once.
 
 - **Travel zones (TZ21).** TfNSW divides NSW into small areas called travel zones (the 2021 version is TZ21) for its transport models. 405 of them touch the footprint. They vary greatly in size: tiny in the CBD, much larger in the suburbs.
 - **TZP24 employment.** TfNSW's travel zone projections (2024 release) estimate how many jobs are located in each zone, by year. The project uses the 2026 estimate. It counts people *working* in a zone, not living there, and it is a projection, not a census count.
-- **Opal.** Sydney's ticketing smartcard. Passengers "tap on" when boarding and "tap off" when leaving. TfNSW released anonymised tap counts for one week in November 2016 (Opal Tap On and Tap Off, Release 2), by station for trains, light rail and ferries and by postcode for buses. That is the only public tap data at this level of detail, which is why such old data is used.
-- **BOAM (Bus Opal Assignment Model).** A TfNSW dataset that combines Opal taps with bus tracking to estimate, for every bus trip at every stop, how many people were on board (in bands such as 21–40 passengers), the bus's capacity, and its scheduled and actual arrival times. It is published by day; the project uses 13 weekdays.
-- **Postal areas (ABS POA).** The Australian Bureau of Statistics' postcode boundaries, used to place 2016 bus taps.
+- **Opal.** Sydney's ticketing smartcard. Passengers "tap on" when boarding and "tap off" when leaving. Until 5 November the project used Opal-based data in two ways, a layer of anonymised 2016 tap counts and TfNSW's BOAM bus loads; both were removed (§7.7, §5.6).
 
 ### 3.3 Methods and statistics
 
 - **Map matching.** GPS positions wander off the road. Map matching moves ("snaps") each vehicle's reported position onto the nearest point of the line its trip follows, so it is drawn on the street, not beside it.
-- **Segment.** A 200 m piece of a route's line. Street layers colour segments.
-- **Pooling.** Combining readings from several vehicles. Here, every vehicle on the same street heading the same way in the last 10 minutes contributes to that street's colour, even if they are on different routes (§7.5).
-- **Level.** TfNSW's traffic and crowding fields are categories, not measurements. The project turns each into a number from 0 to 3 (0 = smooth or plenty of seats, 3 = severe or full) so readings can be averaged and then rounded back to a category.
+- **Level.** TfNSW's traffic and crowding fields are categories, not measurements. The project turns each into a number from 0 to 3 (0 = smooth or plenty of seats, 3 = severe or full), which sets a vehicle's colour.
 - **Free-flow speed.** How fast buses move along a street when it is empty. The project estimates it from night-time recordings (§7.10).
 - **Travel-time index (TTI).** Free-flow speed divided by current speed: how many times longer a trip takes now than when the street is empty. 1.0 means as fast as at night; 2.0 means twice as long.
 - **85th percentile.** The value that 85% of readings are at or below. Used for free-flow speed because the very fastest readings may be errors, while the median would include slow readings caused by stops and lights.
@@ -204,22 +251,22 @@ The rest of the report uses these terms. Each is explained here once.
  INPUTS
  TfNSW GTFS-Realtime (live, ~15 s): positions, trip updates, alerts
  Static GTFS timetable (SQLite, footprint only)
- Places: TZ21 zones, TZP24 jobs, Opal 2016, ABS postcodes
- BOAM (bus loads and arrivals, trimmed)          OpenStreetMap (offline background map)
+ Places: TZ21 zones, TZP24 jobs
+ OpenStreetMap (offline background map)
             │                                                  │
             ▼                                                  │
  ┌─────────────────────────── Engine (Python) ─────────────────────────────┐
  │ Live: decode → snap to route → adherence, traffic, crowding             │
- │       → 200 m segments (pooled) → our TTI → stop visits (live) → record │
+ │       → stop visits (live) → per-trip punctuality → record              │
  │ Replay: recorded peaks, same pipeline, recorded time, 1–100×, seek      │
- │ Static layers (startup, cached): jobs, service gap, Opal, BOAM, pressure│
+ │ Static layers (startup, cached): jobs, service gap                      │
  │ API budget: shared daily request count, pacing between peaks            │
  └─────────────────────────────────────────────────────────────────────────┘
             │                                                  │
             ▼                                                  ▼
  Server (aiohttp, port 8765)
    WebSocket: vehicle frames 2×/s + one shared display-control state
-   HTTP: /segments /areas /boam /recordings /basemap /config /health … (all in Appendix B)
+   HTTP: /areas /recordings /stops /basemap /export /config /health … (all in Appendix B)
             │                                        ▲
             ▼                                        │ control patches
  Projector view (laptop, full-screen, mirrored)   Tablet controller (/control, laptop's hotspot)
@@ -227,23 +274,23 @@ The rest of the report uses these terms. Each is explained here once.
 
 There are three parts, all on one laptop:
 
-1. **The engine** (Python, folder `engine/`). Every 15 seconds during peaks it downloads the live feeds, decodes them, works out which trip and route each vehicle is on, snaps it onto its route, classifies its punctuality, adds its traffic and crowding readings to the street it is on, computes our own speed-based congestion reading, notes when it passes a stop, and saves the raw download to disk. At startup it also builds the slower "static" layers — jobs, service gap, Opal, BOAM and the pressure model — in the background, and keeps them in a cache file so later startups are almost instant.
-2. **The server** (`engine/publish/server.py`, using the aiohttp library, on port 8765). It sends the vehicle positions to every open page about twice a second over a WebSocket, answers requests for layers (streets, areas, BOAM, recordings, and so on), and holds the display-control state.
-3. **Two web pages** (`renderer/`). The **projector page** (`index.html`) draws everything on an HTML canvas: background, area colours, street colours, route corridors and vehicles. The **tablet page** (`controller.html`) has the buttons, the legend and the statistics.
+1. **The engine** (Python, folder `engine/`). Every 15 seconds during peaks it downloads the live feeds, decodes them, works out which trip and route each vehicle is on, snaps it onto its route, classifies its punctuality, notes when it passes a stop, counts each trip once at TfNSW's measuring point, and saves the raw download to disk. At startup it also builds the slower "static" area layers — jobs and service gap — in the background, and keeps them in a cache file so later startups are almost instant.
+2. **The server** (`engine/publish/server.py`, using the aiohttp library, on port 8765). It sends the vehicle positions to every open page about twice a second over a WebSocket, answers requests for layers and data (areas, stops, recordings, CSV exports and so on), and holds the display-control state.
+3. **Two web pages** (`renderer/`). The **projector page** (`index.html`) draws everything on an HTML canvas: background, area colours, route corridors, stops and vehicles. The **tablet page** (`controller.html`) has the buttons, the legend and the statistics.
 
 ### 4.2 One shared display state
 
-Every button on the tablet, and every key on the laptop keyboard, sends a small change (a "patch", e.g. "set the street layer to traffic") to the server. The server checks it is valid (`engine/publish/control.py`) and sends the complete updated state to every open page. Pages never change what is shown on their own; they only follow the server's state.
+Every button on the tablet, and every key on the laptop keyboard, sends a small change (a "patch", e.g. "colour the vehicles by traffic") to the server. The server checks it is valid (`engine/publish/control.py`) and sends the complete updated state to every open page. Pages never change what is shown on their own; they only follow the server's state.
 
 This is why the tablet and the projection can never disagree. With two tablets open, pressing a button on one updates the other. If a page reloads, it receives the current state and shows exactly what the others show. Everything except the alignment nudge resets to safe defaults when the server restarts, so the showcase always starts from a known state. All fields are listed in Appendix A.
 
 ### 4.3 Live and replay go through the same code
 
-When replaying, the engine reads recorded downloads from disk in the order they were fetched and feeds them through exactly the same processing as live data, at the chosen speed. The engine treats each download's original fetch time as "now". This means the 10-minute windows used for street colours cover 10 *recorded* minutes even at 25× speed, and a replay looks exactly as the live view did at the time (with today's code). While a replay plays, live polling and the server's own recording pause (to save the data quota), so **after any demonstration, switch back to Live**.
+When replaying, the engine reads recorded downloads from disk in the order they were fetched and feeds them through exactly the same processing as live data, at the chosen speed. The engine treats each download's original fetch time as "now". This means every time-based measure (the Stats tab's windows, the stop visits) runs on *recorded* time even at 25× speed, and a replay looks exactly as the live view did at the time (with today's code). While a replay plays, live polling and the server's own recording pause (to save the data quota), so **after any demonstration, switch back to Live**.
 
 ### 4.4 The legend reads the engine's own numbers
 
-Since 5 November the tablet's legend does not keep its own copy of thresholds. It reads them from the server (`/config` for punctuality and travel-time thresholds, `/areas?meta=1` for the value range of each fifth), so if a threshold is ever changed in `config/config.yaml`, the legend changes with it.
+Since 5 November the tablet's legend does not keep its own copy of thresholds. It reads them from the server (`/config` for the punctuality limits, `/areas?meta=1` for the value range of each fifth), so if a threshold is ever changed in `config/config.yaml`, the legend changes with it.
 
 ---
 
@@ -272,17 +319,17 @@ The complete GTFS bundle, filtered to the footprint and stored in SQLite (`data/
 
 Zone boundaries and 2026 job estimates, taken from the team's branch (stored with Git LFS, a way of keeping large files alongside code). `scripts/prepare_demand_data.py` cuts the 109 MB statewide zone file down to the footprint. 405 zones touch the footprint. Caveat: zones differ hugely in size, so a large suburban zone can have many jobs simply because it is large. That is one reason the 150 m grid exists as an alternative (§7.6).
 
-### 5.4 Opal 2016
+### 5.4 Opal 2016 (removed)
 
-From data.nsw.gov.au: tap-ons and tap-offs in 15-minute bins for 21–27 November 2016. Trains, light rail and ferries are given by station name; buses only by postcode. Caveats: it is ten years old and predates the Metro and the CBD light rail, so those lines show nothing.
+Tap-ons and tap-offs for 21–27 November 2016, from data.nsw.gov.au, were used for an area layer and as an input to the (also removed) pressure score until 5 November 2026, when the owner had them removed (§7.7). The download is still in `data/opal/` and in the data release, but nothing reads it.
 
-### 5.5 Postcode boundaries (ABS Postal Areas 2021)
+### 5.5 Postcode boundaries (removed)
 
-Used only to place 2016 bus taps. 40 postcodes touch the footprint.
+The ABS postcode boundaries were only used to place the 2016 bus taps, so they are no longer read either.
 
-### 5.6 BOAM
+### 5.6 BOAM (removed)
 
-From TfNSW's Open Data Hub (needs a login), imported with `scripts/import_boam.py`, which keeps only footprint rows (about 2.7 MB per day instead of about 400 MB). **13 weekdays are used**: 28–30 September (school holidays) and 12–16 and 19–23 October (school term). Four weekend days are kept but not averaged. Caveats: since March 2026 BOAM's "actual" arrival times are themselves TfNSW's live predictions, so BOAM isn't fully independent of the live feed; people who don't tap (notably some students) aren't counted; and three of the 13 days are school holidays (loads match term days to about one percentage point, so they were kept).
+TfNSW's Bus Opal Assignment Model gives, for every bus trip at every stop, estimated passengers on board (in 20-passenger bands), capacity, and scheduled and actual arrival times. 13 weekdays (28–30 September and 12–23 October) were imported and used for two street layers, a pressure input and a step 6 comparison until 5 November, when all of those were removed along with the BOAM code. The imported files are still in `data/boam/` and in the data release, but nothing reads them.
 
 ### 5.7 OpenStreetMap (background map)
 
@@ -304,31 +351,15 @@ The teammate's stop history (merged 30 October) records one row each time a vehi
 
 **Vehicles** are always shown. Each is snapped to its route, moved smoothly between updates, and drawn as an arrow pointing the way it is travelling, with a short tail. Rail vehicles (trains, metro, light rail) are drawn larger than buses and ferries. Each of five groups — trains, metro, light rail, buses, ferries — can be hidden. The arrow colour follows the chosen **lens** (what the vehicle colour shows):
 
-- **Schedule** (default): punctuality from trip-update delays.
+- **Schedule** (default): punctuality from trip-update delays (§7.2). An **Early buses** switch (tablet, under the colour choice, or **E**) turns the blue "early" colour on (default) or off; off, early buses show as on time. It only changes the live colours: the Stats tab and exports keep the official measure.
 - **Traffic:** TfNSW's congestion level for the vehicle (buses only).
 - **Crowding:** TfNSW's occupancy for the vehicle.
 
 While an area layer is on, vehicles turn white so they don't compete with the area colours.
 
-**Street layers** colour the streets themselves. Only one is shown at a time:
+**Street layers (removed 5 November).** Until then the streets themselves could be coloured by TfNSW traffic, our own speed measure, crowding, typical BOAM bus load or BOAM time lost, with options for how to show a street's two directions. At the owner's request they were removed; traffic and crowding now show only as vehicle colours (*Colour the vehicles by*). How they worked is summarised in §7.5 and §7.12.
 
-| Layer | What it shows | Source | Time basis |
-| --- | --- | --- | --- |
-| Traffic | How congested TfNSW says the traffic around buses is | TfNSW `congestion_level` | Live, last 10 min |
-| Traffic (our measure) | How much slower buses are moving than on the same street at night | Our travel-time index (§7.10) | Live, last 10 min |
-| Crowding | How full vehicles are | TfNSW `occupancy_status` | Live, last 10 min |
-| Typical bus load | How full buses typically are leaving each stop | BOAM | Average weekday AM or PM peak |
-| Where buses lose time | How much further behind timetable buses typically fall per 100 m | BOAM | Average weekday AM or PM peak |
-
-Every street layer can show the two directions of a street in four ways (tablet "Street directions", or **D** on the keyboard):
-
-- **One colour** (default): both directions combined into one colour per street.
-- **Side by side:** each direction drawn as its own line on its own side of the street, like traffic colours on navigation apps.
-- **To city / From city:** only traffic heading towards, or away from, Town Hall.
-
-A street whose colour rests on only one vehicle is drawn **faint** (35% opacity), as a hint rather than a finding. Each stretch of street has exactly one line per direction shown, so no colour ever peeks out from under another (§7.12).
-
-**Area layers** shade the model in patches. Only one is shown at a time, on either **travel zones** or a **150 m grid** (switchable, so the team can judge on the real model which reads better): Jobs, Service gap, Opal 2016, and Pressure (combined, updated live).
+**Area layers** shade the model in patches. Only one is shown at a time, on either **travel zones** or a **150 m grid** (switchable, so the team can judge on the real model which reads better): Jobs and Service gap. Each shows one measure; there is no combined score.
 
 **Stops and routes** (teammate's work, merged 30 Oct):
 
@@ -338,7 +369,9 @@ A street whose colour rests on only one vehicle is drawn **faint** (35% opacity)
 
 **Background map** (added 4 Nov): **Plain** (default; the model already has streets, and anything drawn would compete with them), **Detailed** (faint roads, rail, water and parks from OpenStreetMap) or **Full** (Detailed plus suburb, station, landmark, park, water and street names, placed so they never overlap). It is mainly useful on a flat screen or laptop.
 
-**Keeping the projection clean.** There are no buttons, hints or mouse pointer on the projected page, and everything is clipped to the footprint. An optional **status line** (team panel, or **H**) shows the mode, clock and replay state. It is currently the only way the projection itself says "this is a replay", so either turn it on during replays or say so out loud.
+**Hovering (on the laptop).** Pointing the mouse at a vehicle on the projector page shows a small box with its route, punctuality, exact delay, traffic and crowding (teammate's feature), and **highlights its whole route** in white (added 5 Nov). Pointing at a stop, with stop markers or stop history on, shows its name and the routes serving it, and highlights all of those routes. If a vehicle and a stop overlap, the vehicle wins. The highlight is drawn over the street colours and under the vehicles. It belongs to the laptop page only, not the shared display state, but the projector mirrors the laptop, so it appears on the model too. Route lines come from the same `/route` lookup the route filter uses, and each stop's routes from `/stops`.
+
+**Keeping the projection clean.** There are no buttons or hints on the projected page, and everything is clipped to the footprint. An optional **status line** (team panel, or **H**) shows the mode, clock and replay state. It is currently the only way the projection itself says "this is a replay", so either turn it on during replays or say so out loud.
 
 ### 6.2 Time: live and replay
 
@@ -356,38 +389,36 @@ The tablet has three tabs.
 
 **Display** (for visitors) holds:
 
-- time and replay controls;
+- time and replay controls, and at the bottom of the Time section, **Download a recorded peak (CSV)** (added 5 Nov): pick a day and AM or PM peak, then download *Vehicles*, *Streets*, *Stop visits* or *Trips on time*. The first export of a peak takes about 2 minutes, after which it downloads straight away (§12.9, Appendix D);
 - which vehicle groups are shown, and the dot colour (lens);
-- the street layer and street directions;
 - stop markers and stop history (median or mean);
 - the route filter;
-- the area layer and area shape (zones or grid), and the BOAM peak (AM or PM);
+- the area layer and area shape (zones or grid);
 - the background map;
 - **What the colours mean**, a legend for whatever is currently on.
 
 Since 5 November the legend gives every colour a definition with its cut-off, not just a name. For example:
 
-- "On time: up to 5 min trains, buses & ferries; 6 min intercity trains; 2 min metro & light rail behind the timetable."
+- "On time: up to 5 min late: Sydney Trains (TfNSW punctuality standard). Up to 5 min 59 s late and no more than 59 s early: buses (Greater Sydney Bus Contract, 2023)…"
 - "Jobs, second fifth: 14–28 jobs per 150 m square."
 
-Where TfNSW only provides categories (its traffic and crowding fields), the legend says so and names the feed value behind each colour rather than inventing ranges. It also explains the street rounding rule, solid versus faint lines, and the stop-history bands. Every definition is in §8.
+Where TfNSW only provides categories (its traffic and crowding fields), the legend says so and names the feed value behind each colour rather than inventing ranges. It also explains the stop-history bands. Every definition is in §8.
 
-**Team** (behind a PIN, `3704`; the check happens in the browser only, so it keeps visitors out but isn't real security) holds:
+**Team** (open to anyone since 5 November, when its PIN was removed) holds:
 
 - the theme (dark or light);
 - the verification overlay (route corridors drawn bright, to check alignment);
 - the status line on the projection;
 - alignment: the nudge (shift by 2 px or 20 px, and scale), **corner fit** (drag the footprint's four corners onto the model's; teammate's, 5 Nov) and crosshair calibration;
-- pressure weights (0–3 for each input);
 - system health: vehicles per mode, how old each feed is, API requests used today, and the current polling interval.
 
-**Stats** shows on-time percentages by mode over the last 5, 15 and 60 minutes, active service alerts affecting the footprint, and the busiest interchanges.
+**Stats** shows the share of trips on time by mode over the last 15 minutes, hour and 2 hours: each trip counted once, at TfNSW's own measuring point (buses leaving their first stop, other modes at their final stop, §7.2), with the number of trips. It also shows active service alerts affecting the footprint, and the busiest interchanges.
 
 ### 6.4 Laptop keyboard (backup)
 
 Every key goes through the server, so the tablet stays in sync:
 
-C calibrate · F corner fit · V verification overlay · H status line · T theme · M background map · S stop markers · O stop history · L dot colour · K street layer · A area layer · G zones/grid · B BOAM peak · D street directions · Space pause/play · 1–5 mode groups · arrow keys nudge (Shift ×10) · [ ] scale · 0 reset nudge.
+C calibrate · F corner fit · V verification overlay · H status line · T theme · M background map · S stop markers · O stop history · L dot colour · E early buses on/off · A area layer · G zones/grid · Space pause/play · 1–5 mode groups · arrow keys nudge (Shift ×10) · [ ] scale · 0 reset nudge.
 
 ---
 
@@ -410,29 +441,48 @@ This section explains each calculation in enough detail to reproduce it, with th
 
 **The measure.** A vehicle's delay is TfNSW's predicted delay, in seconds, at the vehicle's **next stop**, taken from the trip-update feed. Comparing with the next stop (not the trip's first stop, and not the vehicle's position against the timetable) means the colour describes how late the vehicle is *now*, where it is.
 
-**The threshold.** Each mode has an on-time threshold *T* (`config/config.yaml`, `adherence_thresholds_seconds`):
+**The on-time limits, and where each comes from** (changed 5 November; set in `config/config.yaml`, `punctuality`). Until then the limits were defaults from the original brief, and "very late" meant twice the limit, neither with a source. Now each limit is taken from a published definition where one exists:
 
-| Mode | *T* | Late | Very late |
-| --- | --- | --- | --- |
-| Sydney Trains, buses, ferries | 5 min (300 s) | 5–10 min | over 10 min |
-| NSW TrainLink intercity | 6 min (360 s) | 6–12 min | over 12 min |
-| Metro, light rail | 2 min (120 s) | 2–4 min | over 4 min |
+| Mode | On time if | Source |
+| --- | --- | --- |
+| Sydney Trains | no more than 5 min late | TfNSW's punctuality standard: a train is punctual if it reaches its final destination within 5 minutes of the timetable (target: 92% of peak services) |
+| NSW TrainLink intercity | no more than 6 min late | The same TfNSW standard, 6 minutes for intercity |
+| Buses | no more than **59 s early** and no more than **5 min 59 s late** | Greater Sydney Bus Contract, Schedule 4 (Key Performance Indicators), 2023, measured at the first stop (target 95%). The older Sydney Metropolitan contract allowed up to 1 min 59 s early |
+| Metro, light rail, ferries | no more than 5 min late | **No published definition found.** TfNSW's Sydney Trains 5-minute standard is applied by the project, and the legend says so |
 
-The rules:
+The states:
 
 | State | Rule | Colour |
 | --- | --- | --- |
-| On time | delay ≤ *T*, including running early | green |
-| Late | *T* < delay ≤ 2*T* | amber |
-| Very late | delay > 2*T* | red |
+| Early | buses only: more than 59 s early | blue |
+| On time | within the mode's limits | green |
+| Late | later than the mode's limit | amber |
+| Missed its slot ("very late") | later than the limit **and** later than the scheduled gap to the next trip on the same route and direction | red |
 | Cancelled | TfNSW marks the trip cancelled | red |
 | Unknown ("no schedule data") | no usable prediction | grey |
 
-**Worked example.** A bus predicted to reach its next stop 7 minutes late: *T* = 5 min, 2*T* = 10 min, so it is "late" (amber). A metro 3 minutes late is also "late", because metro's *T* is 2 minutes; at 5 minutes late it would be "very late".
+**Why buses can be early and trains can't.** The bus contract counts leaving more than 59 seconds early as a failure, because passengers arriving on time miss the bus. TfNSW's rail standard only sets a lateness limit, so a train running early still counts as punctual.
 
-**Where the thresholds come from.** The rail, metro and light rail values came from the original project brief as sensible defaults resembling TfNSW's published standards; they have not been checked against an official source. Buses and ferries were set to 5 minutes by analogy with suburban rail. The "twice the threshold" rule for very late is the project's own choice. Running early counts as on time, because the brief's states don't include "early". In the final report these should be called *the project's simplified thresholds*.
+**"Missed its slot" replaces the old 2× rule.** TfNSW has no "very late" category, so the project defines one that can be checked against the timetable rather than picked: a vehicle is red when it is past its on-time limit and also later than the scheduled gap to the next trip on its route and direction (`engine/normalise/headways.py`). At that point a passenger would have done better catching the next service. The gap is worked out once at startup from the timetable: for each trip, the time from its first departure to the next trip's on a typical Tuesday, Saturday and Sunday. It means more for a bus every 5 minutes than for one every 30. Transport for London measures frequent buses in a related way, by the extra time passengers wait rather than by lateness. Limitation: Sydney Trains, Metro and CBD light rail can't be matched to timetabled trips (their live trip IDs differ), so they never show red for this reason; past the limit they are just Late.
 
-**The placeholder-zero fix (teammate's, merged 30 Oct).** Some feeds send a delay of exactly 0 seconds for every stop of a trip when they have no real prediction. Treating that as "on time" made almost every Sydney Train green. Now an exact 0 s across a whole trip counts as "no prediction", so about 70% of Sydney Trains show grey. The same fix makes Metro, light rail, ferries and NSW TrainLink read the next stop's delay rather than the trip's first stop's (which was always 0). On-time percentages on the Stats tab changed accordingly.
+**Worked examples:**
+
+- A bus predicted 7 minutes late at its next stop is past the 5 min 59 s limit. On a route every 20 minutes it is **Late** (amber). On a route every 5 minutes it has **missed its slot** (red).
+- A bus 90 seconds early is **Early** (blue).
+- A Metro train 3 minutes late is **On time**. Under the old 2-minute default it showed as late.
+
+**Live colour versus TfNSW's official figures.** The colour is a *live* reading wherever the vehicle is. TfNSW's official figures are measured at fixed points: trains at their final destination, buses as they leave their first stop. So the tablet's Stats tab (§6.3) counts **each trip once at those points** (`TripPunctuality` in `engine/normalise/aggregate.py`):
+
+- **Buses** are counted by their delay as they leave their trip's first stop, from the stop-visit tracker.
+- **Every other mode** is counted by TfNSW's predicted delay at the trip's final stop. The latest prediction wins, which is the one made closest to arrival. Many trains finish outside the model's area, so their figure is a prediction, not an observed arrival.
+- **Not counted:** trips with no live prediction, and buses whose first stop is outside the model's area, since they are never seen leaving it.
+- **Cancelled trips** count as not on time.
+
+On the Wednesday 4 November AM peak, measured this way, Sydney Trains were **94% on time** (287 trips; TfNSW's target is 92%), buses **93%** (686 trips; contract target 95%), CBD light rail 80%, Inner West light rail 89%, ferries 97% and Metro 100%.
+
+**Something the new rules show.** On that same peak, **26% of live bus updates were Early**, but **no bus was early leaving its first stop**. Mid-route, TfNSW predicts many buses ahead of their timetabled times, which fits the timetable padding found in step 6 (§10.1). The contract only checks earliness at the first stop and timing points, so mid-route earliness doesn't count against operators. To a passenger at that stop, though, an early bus is still a missed bus. So the owner chose to keep it, with an **Early buses** switch on the tablet (on by default) to hide it when it's a distraction: off, early buses are drawn green. The Stats tab and exports are unaffected.
+
+**The placeholder-zero fix (teammate's, merged 30 Oct).** Some feeds send a delay of exactly 0 seconds for every stop of a trip when they have no real prediction. Treating that as "on time" made almost every Sydney Train green. Now an exact 0 s across a whole trip counts as "no prediction", so about 60–70% of Sydney Trains show grey. The same fix makes Metro, light rail, ferries and NSW TrainLink read the next stop's delay rather than the trip's first stop's, which was always 0.
 
 ### 7.3 Interchange activity (`engine/normalise/aggregate.py`)
 
@@ -459,41 +509,9 @@ Some notes on these fields:
 - **Trains without a vehicle-level crowding value** use the **middle carriage** of the per-carriage readings.
 - **There are no numbers behind these categories.** TfNSW doesn't publish how its traffic levels are decided (from speed, delay or something else) or how many passengers each crowding category means. So no numeric range can honestly be given for them. That is exactly why the project built its own congestion measure with stated cut-offs (§7.10).
 
-### 7.5 Street segments and pooling (`engine/normalise/segments.py`)
+### 7.5 Street segments and pooling (removed 5 November)
 
-**Cutting streets into pieces.** Each route's line is cut into **200 m pieces** by distance along it. A vehicle's reading belongs to the piece it is on.
-
-**The problem pooling solves.** The pieces belong to routes, not to streets. A street served by ten routes therefore had ten overlapping sets of pieces, each with its own handful of buses. At the 8:00 am peak on 4 November, **about 80% of coloured pieces rested on a single vehicle** — 79% within 1.5 km of Town Hall and 84% beyond 4 km. They were drawn worst on top, so a busy street showed its single worst bus: a level worse than the average of all its buses at 28% of places where pieces overlapped. A concern was raised that one bus was standing for a whole street, and the measurements confirmed it.
-
-**What pooling does.** Each piece's value now combines every vehicle, from any route, seen in the last **10 minutes** on pieces of the same street heading the same way. Two pieces count as "the same street, same way" when:
-
-- their midpoints are within **100 m** of each other along the street and **25 m** across it (parallel CBD streets are about 100 m apart, so 25 m keeps them separate);
-- their headings are within **30°**;
-- the check works from both pieces' points of view, so the result doesn't depend on which piece is checked first.
-
-Each vehicle counts once, at its latest reading. The two directions stay separate, because inbound and outbound traffic often differ.
-
-**What each piece carries:**
-
-- the mean level for each layer;
-- **how many vehicles** that mean rests on (used to draw thin evidence faint);
-- the same values pooled over **both directions** (used by "One colour");
-- whether the piece heads **towards Town Hall** (used by "To city" and "From city").
-
-**Turning the mean back into a colour.** The mean is rounded to the nearest level:
-
-| Mean | Level |
-| --- | --- |
-| under 0.5 | 0 |
-| 0.5 to under 1.5 | 1 |
-| 1.5 to under 2.5 | 2 |
-| 2.5 and over | 3 |
-
-*Worked example:* three buses on a street report "running smoothly", "running smoothly" and "congestion". Their levels are 0, 0 and 2, so the mean is 0.67, which rounds to level 1, "stop and go". With three vehicles it is drawn solid; if only the congested bus had been there, it would be level 2 but drawn faint.
-
-**Result.** At the same 8:00 am peak, pieces resting on one vehicle fell to **11% in the CBD, 20% at 1.5–4 km and 32% beyond 4 km**. So faint streets now cluster where data really is thin, and a solid colour means at least two vehicles agree.
-
-**Speed.** Which pieces count as the same street never changes, so it is worked out once at startup (about 110 ms). After that a full snapshot of all streets takes about 40 ms at peak; the first pooled version took 1.4 s.
+Until 5 November, street layers coloured each route's line in 200 m pieces. Each piece showed the mean level of the vehicles seen on it in the last 10 minutes. On 4 November this was improved: readings were pooled along shared streets, so on a street served by many routes one bus no longer stood for the whole street. Streets resting on one vehicle were drawn faint, and the two directions could be shown together, side by side or one at a time. The street layers and this code (`engine/normalise/segments.py`) were removed at the owner's request. The code is still in git history (commit `5676e3b` and earlier).
 
 ### 7.6 Jobs, departures and the service gap (`engine/demand/areas.py`)
 
@@ -528,82 +546,28 @@ Grid squares take an area-weighted share of the zones they overlap. For example,
 | +0.15 to +0.40 | more jobs |
 | over +0.40 | much more jobs than service |
 
-**Fifths (jobs and Opal layers).** Areas with any value are ranked and split into five equal-sized groups. Areas with none aren't coloured. The actual value range of each fifth is in §8.3. The ranges differ between zones and the grid, and the tablet shows the ones for whichever shape is on.
+**Fifths (jobs layer).** Areas with any value are ranked and split into five equal-sized groups. Areas with none aren't coloured. The actual value range of each fifth is in §8.3. The ranges differ between zones and the grid, and the tablet shows the ones for whichever shape is on.
 
-### 7.7 Opal 2016 (`engine/demand/areas.py`)
+### 7.7 Opal 2016 (removed 5 November)
 
-The layer shows the average weekday of 21–25 November 2016: tap-ons plus tap-offs between 7:00 and 9:00.
+Until 5 November an area layer showed the average weekday's tap-ons plus tap-offs between 7:00 and 9:00 for 21–25 November 2016, and the same taps were one of the pressure score's inputs (the score itself was removed later the same day, §7.8). At the owner's request both were removed: the layer, its tablet button and legend, its pressure weight, and the code that placed station and bus taps on the map. Reasons it was the weakest input: it was ten years old, predated the Metro and the CBD light rail, and placed bus taps only by postcode. The section number is kept so references elsewhere stay valid.
 
-**Stations** (train, light rail, ferry) are placed by matching their names to today's stops. For example, "Circular Quay, No. 3 Wharf" becomes the place "Circular Quay" plus the stop type "Wharf".
+### 7.8 Pressure (removed 5 November)
 
-**Bus taps** are given only by postcode, so they are spread out:
+Until 5 November a *Pressure (combined)* area layer gave each area one score from up to five inputs (traffic now, crowding now, service gap, Opal 2016, typical BOAM load). Each input was a percentile rank across areas, missing inputs counted as a neutral 0.5, inputs were averaged with weights of 0–3 set on the team panel, and areas were coloured by fifths of the score. At the owner's request the layer, its live scoring on the server (`/pressure`), the weight sliders and the weights setting were removed, so every area layer now shows one measure on its own. The section number is kept so references elsewhere stay valid.
 
-- each postcode's bus taps are scaled by the share of its area inside the footprint;
-- the result is split evenly across today's bus stops in that postcode.
+### 7.9 BOAM bus sections (removed 5 November)
 
-Each area then sums the taps placed inside it.
+Until 5 November, BOAM data was turned into two values for each stretch between consecutive bus stops, for each weekday peak. Both were averaged over 13 weekdays:
 
-### 7.8 Pressure (`engine/demand/pressure.py`)
+- **Typical load:** passengers on board leaving the stop, divided by the bus's capacity.
+- **Time lost per 100 m:** how much further behind timetable buses fell on that stretch.
 
-Pressure is one score per area combining five inputs. Two are live; three come from fixed data:
+They coloured two street layers, fed the pressure score, and were compared with our congestion measure in step 6 (§10). All of these, and the BOAM code (`engine/demand/boam.py`), were removed at the owner's request. The code is still in git history.
 
-| Input | Kind |
-| --- | --- |
-| Traffic now | live |
-| Crowding now | live |
-| Service gap | static |
-| Opal 2016 | static |
-| Typical bus load (BOAM, chosen peak) | static |
+### 7.10 Our own congestion measure: the travel-time index (removed 5 November)
 
-**How the score is built:**
-
-1. **Turn each input into a percentile rank** (0 to 1) across the areas that have it. Ranks are robust to outliers: one huge station doesn't squash everyone else into the bottom colour.
-2. **Fill gaps with the neutral 0.5.** Areas with no live vehicles right now, or no BOAM sections, get 0.5 for that input. Simply dropping missing inputs had pushed empty areas to the top of the ranking.
-3. **Combine with weights:** score = Σ wᵢ·rᵢ ÷ Σ wᵢ, where each weight wᵢ is set from 0 to 3 on the team panel (default 1).
-4. **Colour by fifths of the scores.** Averaged ranks bunch around 0.5, so fixed bands would put nearly everything in the middle colour.
-
-Jobs are left out because they are already inside the service gap. Counting them twice would overweight them.
-
-The score is **relative only**: it says which areas are under the most pressure compared with the rest of the footprint, not against any planning standard. It updates every few seconds as the live inputs change.
-
-### 7.9 BOAM bus sections (`engine/demand/boam.py`)
-
-A **section** is the stretch between two consecutive stops, a → b, on a bus trip. For each section, each peak (AM 7:00–9:00, PM 16:30–18:30) and weekdays only, two values are worked out.
-
-**Load: how full the bus is leaving stop a.**
-
-- BOAM gives passengers on board in bands (0–20, 21–40, …). The middle of the band is used: 21–40 becomes 30.5.
-- That number is divided by the bus's **total capacity**, then averaged over every weekday trip on the section in the peak.
-- *Example:* a band of 41–60 on a bus with capacity 75 gives 50.5 ÷ 75 = 67%, in the top band.
-- This assumes BOAM's occupancy at a stop is the load departing it; BOAM's documentation doesn't say.
-
-**Time lost per 100 m: how much further behind timetable the bus falls on this section.**
-
-- Time lost per 100 m = ((actual_b − scheduled_b) − (actual_a − scheduled_a)) ÷ section length × 100.
-- *Example:* a bus 60 s late at a and 120 s late at b, 400 m apart, lost 60 s over 400 m, which is 15 s per 100 m.
-- Zero or negative means the bus kept to time or caught up.
-- Measuring the *change* in delay between two stops, rather than the delay itself, means a bus that started late elsewhere doesn't make this section look slow.
-
-**Data rules:**
-
-- A change in delay of more than 15 minutes between two stops is treated as a data error and ignored.
-- A section needs **at least 3 trips** in the period to be shown.
-- Sections are joined to the timetable by **stop ID** (100% match). BOAM's trip IDs don't match the timetable's, but its stop IDs do.
-
-**Long sections.** Sections over **800 m** are left out of the time-lost layer but kept in the load layer.
-
-- These are express routes over motorways and bridges, up to 4.9 km long. They are 5% of sections but 24% of the coloured length.
-- An average delay over several kilometres can't show *where* the time was lost.
-- Load really is constant along a section, because nobody boards or alights between stops, so the load layer keeps them.
-
-**Bands** (absolute, so days added later stay comparable):
-
-- **Load:** ≤ 15%, 15–30%, 30–45%, 45–60%, > 60% of capacity. Averaged over a two-hour peak, section loads rarely pass 50%, so 20%-wide bands left nearly every street in the bottom colour.
-- **Time lost:** ≤ 0, 0–3, 3–8, 8–15, > 15 s per 100 m.
-
-**Both directions.** For "One colour", each section also gets a value pooled, weighted by trip count, over every section whose midpoint lies within 25 m of its line in either direction.
-
-### 7.10 Our own congestion measure: the travel-time index (`engine/normalise/travel_time.py`)
+*This measure coloured the "Traffic (our measure)" street layer, and was the subject of the step 6 analysis. Its code (`engine/normalise/travel_time.py`) and the analysis scripts were removed with the street layers on 5 November, and remain in git history. The method is kept here because §10's results depend on it.*
 
 **Why build one.** TfNSW's traffic label is published without a method (§7.4). A measure we can explain lets the project say exactly what a colour means, and test whether TfNSW's label behaves like a measure of slow streets (§10).
 
@@ -623,7 +587,7 @@ A **section** is the stretch between two consecutive stops, a → b, on a bus tr
 
 - *Example:* a street buses cover at 30 km/h at night, now crossed at 12 km/h, gives TTI 30 ÷ 12 = 2.5. The trip takes two and a half times as long as at night.
 
-**Levels on the model** (`derived_congestion.thresholds_tti`), chosen to be easy to explain to visitors:
+**Levels on the model** (until 5 November), chosen to be easy to explain to visitors:
 
 | TTI | Level |
 | --- | --- |
@@ -636,37 +600,13 @@ For the statistical comparison with TfNSW, different cut-offs are used (2.66 / 2
 
 **Why a night baseline, and not the timetable?** Comparing with the timetable was tried first and failed: timetables are padded, so buses "gained" time even in severe congestion (§10.1).
 
-### 7.11 Street colours from BOAM and from the live layers together
+### 7.11 Street colours from BOAM and the live layers (removed 5 November)
 
-The live street layers (Traffic, Traffic (our measure), Crowding) use §7.5. The BOAM layers (Typical bus load, Where buses lose time) use §7.9. They answer different questions:
+Both kinds of street layer were removed (§7.5, §7.9).
 
-- **Live layers:** what is happening right now, or during the replayed moment.
-- **BOAM layers:** what a typical weekday peak looks like, averaged over 13 days.
+### 7.12 How street lines were drawn (removed 5 November)
 
-Both obey the same direction modes and the same drawing rules (§7.12).
-
-### 7.12 How street lines are drawn (`renderer/index.html`, `buildStreetCanvas`)
-
-**Line style.** Each street gets one solid line, 4.5 pixels wide at 95% opacity. Streets resting on one vehicle are drawn at 35% opacity. "Side by side" uses two 4 px lines, each shifted 2 px to its own side, so the pair just touch.
-
-**No glow (removed 4 November).** Lines used to have a soft 9 px halo underneath. On shared streets one halo was drawn per route, so busy streets glowed brighter even at the same level. The halo also hid small calibration errors, so alignment needs checking on the model again.
-
-**One line per stretch.** Before 4 November, overlapping lines were stacked, so a red line on top could leave green peeking out at its edges. Of 1,882 such clashes at the 8:00 am peak on 4 November:
-
-- 72% were a street's two directions drawn on top of each other;
-- 28% were pieces of different routes slightly offset along the same street.
-
-Now lines are laid down best evidence first:
-
-1. solid before faint;
-2. then more vehicles (or more BOAM trips);
-3. then the worse level.
-
-A later line draws only the parts of itself that no earlier line already runs *beside*. The check samples each line every 2 px and looks within 5 px across and ±1 px along. It counts only lines going the same way, or either way in "One colour".
-
-"Beside", not "near", matters. The next piece of the same route starts where the previous one ended, and it must join on without leaving a gap.
-
-**Performance.** All street lines are drawn once into a stored image whenever the data, layer, direction mode or calibration changes, rather than every frame.
+Until 5 November, each street was one solid 4.5 px line; its soft glow had been removed on 4 November. Lines were laid down best evidence first, so no colour peeked out from under another. The drawing code went with the street layers.
 
 ### 7.13 Stop history (`engine/history/`, teammate's work)
 
@@ -720,25 +660,19 @@ This is what the tablet's *What the colours mean* section states (since 5 Novemb
 
 | Lens | Colour | Definition |
 | --- | --- | --- |
-| On schedule? | Green — on time | Up to 5 min behind the timetable (trains, buses, ferries), 6 min (intercity), 2 min (metro, light rail). Early counts as on time |
-| | Amber — late | 5–10 min, 6–12 min, 2–4 min late respectively |
-| | Red — very late / cancelled | Over 10, 12 or 4 min late, or the trip is cancelled |
+| On schedule? | Blue — early | Buses more than 59 s early (Greater Sydney Bus Contract). Other modes are never early |
+| | Green — on time | No more than 5 min late (Sydney Trains, TfNSW standard), 6 min (intercity, TfNSW), 5 min 59 s late and 59 s early (buses, bus contract), 5 min (metro, light rail, ferries: TfNSW's rail standard, applied by the project) |
+| | Amber — late | Later than that |
+| | Red — missed its slot / cancelled | Later than the limit and later than the scheduled gap to the next service on its route; or cancelled |
 | | Grey — no schedule data | No live delay prediction for the vehicle's trip |
 | Traffic (TfNSW) | Green / yellow / orange / red | The bus's `congestion_level`: RUNNING_SMOOTHLY / STOP_AND_GO / CONGESTION / SEVERE_CONGESTION. TfNSW publishes no numbers behind these |
 | | Grey | UNKNOWN or missing. Always the case for trains and metro, which aren't in road traffic |
 | Crowding (TfNSW) | Blue / purple / pink / red | EMPTY or MANY_SEATS_AVAILABLE / FEW_SEATS_AVAILABLE / STANDING_ROOM_ONLY / CRUSHED_STANDING_ROOM_ONLY, FULL or NOT_ACCEPTING_PASSENGERS. These are categories, not passenger counts. Trains use the middle carriage |
 | | Grey | No occupancy sent |
 
-### 8.2 Streets
+### 8.2 Streets (removed 5 November)
 
-The live layers use the rounding rule in §7.5. A solid line rests on 2 or more vehicles; a faint line on only 1.
-
-| Layer | Bands | Kind |
-| --- | --- | --- |
-| Traffic, Crowding (TfNSW) | Levels 0–3 as in §8.1, averaged per street over the last 10 min and rounded | Categorical |
-| Traffic (our measure) | Takes up to 1.5×, 1.5–2×, 2–3×, over 3× as long as the same street at night. Grey: no night baseline for that street | Absolute |
-| Typical bus load (BOAM) | 15% or less, 15–30%, 30–45%, 45–60%, over 60% of the bus's total capacity | Absolute |
-| Where buses lose time (BOAM) | 0 or less (held or gained time), 0–3, 3–8, 8–15, over 15 s lost per 100 m. Over 15 s means more than a minute lost on a 400 m stretch | Absolute |
+The street layers and their colours were removed; traffic and crowding are shown only on the vehicles (§8.1).
 
 ### 8.3 Areas
 
@@ -748,13 +682,10 @@ These are the actual ranges as built on 5 November. The tablet reads them live f
 | --- | --- | --- | --- | --- | --- |
 | Jobs per travel zone | up to 391 | 393–726 | 727–1,260 | 1,263–2,983 | 3,065–21,409 |
 | Jobs per 150 m square | up to 14 | 14–28 | 28–54 | 54–128 | 128–11,761 |
-| Opal taps per travel zone | up to 114 | 114–210 | 212–435 | 444–630 | 638–48,327 |
-| Opal taps per 150 m square | up to 23 | 23–44 | 47–92 | 93–186 | 192–45,806 |
 
-All four are relative. Note how uneven the top fifth is: it runs from about 3,000 to over 21,000 jobs per zone. The busiest places, such as the CBD core and the big stations, are far above everything else, which is why fifths are used rather than evenly spaced bands.
+Both are relative. Note how uneven the top fifth is: it runs from about 3,000 to over 21,000 jobs per zone. The busiest places, such as the CBD core and the big stations, are far above everything else, which is why fifths are used rather than evenly spaced bands.
 
 - **Service gap** (fixed bands on the rank difference, §7.6): −0.40 or less, much more service than jobs; −0.40 to −0.15, more service; −0.15 to +0.15, balanced; +0.15 to +0.40, more jobs; over +0.40, much more jobs than service.
-- **Pressure:** fifths of the combined score (§7.8). It has no fixed values; only the order matters.
 
 ### 8.4 Stops and background
 
@@ -792,11 +723,11 @@ Its "demand" was jobs per zone. That describes land use, not transit demand, so 
 - *Why:* the projector mirrors the laptop, so controls must be elsewhere, and two places (tablet and keyboard) can change the display. With one copy on the server, every page shows the same thing, and a reloaded page catches up instantly.
 - *Rejected:* each page keeping its own state, which drifts out of step.
 
-**A tablet controller, the keyboard as backup, a PIN-locked team panel, the laptop's hotspot.**
+**A tablet controller, the keyboard as backup, a separate team panel, the laptop's hotspot.**
 
 - *Why:* visitors need buttons, and none can appear on the projection.
 - *Rejected:* visitors' own phones, since they would need the network details and university Wi-Fi often blocks devices from reaching each other.
-- The PIN keeps visitors out of calibration and weights; it isn't security.
+- The team panel had a PIN until 5 November; the owner had it removed, so anyone at the tablet can open alignment and calibration.
 
 **A plain background by default, clipped to the footprint; an optional offline map.**
 
@@ -804,14 +735,10 @@ Its "demand" was jobs per zone. That describes land use, not transit demand, so 
 - The optional map (4 Nov) helps on a screen. It is stored offline so it works without internet, and drawn through the calibration so it lines up.
 - *Rejected:* live map tiles, which would need warping to match the projection.
 
-**Street layers on 200 m route pieces, pooled along shared streets, faint when thin.**
+**Street layers: built, improved, then removed (5 November).**
 
-- *Why:* colour should follow the model's real streets, not a grid. Pooling fixed one bus standing for a whole street (§7.5), and faint lines show where evidence is thin.
-- *Rejected:* removing the street layers. They are the projection's main statement about congestion, and these changes address the flaws found.
-
-**Direction modes, and one line per stretch.**
-
-- *Why:* the owner disliked colours peeking out from under each other, and asked for both ways of showing direction, switchable. One colour (the default) is simplest; side by side shows that inbound and outbound often differ.
+- *History:* the streets were coloured on 200 m route pieces. On 4 November they were pooled along shared streets, drawn faint when thin, and given direction modes, after measurements showed one bus often standing for a whole street (§7.5).
+- *Removed* on 5 November at the owner's request, together with their engine code, BOAM and the step 6 analysis code. Traffic and crowding now show only on the vehicles.
 
 **Zones and grid both available.**
 
@@ -821,10 +748,9 @@ Its "demand" was jobs per zone. That describes land use, not transit demand, so 
 
 - *Why:* it has no units, and a jobs-to-departures ratio explodes where departures are near zero.
 
-**Pressure from ranks, with neutral fill and jobs excluded.**
+**No combined score (5 November).**
 
-- *Why:* ranks resist outliers, neutral fill avoids rewarding missing data, and leaving jobs out avoids counting them twice.
-- *Rejected:* min–max scaling, and dropping missing inputs (which pushed empty areas to the top).
+- *Why:* the owner wanted each area measure kept independent of the others. A pressure score that averaged ranks of traffic, crowding, service gap and bus load had been built (§7.8), and was removed.
 
 **Replay through the same engine, on recorded time.**
 
@@ -856,18 +782,6 @@ Its "demand" was jobs per zone. That describes land use, not transit demand, so 
 
 - *Why:* a Wi-Fi drop should cost half a minute, not the five-minute back-off used for "too many requests" errors.
 
-**BOAM joined on stop ID, weekdays only, absolute bands.**
-
-- *Why:* BOAM's trip IDs don't match the timetable. Weekends behave differently. Absolute bands mean days added later are comparable.
-
-**Our congestion measure compares against night-time free flow.**
-
-- *Why:* comparing against the timetable mostly measured timetable padding (§10.1).
-
-**Two sets of thresholds for our measure.**
-
-- *Why:* round, explainable numbers on the model; frequency-matched ones for a fair statistical comparison.
-
 **The timetable refreshed on 30 October.**
 
 - *Why:* the old calendar ended 5 November, the day before the showcase, and every vehicle would have lost its schedule.
@@ -879,6 +793,8 @@ Its "demand" was jobs per zone. That describes land use, not transit demand, so 
 ---
 
 ## 10. Step 6: our congestion measure compared with TfNSW's
+
+*The analysis code (`engine/normalise/travel_time.py`, `engine/analysis/collect.py`, `scripts/analyse_congestion.py`, `build_freeflow.py`, the two experiment scripts) was removed on 5 November with the street layers, at the owner's request. The results below come from the runs on 30 October. They can't be re-run from the current code, but the code is still in git history (commit `5676e3b` and earlier), and the outputs are still in `data/analysis/`.*
 
 ### 10.1 First attempt: delay against the timetable (dropped)
 
@@ -940,9 +856,9 @@ Likely reasons:
 3. TfNSW's label is undocumented and per vehicle. It may not be a measure of the street that bus just drove at all.
 4. BOAM time lost is measured against the timetable (so it is affected by padding), and three of its days are school holidays.
 
-**Conclusion for the final report:** the two capture different things and only line up when averaged per street over a peak. The model shows both, labelled as such, and the tablet legend explains what each one means.
+**Conclusion for the final report:** the two capture different things and only line up when averaged per street over a peak. Until 5 November the model showed both, labelled as such; since then only TfNSW's label is shown (on the buses).
 
-This analysis ran before street pooling (4 November). Pooling changes what the model draws, not these per-reading statistics. Rerunning with the seven weekday peaks recorded since would firm up the per-street figure (§16).
+This analysis ran before street pooling (4 November), on per-piece readings.
 
 Outputs are in `data/analysis/`:
 
@@ -957,17 +873,15 @@ Outputs are in `data/analysis/`:
 
 ### 11.1 Automated tests
 
-There are 208 automated tests (`pytest`), which run in about 2 seconds without internet access. They cover:
+There are 173 automated tests (`pytest`), which run in about 2 seconds without internet access. They cover:
 
 - the timetable filter and map matching;
 - punctuality, interchange counts and statistics;
 - calibration maths and footprint trimming;
 - the display-state rules (every allowed and rejected value, including the corner-fit offsets and their saving across restarts);
-- street pooling: same street, separate directions, parallel and crossing streets, order independence, both-direction values, the towards-city flag;
 - replay: pacing, looping, coverage, jumping, pausing, choosing between two recorders' files;
-- area maths, including the per-fifth ranges, and the pressure score;
-- BOAM maths, including both-direction pooling;
-- the request budget, the travel-time tracker and the agreement statistics;
+- area maths, including the per-fifth ranges;
+- the request budget, the per-trip punctuality count and the timetable gaps;
 - the teammate's stop tracker, history, trip-update and route-focus code;
 - the background map build: layers, labels, tunnels, multi-part water outlines.
 
@@ -983,11 +897,10 @@ There are 208 automated tests (`pytest`), which run in about 2 seconds without i
 Checked by eye:
 
 - the projector on every layer;
-- all four street-direction modes, and BOAM, on a paused 4 November AM replay;
 - the background map in Plain, Detailed and Full, in both themes;
 - the tablet's three tabs;
 - the replay picker: a full day, a 66% day, days missing a peak, and the open and closed states;
-- every legend combination: each lens, live and BOAM streets, each area layer on zones and grid, stop history.
+- every legend combination: each lens, each area layer on zones and grid, stop history.
 
 Problems found and fixed this way:
 
@@ -1009,8 +922,6 @@ Problems found and fixed this way:
 | Replay throughput, dense data | ~11× real time | ~96× |
 | 50× replay, measured | — | 50.0× |
 | Static layers: build / from cache | — | ~5 s / 0.02 s |
-| Street snapshot with pooling | 1.4 s (first version) | ~40 ms (~110 ms once at startup) |
-| BOAM import size | ~400 MB per day | ~2.7 MB per day |
 | Daily requests | Quota ran out at 7 pm | ~57,000 a day, peaks at full rate |
 | `/stop_history` full recompute | ~13 s at 586k visits (3 Nov) | ~2 s at 866k visits (5 Nov); 0.03 s cached |
 
@@ -1031,7 +942,7 @@ python scripts/install_server_service.py --uninstall      # stop for good (a pla
 ```
 
 - Because it is a per-user job, after a reboot someone must log in before the server starts.
-- Startup takes about 15 seconds. The area and BOAM layers finish building in the background a few seconds later, and their buttons are greyed out until then.
+- Startup takes about 15 seconds. The area layers finish building in the background a few seconds later, and their buttons are greyed out until then.
 - **Projector:** open `http://127.0.0.1:8765/` full-screen on the laptop.
 - **Tablet:** open `http://<laptop address>:8765/control`; the address is printed in the log.
 - After any code change, reload both pages.
@@ -1108,10 +1019,10 @@ According to the teammate's README update of 5 November, the projection is now a
 
 ### 12.6 Showcase-day checklist
 
-1. **Laptop:** on **power**, hotspot on, tablet joined to it, `/control` open and **reloaded**, team PIN entered once.
+1. **Laptop:** on **power**, hotspot on, tablet joined to it, `/control` open and **reloaded**.
 2. **Projector page:** full-screen and reloaded. Status line off, or on to label replays.
 3. **Alignment:** verification overlay check, nudge if needed, then turn the overlay off.
-4. **Defaults to confirm:** background map Plain, street directions One colour, no layers on.
+4. **Defaults to confirm:** background map Plain, Early buses on, no area layer on.
 5. **Replay for the presentation:** Replay mode → day → AM or PM peak, at 25×. Good candidates are any weekday peak at 100%, such as Wednesday 4 November AM, Thursday 5 November AM, or Monday 26 or Wednesday 28 October AM or PM.
 6. **Live:** use it only if Team → System health shows fresh feeds (a few seconds old) and the API budget isn't spent.
 7. **After each demonstration, press Live now.** Polling and recording are paused during replays.
@@ -1123,10 +1034,9 @@ According to the teammate's README update of 5 November, the projection is now a
 | Tablet header says "connecting…"; projector frozen | Server not running or restarting | `lsof -nP -iTCP:8765 -sTCP:LISTEN`; if nothing, `launchctl kickstart -k gui/$(id -u)/com.pulsecbd.server`; read the end of `data/recordings/server.log` |
 | Tablet can't open the page at all | Not on the same network | Join the laptop's hotspot; use the address printed in the server log |
 | A page looks like an older version | It has old code cached | Reload the page |
-| Area or BOAM buttons greyed out | Layers still building after startup, or data files missing | Wait a few seconds after a restart; check the log for "areas" or "boam" errors |
+| Area buttons greyed out | Layers still building after startup, or data files missing | Wait a few seconds after a restart; check the log for "areas" errors |
 | Background map buttons greyed out | `data/basemap/basemap.json` missing | `python scripts/fetch_basemap.py` (or `--cached`), then restart |
 | Vehicles stop moving while live | Wi-Fi dropped, or polling has slowed to save the quota | Team → System health: feed ages of minutes mean no data is arriving; a long polling interval means the server is pacing itself (outside peaks) or the day's budget is spent. Switch to a replay |
-| Street layer nearly empty | Only vehicles from the last 10 minutes count; just after startup or switching to Live there are few | Wait a few minutes, or use a replay (jumping fills the 10 minutes before the target) |
 | A replay looks sparse | It is a partly recorded session | Check the coverage note under Recorded peak; choose a peak at 98–100% |
 | The model shows a replay after the demo | Replays don't end by themselves; they loop | Press Live now |
 | Colours are offset from the streets | Calibration drift | Nudge (Team → Alignment), or recalibrate |
@@ -1137,19 +1047,40 @@ According to the teammate's README update of 5 November, the projection is now a
 ```bash
 # refresh the timetable (then restart the server)
 python scripts/run_phase1.py --force-refresh
-# import new BOAM day files, keeping only footprint rows
-python scripts/import_boam.py --delete-originals ~/Downloads/BOAM_*.txt
-# export BOAM sections to data/boam/sections.csv
-python scripts/export_boam.py
-# rebuild the night free-flow baseline (~5 min), then restart
-python scripts/build_freeflow.py
-# step 6 analysis (~15 min)
-python scripts/analyse_congestion.py
 # only if zones or postcodes change
 python scripts/prepare_demand_data.py --poa-dir <ABS shapefile dir>
 # background map from OpenStreetMap (--cached: rebuild from the saved download), then restart
 python scripts/fetch_basemap.py [--cached]
+# one recorded peak as three CSV files in data/exports/<peak>/ (about 1.5 minutes)
+python scripts/export_peak.py 2026-11-04-am
 ```
+
+### 12.9 Exporting a peak to CSV
+
+For spreadsheets and report figures, any recorded peak can be exported as three CSV files: from the tablet (Display → Time → *Download a recorded peak*), or on the laptop with `python scripts/export_peak.py <peak>` (for example `2026-11-04-am`; add `--out <folder>` to choose where).
+
+**How it works.** The peak is replayed through the same engine the projection uses, as fast as it will go, starting 10 minutes early so trips and stop visits already under way are tracked. In that one pass `engine/analysis/export.py` writes:
+
+- **every vehicle update**;
+- **every stop visit**;
+- **each trip once at TfNSW's measuring point**, with its on-time state (what the Stats tab counts, §7.2).
+
+**Behind the tablet button.** The tablet calls `/export`, which runs the script in a separate process, so the live display isn't slowed. It keeps the files in `data/exports/<peak>/`, so later downloads of the same peak are instant. It refuses a peak that is still being recorded.
+
+**Checked on the Wednesday 4 November AM peak:**
+
+| File | Rows | Size |
+| --- | --- | --- |
+| Vehicles | 222,002 | 41 MB |
+| Stop visits | 24,083 | 4 MB |
+| Trips on time | 1,272 | under 1 MB |
+
+- The export took 98 seconds.
+- Every file is within Excel's row limit of about 1 million.
+- The replay found 24,083 stop visits, against 24,151 in the live history recorded at the time: a 99.7% match.
+- Because stop visits come from the replay, they exist for every recorded peak, including those before the live history began on 30 October.
+
+Whole days aren't offered: a day of vehicle updates would be around 2 million rows, more than Excel can open. Every column is defined in Appendix D.
 
 ---
 
@@ -1175,7 +1106,10 @@ Commits on `w12merge` since the merge:
 | `14b7b9c` | Street pooling, faint streets, direction modes |
 | `95c722a` | Replay day picker and colour definitions |
 | `b456295`, `2494941`, `e6d99d9` | Teammate (4–5 Nov): corner fit, merged into `w12merge`, and a README rewrite; also adds `pulse-cbd-context.md`, their handoff notes |
-| (this commit) | Merge of the above with this report and the owner's README update; the teammate's README kept, as it already included those updates |
+| `016fdcf`, `b3249e9` | Merge of the teammate's work with the rewritten report and the owner's README update (the teammate's README kept) |
+| `74d6b12` | Interchange rings removed; report walk-through extended |
+| `5676e3b` | Renamed to Inner Sydney Transit Projection Model; tablet fits phones. **Last commit with the street colours, BOAM and step 6 code**, for anyone who needs them back |
+| 5 Nov evening (latest) | CSV export; PIN, Opal 2016, pressure and street colours (with BOAM and step 6 code) removed; punctuality from published standards with per-trip Stats and the Early buses switch; hover highlights routes; this report |
 
 **Which branch is the showcase build** still has to be agreed with the teammate (§18). `w12merge` is the only one with both sides' work and everything since.
 
@@ -1185,27 +1119,38 @@ Commits on `w12merge` since the merge:
 - about 55 MB of PDFs and a spreadsheet in `template-repository-main/New folder/`, not stored with Git LFS;
 - their individual report, at the repository root.
 
+**The data (not in Git).** `data/` is ignored by Git: it's 28 GB and several files are over GitHub's 100 MB limit. On 5 November all of it was uploaded to a private **GitHub release**, `data-2026-11-05`, on the same repository: 32 files, 27.7 GB, everything up to about 6:20 pm that day.
+
+- **`core-data.tar.gz`:** timetable databases, jobs and zones, Opal, BOAM, background map, analysis outputs, and a safe copy of the stop history.
+- **Recordings:** one `.tar` per Sydney half-day, `recordings-<date>-am-half` and `-pm-half`.
+- **Not uploaded:** `.env` (the API key) and the logs. The files were checked for the key before upload.
+- **Unpacking:** run `tar -xzf core-data.tar.gz` and `tar -xf recordings-….tar` from the project folder; the release notes give the steps.
+- **Bundling:** the upload script bundled and uploaded one file at a time and paused in peak windows. It was a scratch script and isn't in the repository. Uploading again means re-creating it, or using `gh release upload`.
+- **Not in the release:** Thursday 5 November's PM peak and anything recorded since.
+- **Licence:** check TfNSW's terms before sharing the data outside the team.
+
 **Security.** A teammate's TfNSW API key is committed in `template-repository-main/src/file.env` (commit `d85b5e1`). The repository is private, but the key should still be regenerated. The owner's key is only in `.env`, which Git ignores; it appears in no commit, and this is checked before every push.
 
 ---
 
-## 14. State of the laptop (5 November, 4:30 pm)
+## 14. State of the laptop (5 November, 11 pm)
 
 | Item | State |
 | --- | --- |
-| Server | launchd job, live, 487 vehicles, feeds 8–10 s old, 2 pages connected. It runs `95c722a`: **corner fit needs a server restart and page reloads** to appear (deliberately not done during the PM peak recording) |
-| Recorder | Installed; the 16:25 run started on time and is standing aside while the server polls |
+| Server | launchd job, live, running the latest `w12merge` code (last restarted 10:45 pm on 5 Nov). 149 vehicles at 10:53 pm. Open pages need a reload to pick up the code |
+| Recorder | Installed; its runs stand aside while the server is polling (its log then says "0 feed payloads received", which is normal) |
 | Sleep | Disabled (`sudo pmset -a disablesleep 1`). Undo after 6 November with `sudo pmset -a disablesleep 0`. Keep the Mac **on power**: it was found on battery on 3 November |
-| API usage | About 57,000 on every full day from 29 October to 2 November, and on 4 November. 3 November: 39,663 (server down 11:30–18:33). 5 November: 33,450 by 4:27 pm, polling every 15 s (peak) |
-| Disk | 68 GB free. Recordings 27 GB; stop visits 128 MB; analysis 58 MB; BOAM 42 MB; background map 16 MB |
-| Server log | `data/recordings/server.log`: 131 MB, about a million lines, never trimmed |
+| API usage | About 57,000 on every full day from 29 October to 2 November, and on 4 November. 3 November: 39,663 (server down 11:30–18:33). 5 November: 53,700 by 10:53 pm |
+| Disk | 65 GB free. Recordings 28 GB; stop visits 128 MB (919,987 visits); analysis 58 MB and BOAM 42 MB (no longer read); CSV exports 45 MB; background map 16 MB |
+| Server log | `data/recordings/server.log`: 129 MB, never trimmed |
+| Data release | GitHub release `data-2026-11-05` (private): 32 files, 27.7 GB, everything in `data/` up to ~6:20 pm on 5 Nov (§13) |
 | Node.js | Installed via Homebrew (only for syntax checks) |
 
 **Replayable sessions** (share of the expected bus updates actually recorded):
 
 | Day | AM | PM |
 | --- | --- | --- |
-| Thu 5 Nov | 100% | recording now |
+| Thu 5 Nov | 100% | 100% |
 | Wed 4 Nov | 100% | 99% |
 | Tue 3 Nov | 100% | lost (Mac shut down) |
 | Mon 2 Nov | 100% | 98% |
@@ -1240,25 +1185,20 @@ These should be stated plainly in the final report.
 **Data**
 
 - **TfNSW's fields are undocumented categories.** Neither the traffic nor the crowding field has published numbers behind it. Crowding is almost always "seats available" off-peak. Light rail and ferries report neither field. Sydney Trains' traffic is always unknown, and about 70% of Sydney Trains have no usable delay.
-- **BOAM's limits.** Its "actual" times have been TfNSW's live predictions since March 2026. People who don't tap aren't counted. Load assumes the occupancy given at a stop is the load departing it. Three of its 13 weekdays are school holidays.
-- **Opal 2016 is old.** It is ten years old and predates the Metro and the CBD light rail. Bus taps are placed only by postcode.
 - **Recordings have gaps** wherever Wi-Fi dropped (§14).
 
 **Method**
 
-- **Relative layers.** The service gap and pressure are relative to the footprint, not measured against planning standards. Jobs and Opal fifths are affected by zone size: a large zone can rank high just for being large. The grid avoids this.
+- **Relative layers.** The service gap and the jobs fifths are relative to the footprint, not measured against planning standards. Jobs fifths are affected by zone size: a large zone can rank high just for being large. The grid avoids this.
 - **Departures measure reachable service.** A trip counts once per stop within reach, not once in total.
-- **Thin street data.** At the AM peak, 11% of CBD streets and 32% beyond 4 km still rest on one bus (drawn faint); off-peak far more do.
-- **Pooling is by geometry.** Streets are matched by shape, not from a real street network.
-- **One colour hides direction.** The default view averages both directions, hiding differences between inbound and outbound traffic; Side by side or To/From city shows them. "Towards the city" means towards Town Hall, which is close to arbitrary inside the CBD.
-- **Simplified punctuality.** The thresholds are simplified defaults (§7.2), and early running counts as on time.
-- **Our congestion measure is limited.** It uses a night baseline (fewer passengers, so every peak street reads somewhat slower). 38% of peak readings have no baseline. Its agreement with TfNSW is weak (§10).
+- **Punctuality limits are partly borrowed.** Trains and buses use published TfNSW standards, but Metro, light rail and ferries have no published definition, so they borrow the Sydney Trains 5-minute standard. "Missed its slot" is the project's own category, and can't apply to Sydney Trains, Metro or CBD light rail (no timetable match). The live colour is a prediction at the next stop; official-style figures (Stats tab) use predicted arrivals at final stops for trips ending outside the model (§7.2).
+- **Our congestion measure (no longer in the code) was limited.** It uses a night baseline (fewer passengers, so every peak street reads somewhat slower). 38% of peak readings have no baseline. Its agreement with TfNSW is weak (§10).
 
 **Setup**
 
 - **Limited testing on the physical model.** The teammate reports the projection aligned on the model with corner fit; checks of every layer there aren't recorded. Crosshair calibration is recorded as tested only with synthetic points. The glow that used to hide small drift is gone.
 - **Replays aren't labelled.** The projection doesn't say it is showing a replay unless the status line is on.
-- **Weak access control.** The team PIN is checked only in the browser, and the server accepts connections from any device on the network (use the hotspot).
+- **No access control.** Since the team PIN was removed (5 November), anyone at the tablet can change alignment and calibration, and the server accepts connections from any device on the network (use the hotspot).
 - **One laptop.** Replays depend on one laptop and one disk, and the server log is never trimmed.
 - **Untested page code.** The projector and tablet pages have no automated tests.
 
@@ -1266,40 +1206,39 @@ These should be stated plainly in the final report.
 
 ## 16. Remaining work, in priority order
 
-**Before the showcase (today and tomorrow morning)**
+**Before the showcase (Friday 6 November)**
 
-1. **Restart the server and reload both pages** after today's PM peak (18:35), so the running build includes corner fit. Then **finish checking on the physical model** (alignment is reported done by the teammate):
-    - every layer;
-    - zones versus grid;
-    - colours on the white model;
-    - line widths without the glow;
+1. **Reload the projector and tablet pages,** if any were open before 10:45 pm on 5 Nov, so they run the latest code.
+2. **Decide about the mouse pointer on the projection.** The projector page is meant to hide it, but the teammate turned that off on 29 Oct for testing (`renderer/index.html`: the commented-out `body { cursor: none; }`, marked "TEMPORARILY disabled"). The pointer is projected onto the model, but hover features need a pointer to aim with.
+3. **Finish checking on the physical model** (alignment is reported done by the teammate):
+    - vehicle colours, including blue Early buses;
+    - stop markers and stop history;
+    - jobs and service gap on zones versus grid;
+    - the hover highlight;
     - Full map label size.
-2. **Test the networking.** A Mac can't run a hotspot and join Wi-Fi at the same time, so live mode needs one of:
+4. **Test the networking.** A Mac can't run a hotspot and join Wi-Fi at the same time, so live mode needs one of:
     - Ethernet;
     - USB tethering to a phone;
     - a phone hotspot that both the laptop and the tablet join.
 
     If none works, run replays only; they need no internet.
 
-3. **Agree with the teammate** that `w12merge` is the showcase build, and that about 70% of Sydney Trains show grey.
-4. **Keep recording** today's PM peak: Mac plugged in and on Wi-Fi until 18:35.
-5. **Back up the best 3–4 peaks** to an external drive. Replays depend on this one disk.
-6. **Pick the showcase replay** (§12.6), and rehearse the tablet flow: Replay mode → day → peak → Live now.
+5. **Agree with the teammate** that `w12merge` is the showcase build, and that about 60–70% of Sydney Trains show grey (no live prediction).
+6. **Pick the showcase replay** (§12.6), and rehearse the tablet flow: Replay mode → day → peak → **Live now** afterwards.
 7. **Make it clear when a replay is showing:** status line on, or say so out loud.
 8. **Make the report figures:**
-    - service gap, pressure, BOAM load and time lost;
-    - the step 6 tables and the map of disagreements;
+    - the per-trip on-time figures (Trips CSV);
+    - jobs and the service gap;
+    - the step 6 tables from §10;
     - the colour table in §8.
-9. Ask the teammate to **regenerate the committed API key.**
+9. Ask the teammate to **regenerate the API key they committed.**
+
+Done on 5 November: the PM peak was recorded (100%), everything in `data/` was backed up to the GitHub data release, and the server was restarted onto the latest code.
 
 **Optional or undecided**
 
-- Rebuild the free-flow baseline and rerun the step 6 analysis with the peaks since 30 October (`build_freeflow.py` → restart → `analyse_congestion.py`, about 20 minutes).
-- Leave the three holiday BOAM days out of the averages (they barely change results: loads match to about one percentage point).
 - Add an alert on the Mac when Wi-Fi stalls (offered, not built).
-- Add an "early" punctuality state; cite TfNSW's official on-time definitions.
-- Move "Traffic (our measure)" to the team panel. It disagrees with TfNSW's layer, and at peak it reads "slow" almost everywhere.
-- Make the route-filter lines match the no-glow street style (offered).
+- Find official on-time definitions for Metro, light rail and ferries (operator contracts, or ask TfNSW) to replace the borrowed 5-minute standard.
 - Trim or rotate `server.log`.
 
 **After the showcase:** `sudo pmset -a disablesleep 0`; `python scripts/install_server_service.py --uninstall`; `python scripts/install_recording_schedule.py --uninstall`.
@@ -1308,20 +1247,15 @@ These should be stated plainly in the final report.
 
 ## 17. Suggestions for improvement
 
-1. **Guided demo mode:** one button plays a scripted tour (AM peak at 25× → traffic → service gap → pressure), with captions on the tablet.
-2. **A simpler visitor tab:** move BOAM, the grid switch, street directions and our own measure behind a "More" button. The legend gets long when several layers are on.
+1. **Guided demo mode:** one button plays a scripted tour (AM peak at 25× → vehicle traffic → crowding → service gap), with captions on the tablet.
+2. **A simpler visitor tab:** move the grid switch, the Early buses switch and the background map behind a "More" button. The legend gets long when several layers are on.
 3. **A replay label on the projection itself:** the date and time in a corner, independent of the status line.
-4. **Better step 6 analysis:**
-    - a baseline by time of day, from weekday shoulder hours;
-    - comparison per route rather than per piece;
-    - excluding the time spent at stops;
-    - a repeat of the analysis on pooled streets.
-5. **Check the service gap against an accessibility measure,** such as jobs reachable within 30 minutes, for sample zones. Also test how sensitive it is: walking distance of 400 m instead of 200 m, and each pressure weight set to 0.
-6. **Use a real street network** (OpenStreetMap is already downloaded) instead of pooling by geometry.
-7. **Better BOAM measures:** passenger-kilometres rather than mean load, and term-time days only.
-8. **Faster startup,** by caching route corridors like the area layers.
-9. **Browser tests** for the tablet and projector pages, now that the legend and replay picker hold real logic.
-10. **Touch markers on the model** at stations (from the original brief; out of scope this term).
+4. **Check the service gap against an accessibility measure,** such as jobs reachable within 30 minutes, for sample zones. Also test how sensitive it is to the walking distance (400 m instead of 200 m).
+5. **Faster startup,** by caching route corridors like the area layers.
+6. **Browser tests** for the tablet and projector pages, now that the legend, replay picker and hover highlight hold real logic.
+7. **Touch markers on the model** at stations (from the original brief; out of scope this term).
+
+(Suggestions about the street layers, BOAM and re-running the step 6 analysis were dropped when those were removed on 5 November.)
 
 ---
 
@@ -1329,10 +1263,8 @@ These should be stated plainly in the final report.
 
 1. Confirm `w12merge` as the showcase build, with the teammate.
 2. Which peak is the showcase's default replay?
-3. Leave the holiday BOAM days out of the averages?
-4. Build the Wi-Fi stall alert?
-5. Move "Traffic (our measure)" off the visitor tab?
-6. Rerun step 6 with the newer peaks before writing the final report?
+3. Build the Wi-Fi stall alert?
+4. Show the mouse pointer on the projection (needed for hover), or hide it?
 
 ---
 
@@ -1352,7 +1284,7 @@ These should be stated plainly in the final report.
 | 3 Nov | Mac shut down after 11:30. Server down until 18:33 and the PM peak lost. Server moved to a self-restarting launchd job |
 | 4 Nov | Optional background map (Plain, Detailed, Full). Street glow removed. Streets pooled, faint when thin; long BOAM sections left out of time lost. Street direction modes, with one line per stretch |
 | 4–5 Nov | Teammate: corner fit for aligning the projection on the model (F), merged into `w12merge`; README rewrite |
-| 5 Nov | Renamed from Pulse CBD to the Inner Sydney Transit Projection Model (pages, tablet, README, report). Tablet: Replay mode with a day dropdown and AM/PM buttons; every colour defined with its cut-off, read from the server; stop-history legend. This report rewritten for readers without prior context, and the teammate's work merged in. Interchange pulses removed from the projection |
+| 5 Nov | Renamed from Pulse CBD to the Inner Sydney Transit Projection Model (pages, tablet, README, report). Tablet: Replay mode with a day dropdown and AM/PM buttons; every colour defined with its cut-off, read from the server; stop-history legend. This report rewritten for readers without prior context, and the teammate's work merged in. Interchange pulses removed from the projection. Team tab PIN removed. Opal 2016 removed (area layer and pressure input), then the pressure layer itself. Street colours removed, with their engine code, BOAM and the step 6 analysis code (results kept in §10). CSV export of any recorded peak (tablet Display → Time, `scripts/export_peak.py`) |
 
 ---
 
@@ -1362,14 +1294,14 @@ These should be stated plainly in the final report.
 | --- | --- |
 | Configuration | `config/config.yaml` (Appendix C) |
 | Fetching and recording | `engine/sources/live.py` (polling), `budget.py` (quota), `recorder.py`, `footprint.py` (trimming), `replay.py` (sessions and playback) |
-| Processing | `engine/normalise/build.py`, `enrich.py` (joining to the timetable), `map_match.py`, `adherence.py`, `trip_updates.py`, `levels.py`, `segments.py` (streets and pooling), `travel_time.py` (our measure), `aggregate.py` (statistics, interchanges) |
-| Static layers | `engine/demand/areas.py` (jobs, departures, service gap, Opal), `boam.py`, `pressure.py` |
+| Processing | `engine/normalise/build.py`, `enrich.py` (joining to the timetable), `map_match.py`, `adherence.py`, `trip_updates.py`, `levels.py`, `headways.py` (first stops and scheduled gaps), `aggregate.py` (statistics, per-trip punctuality, interchanges); `engine/analysis/export.py` (the CSV export) |
+| Static layers | `engine/demand/areas.py` (jobs, departures, service gap) |
 | Server | `engine/publish/server.py` (addresses), `feed.py` (live state), `control.py` (display state), `calibration.py`, `homography.py`, `route_focus.py`, `shapes_export.py` |
 | Stop history (teammate) | `engine/history/stop_tracker.py`, `store.py` |
 | Pages | `renderer/index.html` (projector), `renderer/controller.html` (tablet) |
-| Scripts | `run_publish.py` (server), `run_record.py`, `install_server_service.py`, `install_recording_schedule.py`, `fetch_basemap.py`, `run_phase1.py` (timetable), `prepare_demand_data.py`, `import_boam.py`, `export_boam.py`, `build_freeflow.py`, `analyse_congestion.py`, `experiment_congestion_collect.py`, `experiment_congestion_evaluate.py` |
-| Tests | `tests/` (208 tests; e.g. `test_segments.py`, `test_boam.py`, `test_areas.py`, `test_control.py`, `test_replay.py`, `test_basemap.py`) |
-| Data (not in Git) | `data/static_cache/` (timetable), `data/recordings/`, `data/demand/`, `data/opal/`, `data/boam/`, `data/analysis/`, `data/history/` (stop visits), `data/basemap/`, `data/api_usage.json`, `data/projection_nudge.json`, `data/calibration.json` |
+| Scripts | `run_publish.py` (server), `run_record.py`, `install_server_service.py`, `install_recording_schedule.py`, `fetch_basemap.py`, `run_phase1.py` (timetable), `prepare_demand_data.py`, `export_peak.py` (CSV export). The BOAM and step 6 analysis scripts were removed on 5 Nov |
+| Tests | `tests/` (173 tests; e.g. `test_adherence.py`, `test_headways.py`, `test_areas.py`, `test_control.py`, `test_replay.py`, `test_basemap.py`) |
+| Data (not in Git) | `data/static_cache/` (timetable), `data/recordings/`, `data/demand/`, `data/opal/` and `data/boam/` (no longer read), `data/analysis/`, `data/history/` (stop visits), `data/basemap/`, `data/api_usage.json`, `data/projection_nudge.json`, `data/calibration.json` |
 | Documents | `README.md`, `docs/DECISIONS.md`, `docs/PROJECT_REPORT.md` |
 
 ---
@@ -1382,20 +1314,17 @@ Every setting returns to its default when the server restarts, except the nudge 
 | --- | --- | --- | --- |
 | `theme` | Projection colours | dark, light | dark |
 | `basemap` | Background map | plain, detailed, full | plain |
-| `street_directions` | How street layers show directions | combined, split, inbound, outbound | combined |
 | `verify` | Verification overlay | on / off | off |
 | `hud` | Status line on the projection | on / off | off |
 | `calibrate` | Calibration crosshairs | on / off | off |
+| `early_buses` | Buses running early drawn blue (on) or as on time (off) | on / off | on |
 | `stops`, `stop_history` | Stop markers; stop history colours | on / off | off |
 | `stop_metric` | Stop history delay statistic | median, mean | median |
 | `routes` | Routes singled out by the filter | up to 8 route names | none |
 | `route_slots` | Colour assigned to each filtered route | 0–7, set by the server | — |
 | `lens` | What vehicle colour shows | adherence, congestion, crowding | adherence |
-| `line_layer` | Street layer | none, congestion, derived, crowding, boam_load, boam_lost | none |
-| `area_layer` | Area layer | none, jobs, service_gap, opal, pressure | none |
+| `area_layer` | Area layer | none, jobs, service_gap | none |
 | `area_unit` | Area shape | zones, grid | zones |
-| `boam_period` | Peak used by BOAM layers and pressure | am, pm | am |
-| `weights` | Pressure inputs: congestion, crowding, service_gap, opal, boam_load | 0–3 each | 1 each |
 | `playback` | Live or a session (e.g. `2026-11-04-am`), speed, paused | live or a recorded session; 1–100×; yes/no | live, 25×, not paused |
 | `modes` | Vehicle groups: trains, metro, lightrail, buses, ferries | on / off each | all on |
 | `nudge` | Alignment correction | dx and dy ±2000 px; scale 0.5–2 | 0, 0, 1 |
@@ -1409,20 +1338,18 @@ Every setting returns to its default when the server restarts, except the nudge 
 | `/` | The projector page |
 | `/control` | The tablet page (`/stats` redirects to its Stats tab) |
 | `/ws` | The WebSocket: vehicle positions about twice a second and the display state; accepts setting changes |
-| `/config` | Footprint, polling timing, mode groups, level labels, punctuality and TTI thresholds, whether a background map exists, the team PIN |
+| `/config` | Footprint, polling timing, mode groups, level labels, punctuality and TTI thresholds, whether a background map exists |
 | `/health` | Vehicles per mode, feed ages, API use today, polling interval, playback |
 | `/snapshot` | Every current vehicle |
 | `/shapes` | Route lines for drawing |
-| `/segments` | Street pieces with pooled values, counts, both-direction values and the towards-city flag |
-| `/boam` | BOAM sections (`?meta=1`: the days used) |
 | `/areas` | Zones and grid squares with values and colour bins (`?meta=1`: availability, build details, per-fifth ranges) |
-| `/pressure` | The live combined score per area for the current shape and weights |
-| `/stops`, `/stop_history` | Stop markers; per-stop delay and crowding summaries |
+| `/stops`, `/stop_history` | Stop markers, each with the routes serving it (built once, ~2.5 s); per-stop delay and crowding summaries |
 | `/routes`, `/route` | The route list for the filter; one route's line and stops |
 | `/recordings` | Replayable sessions with coverage |
 | `/basemap` | The offline map layers and labels |
 | `/aggregate` | The Stats tab's figures |
 | `/calibration` | Read the calibration; send at least 4 points to save a new one |
+| `/export` | One recorded peak as CSV: `?session=2026-11-04-am&kind=vehicles` (or `stop_visits`, `trips`). Makes it the first time, about 2 minutes (§12.9) |
 
 ## Appendix C. Configuration (`config/config.yaml`)
 
@@ -1432,9 +1359,49 @@ Every setting returns to its default when the server restarts, except the nudge 
 | `calibration_path` | Where the calibration is saved |
 | `static_gtfs` | Timetable download address and cache location |
 | `realtime_gtfs` | The 15 live feeds polled (7 vehicle-position, 7 trip-update, 1 combined alerts), the polling interval, and `stale_after_seconds` (90 s: how long without an update before a vehicle is treated as gone) |
-| `adherence_thresholds_seconds` | Per-mode on-time thresholds and the "very late" multiplier (§7.2) |
+| `punctuality` | Per-mode on-time limits, late and (buses) early, each with its source (§7.2) |
 | `interchanges`, `interchange_radius_m` | The nine interchanges and the 300 m radius counted for the Stats tab (§7.3) |
 | `server` | Listens on every network interface, port 8765 |
-| `controller` | The team PIN (`3704`) |
 | `api_budget` | Daily limit 57,000, the peak windows, the 600 s slowest interval, file locations (§12.3) |
-| `derived_congestion` | Free-flow baseline file, model thresholds (1.5 / 2 / 3), analysis thresholds (2.66 / 2.98 / 3.32) (§7.10) |
+
+## Appendix D. CSV export columns (`engine/analysis/export.py`)
+
+All times are Sydney time, written as ISO dates with the time-zone offset (e.g. `2026-11-04T07:00:08+11:00`). Blank means no value.
+
+**vehicles.csv**: one row per vehicle per feed update (about every 15 seconds), including updates where the vehicle hasn't moved.
+
+| Column | Meaning |
+| --- | --- |
+| `time` | When the update was downloaded (the engine's clock) |
+| `vehicle` | Mode and TfNSW's vehicle ID, e.g. `buses:43264_…` |
+| `mode`, `route`, `headsign`, `trip_id` | Feed mode, route name (e.g. 333, T1), destination shown, timetable trip |
+| `lat`, `lon` | Position snapped to the route line (§7.1), or the raw GPS if it couldn't be placed on one |
+| `bearing` | Direction of travel in degrees from north, as reported. Sydney Trains send none, so theirs comes from the direction of the route line where the trip is matched to it; blank otherwise (10% of train updates on 4 Nov AM) |
+| `delay_s` | TfNSW's predicted delay at the next stop, in seconds; positive is late (§7.2) |
+| `on_time_state` | `early`, `on_time`, `late`, `very_late` (missed its slot), `cancelled` or `unknown` (§7.2) |
+| `tfnsw_traffic` | TfNSW's `congestion_level` for the vehicle (§7.4); buses only in practice |
+| `tfnsw_crowding` | TfNSW's `occupancy_status` (§7.4); the middle carriage for trains |
+| `position_reported_at` | The vehicle's own timestamp for that position |
+
+**stop_visits.csv**: one row each time a vehicle passed a stop (§7.13), worked out from the replay.
+
+| Column | Meaning |
+| --- | --- |
+| `time` | When the replay saw the vehicle had passed the stop |
+| `stop_id`, `stop_name`, `stop_lat`, `stop_lon` | The stop, from the timetable |
+| `route`, `mode`, `vehicle` | Which vehicle passed |
+| `delay_s` | Its delay as it left the stop, in seconds; blank where TfNSW gave no real prediction |
+| `tfnsw_crowding` | Its `occupancy_status` as it left |
+
+**trips.csv**: one row per trip, measured once at TfNSW's measuring point (§7.2); what the Stats tab counts.
+
+| Column | Meaning |
+| --- | --- |
+| `time` | When the reading was taken (the last one wins) |
+| `trip` | Mode and TfNSW trip ID |
+| `mode`, `route` | Feed mode and route name |
+| `measured_at` | `first stop` (buses, as they leave it) or `final stop (predicted)` (every other mode) |
+| `stop_id`, `stop_name` | The stop measured at |
+| `delay_s` | Delay there in seconds; positive is late |
+| `state` | `early`, `on_time`, `late` or `cancelled` by the mode's on-time limits (no "missed its slot" here: TfNSW's figures are on time or not) |
+

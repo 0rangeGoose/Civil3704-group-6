@@ -2,6 +2,129 @@
 
 Judgment calls made without stopping to ask, per the project brief. Newest first.
 
+## 2026-11-05 — Street colours removed, with BOAM and the step 6 code
+
+At the owner's request, after going through what would go and what would stay. Removed:
+
+- **The feature**: the tablet's "Colour the streets by" layers (TfNSW traffic, our own
+  speed measure, crowding, typical BOAM bus load, BOAM time lost), Street directions and
+  the BOAM peak switch; the projector's street drawing; keys **K**, **D**, **B**; the
+  `/segments` and `/boam` addresses; the `line_layer`, `street_directions` and
+  `boam_period` settings (now rejected).
+- **Its engine code, by the owner's choice (option B, "remove everything")**:
+  `engine/normalise/segments.py`, `travel_time.py`, `engine/demand/boam.py`,
+  `engine/analysis/collect.py`, the scripts `import_boam`, `export_boam`,
+  `build_freeflow`, `analyse_congestion` and the two step 6 experiments, their tests, and
+  the `derived_congestion` config. The option of keeping the code for the step 6
+  analysis and BOAM scripts was offered and declined.
+- **The Streets CSV export.** Downloads are now Vehicles, Stop visits and Trips on time.
+
+Kept and moved: stop markers, stop history and the Stop delay switch, now in their own
+**Stops** section on the tablet. Kept: vehicle colours by traffic or crowding (the
+bus-only traffic list moved into `levels.py`), and everything else.
+
+Consequences, stated in the report: the step 6 results (§10) can no longer be re-run
+from the current code (the code is in git history, commit `5676e3b` and earlier; the
+outputs remain in `data/analysis/`); BOAM data in `data/boam/` and the data release is no
+longer read. The CSV export now listens to vehicles through a new `on_vehicle` hook on
+the feed, since it used to piggyback on the travel-time tracker. Checked BOAM isn't used
+by stop markers or stop history (it isn't). 173 tests pass (the removed modules' tests
+went with them).
+
+## 2026-11-05 — Hover highlights routes
+
+Asked for by the owner. On the projector page, pointing at a vehicle highlights its route
+(every shape of that route name, both directions); pointing at a stop highlights every
+route serving it, and the hover box lists them. Drawn in white (dark blue on the light
+theme) as a halo plus a core line, over the street colours and under the vehicles, from
+`/route` (as the route filter) and a new `routes` list per stop in `/stops` (one pass over
+the timetable, ~2.5 s, cached). Local to the laptop page, not shared state -- but the
+projector mirrors the laptop, so it shows on the model. The timetable's "parent" stops
+(ids starting G) sit on top of their stands with no routes, so the hit test prefers the
+stand with routes.
+
+## 2026-11-05 — Punctuality from published standards
+
+The owner found the on-time measure arbitrary: limits from the brief (2 min Metro and
+light rail) and "very late" at twice the limit, neither sourced. Now (`config/config.yaml`,
+`punctuality`; `engine/normalise/adherence.py`):
+
+- **Sydney Trains ≤ 5 min late, intercity ≤ 6 min**: TfNSW's punctuality standard
+  (final destination; target 92% of peak services). Unchanged values, now cited.
+- **Buses: no more than 59 s early and no more than 5 min 59 s late**: Greater Sydney Bus
+  Contract, Schedule 4 KPIs (2023), measured at the first stop. Adds an **early** state
+  (blue): leaving early strands passengers. Trains aren't marked early (TfNSW's standard
+  doesn't penalise it).
+- **Metro, light rail, ferries ≤ 5 min**: no published definition found (one unofficial
+  forum claim of ±1 min for Metro isn't citable); TfNSW's Sydney Trains standard applied
+  and labelled as borrowed in the legend.
+- **"Very late" → "missed its slot"**: past the limit and later than the scheduled gap to
+  the next trip on the same route and direction (`engine/normalise/headways.py`, from the
+  timetable at startup, ~1 s), so the next service would have come sooner. Objective and
+  frequency-aware; can't apply where live trips don't match the timetable (Sydney Trains,
+  Metro, CBD light rail).
+- **Stats tab per trip, at TfNSW's measuring points** (`TripPunctuality`): buses leaving
+  their first stop, other modes by the predicted delay at their final stop (latest
+  prediction wins). Windows 15 min / 1 h / 2 h. Unmeasured trips aren't counted;
+  cancelled count as not on time. Also a fourth CSV export, `trips.csv`.
+- **Legend cites the source** for each limit.
+
+Checked on the 4 Nov AM peak: per trip, Sydney Trains 94% on time (287 trips), buses 93%
+(686), close to TfNSW's published targets (92%, 95%). Live, 26% of bus updates are early
+mid-route, though none left their first stop early: TfNSW predicts many buses ahead of
+timetable between timing points (cf. step 6's timetable padding). Considered and rejected:
+TripView's colours (an app's design choice, not a standard, and undocumented).
+
+Then, at the owner's choice: an **Early buses** switch (`early_buses`, default on;
+tablet under "Colour the vehicles by", key **E**). Off, buses running early are drawn as
+on time; the hover box still says "Early (shown as on time)". Live colours only: the
+Stats tab and exports always use the official first-stop measure.
+
+## 2026-11-05 — Pressure (combined) layer removed
+
+At the owner's request, so the area layers stay independent of one another: Jobs and
+Service gap each show one measure. Removed: the area layer and its legend, its live
+scoring (`engine/demand/pressure.py`, `/pressure`), the Team tab's weight sliders and the
+`weights` setting (patches carrying it are now rejected), and its tests. The BOAM peak
+switch now only affects the BOAM street layers. Area cache version bumped so the layers
+rebuild without a "pressure" entry. The method, for the record: report §7.8.
+
+## 2026-11-05 — Team tab PIN removed; Opal 2016 removed
+
+Both at the owner's request.
+
+- **No PIN on the Team tab.** It opens straight away: the PIN gate, its browser-side
+  check and the `controller.team_pin` setting (and its copy in `/config`) are gone.
+  Anyone at the tablet can now change alignment, calibration and pressure weights. The
+  PIN was never security (it was sent to every page), so nothing protective is lost, but
+  visitors can now reach those controls; keep an eye on the tablet during the showcase.
+- **Opal 2016 gone from the model.** The area layer (tablet button, legend, colours,
+  **A** key cycle) and the pressure input (and its weight) are removed, along with the
+  code that placed station and bus taps and read the postcode boundaries (only used for
+  bus taps). Pressure now combines four inputs: traffic, crowding, service gap, typical
+  BOAM load. Area cache version bumped so layers rebuild without it. The downloaded files
+  stay in `data/opal/` and `data/demand/postcodes_footprint.geojson` but aren't read.
+  BOAM, which is itself built from Opal taps, is unaffected.
+
+## 2026-11-05 — CSV export of a recorded peak
+
+Asked for by the owner. Any recorded peak exports as three CSV files (tablet Display → Time,
+`/export`, or `scripts/export_peak.py`): every vehicle update, every street piece every
+10 minutes, and every stop visit. Column definitions: report Appendix D.
+
+- **Per peak, not per day.** A two-hour peak is ~222k vehicle rows (41 MB, 4 Nov AM);
+  a whole day would be ~2 million, past Excel's ~1 million-row limit.
+- **Processed values, not the raw feed.** Trip updates nest a list of stops per trip
+  and don't flatten into rows; what people want is what the model computed.
+- **One replay pass through the live engine** (`engine/analysis/export.py`), so the
+  numbers are exactly what the projection showed. Stop visits come from the replay too,
+  so they exist for peaks before the live history began (30 Oct): on 4 Nov AM the replay
+  found 24,083 against 24,151 recorded live (99.7%).
+- **On the Display tab, at the bottom of Time** (the owner's choice; first built on
+  the team panel). Run as a separate process (~1.5 min per peak) so the live display
+  isn't slowed, and a per-peak lock stops repeated taps starting several exports. Results are kept in `data/exports/<peak>/`.
+  Peaks still being recorded are refused, so a partial export is never cached.
+
 ## 2026-11-05 — Tablet fits phone screens
 
 At phone width the four Street directions buttons ran off the right edge, and the Stats

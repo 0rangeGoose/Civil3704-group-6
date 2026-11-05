@@ -30,6 +30,60 @@ class _Observation:
     adherence_state: str
 
 
+PUNCTUALITY_WINDOWS_SECONDS = (900, 3600, 7200)  # 15 min, 1 h, 2 h (a whole peak)
+
+
+@dataclass
+class TripReading:
+    at: float
+    mode: str
+    route: str | None
+    point: str  # "first stop" or "final stop (predicted)"
+    stop_id: str | None
+    delay_seconds: int | None
+    state: str
+
+
+class TripPunctuality:
+    """Each trip counted once, at TfNSW's own measuring point: buses as they
+    leave their trip's first stop (Greater Sydney Bus Contract), every other
+    mode by the predicted delay at its final stop (TfNSW rail punctuality is
+    measured at the final destination). The latest reading per trip wins, so a
+    rail trip's figure is the prediction made closest to its arrival.
+
+    Trips with no live prediction aren't counted (they can't be measured);
+    cancelled trips are, as not on time. Buses whose first stop is outside the
+    footprint are never seen leaving it, so they aren't counted either."""
+
+    def __init__(self, windows_seconds: tuple[int, ...] = PUNCTUALITY_WINDOWS_SECONDS):
+        self._windows = windows_seconds
+        self.trips: dict[str, TripReading] = {}
+
+    def record(self, trip_key: str, reading: TripReading) -> None:
+        if reading.state == "unknown":
+            return
+        self.trips[trip_key] = reading
+        cutoff = reading.at - max(self._windows)
+        if len(self.trips) > 5000:  # prune now and then, not on every call
+            self.trips = {k: r for k, r in self.trips.items() if r.at >= cutoff}
+
+    def breakdown(self, window_seconds: int, now: float) -> dict[str, dict]:
+        """{mode: {"trips": n, "on_time": pct, "late": pct, ...}} over the trailing window."""
+        counts: dict[str, dict[str, int]] = {}
+        for r in self.trips.values():
+            if now - window_seconds <= r.at <= now:
+                counts.setdefault(r.mode, {}).setdefault(r.state, 0)
+                counts[r.mode][r.state] += 1
+        result = {}
+        for mode, states in counts.items():
+            total = sum(states.values())
+            result[mode] = {"trips": total, **{k: round(100 * v / total, 1) for k, v in states.items()}}
+        return result
+
+    def breakdown_all_windows(self, now: float) -> dict[int, dict[str, dict]]:
+        return {w: self.breakdown(w, now) for w in self._windows}
+
+
 class RollingAdherence:
     """Percentage of tracked services in each adherence state, by mode,
     over trailing windows (default 5/15/60 min)."""

@@ -41,6 +41,11 @@ class TripUpdateInfo:
     next_stop_delay_seconds: int | None
     cancelled: bool
     next_stop_id: str | None = None
+    # predicted delay at the last stop the update lists (the trip's destination
+    # when, as usual, the update runs to the end of the trip): TfNSW measures
+    # train punctuality there
+    final_stop_delay_seconds: int | None = None
+    final_stop_id: str | None = None
 
 
 _IGNORED_STOP_RELATIONSHIPS = (
@@ -95,16 +100,19 @@ def build_trip_update_index(payload: bytes) -> dict[str, TripUpdateInfo]:
             and not _already_passed(stu, now)
             and (d := _stop_delay(stu)) is not None
         ]
-        delay = None
-        next_stop_id = None
+        delay = final_delay = None
+        next_stop_id = final_stop_id = None
         if usable:
             next_stop_id = usable[0][0].stop_id or None
+            final_stop_id = usable[-1][0].stop_id or None
             if any(d != 0 for _, d in usable):
                 delay = usable[0][1]
+                final_delay = usable[-1][1]
         elif tu.HasField("delay"):
             delay = tu.delay
 
         index[trip_id] = TripUpdateInfo(
-            next_stop_delay_seconds=delay, next_stop_id=next_stop_id, cancelled=cancelled
+            next_stop_delay_seconds=delay, next_stop_id=next_stop_id, cancelled=cancelled,
+            final_stop_delay_seconds=final_delay, final_stop_id=final_stop_id,
         )
     return index

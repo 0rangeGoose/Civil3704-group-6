@@ -3,19 +3,22 @@
 
 Inputs (not in git; see README "Demand layers"):
   data/demand/travel_zones_2021.geojson   TfNSW Travel Zones 2021 (~109MB, 4,236 zones)
-  --poa-dir DIR                           ABS Postal Areas 2021 shapefile, GDA2020
+  --poa-dir DIR                           optional: ABS Postal Areas 2021 shapefile, GDA2020
                                           (POA_2021_AUST_GDA2020_SHP.zip, unzipped)
 
 Outputs (small, what the server loads at startup):
   data/demand/zones_footprint.geojson     travel zones intersecting the footprint
-  data/demand/postcodes_footprint.geojson postal areas intersecting the footprint
+  data/demand/postcodes_footprint.geojson postal areas intersecting the footprint (only
+                                          with --poa-dir; the Opal 2016 layer that used
+                                          them was removed on 5 Nov 2026, so nothing
+                                          reads this file now)
 
-Both keep each polygon whole rather than clipping it to the footprint: the
-layers clip for drawing, but jobs and Opal counts belong to the whole area.
+Zones keep each polygon whole rather than clipping it to the footprint: the
+layers clip for drawing, but job counts belong to the whole area.
 
 Needs pyshp for the shapefile (pip install pyshp); nothing else uses it.
 
-    python scripts/prepare_demand_data.py --poa-dir ~/Downloads/POA_2021_AUST_GDA2020_SHP
+    python scripts/prepare_demand_data.py
 """
 from __future__ import annotations
 

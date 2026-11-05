@@ -28,20 +28,21 @@ arrow pointing the way it's travelling, coloured by one of three views (schedule
 traffic or crowding), sized by mode (a train reads bigger than a bus), with a short tail
 showing its last 30 seconds of travel and dim route corridors underneath so an empty
 street reads as empty rather than as a gap. Hovering over a vehicle on the laptop shows
-its exact lateness.
+its exact lateness and highlights its route; hovering over a stop lists and highlights the
+routes serving it.
 
 Open `http://<laptop address>:8765/control` on the tablet next to the model. The
 projector mirrors the laptop screen, so the projected view shows map content only (no
 buttons, hints or cursor), and everything is controlled from the tablet instead:
 
-- **Display** (for visitors): which vehicle types are shown, the colour view, street
-  and area layers, stop markers and stop history, singling out routes, live or replayed
+- **Display** (for visitors): which vehicle types are shown, the colour view, area
+  layers, stop markers and stop history, singling out routes, live or replayed
   time, and a legend that states the cut-off for every colour.
-- **Team** (behind a PIN, `controller.team_pin` in config): projection theme,
+- **Team** (open to anyone; the PIN was removed on 5 Nov 2026): projection theme,
   verification overlay, an on-projection status line, alignment (nudge, corner fit,
-  crosshair calibration), pressure weights, and system health (vehicles per mode, feed
+  crosshair calibration), and system health (vehicles per mode, feed
   age, API usage).
-- **Stats**: on-time percentages by mode, active service alerts, and the busiest
+- **Stats**: the share of trips on time by mode (each trip once, at TfNSW's own measuring points), active service alerts, and the busiest
   interchanges (this used to be the separate `/stats` page, which now redirects here).
 
 The server prints the tablet URL on startup. Use the laptop's own hotspot for the
@@ -110,7 +111,7 @@ Transport for NSW Open Data Hub
               ▼                        ▼
       WebSocket (~2Hz)           HTTP (see API reference below)
       vehicle frames +           shapes, stops, stop history,
-      shared control state       street segments, layers, replays
+      shared control state       area layers, replays, exports
               │                        │
               ▼                        ▼
       renderer/index.html      renderer/controller.html
@@ -130,7 +131,7 @@ For every vehicle currently inside the CBD bounding box:
 | `lat` / `lon`, `bearing`, `position_timestamp` | raw reported position |
 | `matched_lat` / `matched_lon`, `distance_along_shape_m` | position snapped onto its route's actual shape — raw GPS wanders off the road/rail corridor, this fixes that |
 | `schedule_deviation_seconds` | delay in seconds, computed against the *next scheduled stop* from Trip Updates (not interpolated position) |
-| `adherence_state` | one of `on_time`, `late`, `very_late`, `cancelled`, `unknown` — thresholds differ by mode |
+| `adherence_state` | one of `early`, `on_time`, `late`, `very_late` (missed its slot), `cancelled`, `unknown`; limits per mode from TfNSW's published standards (see `config/config.yaml`, `punctuality`) |
 | `confidence` | `static_join`, `degraded_route_fallback`, `geometric_match`, or `unmatched` — see below |
 
 ### The `confidence` field, and why it exists
@@ -147,7 +148,7 @@ says exactly how it was identified, rather than silently guessing:
 
 On top of individual vehicles, the engine maintains:
 
-- **Rolling schedule adherence** — % on-time/late/very-late/etc. by mode, over trailing 5, 15, and 60-minute windows.
+- **Trip punctuality** — % of trips on time by mode over the last 15 min, 1 h and 2 h, each trip counted once where TfNSW measures it: buses leaving their first stop, other modes at their final stop (predicted).
 - **Active service alerts** — count and severity of alerts that intersect the CBD's routes/stops, out of everything TfNSW publishes statewide.
 - **Interchange activity** — for 9 named interchanges (Central, Town Hall, Wynyard, Martin Place, Circular Quay, Barangaroo, Gadigal, Museum, St James), how many *distinct* vehicles have passed within 300m in the last 5 minutes. This feeds the busiest-interchanges bars on the tablet's Stats tab (the pulsing rings on the projection were removed on 5 Nov 2026).
 
@@ -166,10 +167,9 @@ Real, TfNSW-specific data quirks the engine has to tolerate rather than choke on
 
 Static area layers, chosen on the tablet (Display → Colour the areas by), on either
 TfNSW travel zones or a 150 m grid (Area shape) so you can compare them on the model:
-**jobs** (TZP24, 2026), **service gap** (jobs vs scheduled departures within 200 m,
-7–9am on a weekday), **Opal 2016** (tap-ons/offs 7–9am, 21–25 Nov 2016) and
-**pressure**, a live combined score of traffic, crowding, service gap and Opal 2016 whose
-weights are set in Team → Pressure weights. Vehicles
+**jobs** (TZP24, 2026) and **service gap** (jobs vs scheduled departures within 200 m,
+7–9am on a weekday), each shown on its own. (An Opal 2016 tap layer and a combined
+"pressure" score were removed on 5 Nov 2026.) Vehicles
 turn white while one is on. How each is calculated: `engine/demand/areas.py`.
 
 The source files aren't in git (`data/` is ignored). To set them up:
@@ -180,40 +180,22 @@ git lfs fetch group-repo mid-project-demo
 for f in travel_zones_2021.geojson tzp24_employment.csv; do
   git show group-repo/mid-project-demo:template-repository-main/data/demand/$f | git lfs smudge > data/demand/$f
 done
-# Opal Tap On and Tap Off Release 2, time with location, 21-27 Nov 2016 (data.nsw.gov.au)
-curl -L -o data/opal/time_loc_20161121-27.csv <resource URL>
-# Postcode boundaries (ABS POA 2021, GDA2020 shapefile, ~53MB), unzipped somewhere temporary
+# cut the statewide zones down to the footprint
 pip install -e ".[prep]"
-python scripts/prepare_demand_data.py --poa-dir /path/to/POA_2021_AUST_GDA2020_SHP
+python scripts/prepare_demand_data.py
 ```
 
 The server builds the layers in the background on first start (~5s) and caches them in
 `data/demand/area_layers.json` until an input changes.
 
-### BOAM (typical bus load and time lost)
+## Removed on 5 Nov 2026: street colours, BOAM and the step 6 code
 
-Download BOAM day files from the TfNSW Open Data Hub (login needed), then:
-
-```bash
-python scripts/import_boam.py --delete-originals ~/Downloads/BOAM_*.txt   # keeps the footprint (~2.5MB/day)
-python scripts/export_boam.py                                              # data/boam/sections.csv for the report
-```
-
-The server picks up every imported weekday on its next start (Display → Colour the streets
-by → Typical bus load / Where buses lose time, with an AM/PM switch), and BOAM load becomes
-a fifth input to the pressure layer.
-
-## Step 6: our own congestion measure
-
-"Traffic (our measure)" on the tablet is a travel-time index: bus speed over 300 m
-stretches against the same street's free-flow speed at night, from our own recordings.
-
-```bash
-python scripts/build_freeflow.py        # night-time baseline (rerun as more nights are recorded)
-python scripts/analyse_congestion.py    # agreement with TfNSW's labels -> data/analysis/
-```
-
-Restart the server after rebuilding the baseline.
+The "Colour the streets by" layers (TfNSW traffic, our own speed measure, crowding, BOAM
+typical bus load and time lost), their direction modes, and the code behind them
+(`segments.py`, `travel_time.py`, `boam.py`, `analysis/collect.py`, and the
+`import_boam` / `export_boam` / `build_freeflow` / `analyse_congestion` / experiment
+scripts) were removed at the owner's request. The step 6 results stay in
+`docs/PROJECT_REPORT.md` §10; the code is in git history (commit `5676e3b` and earlier).
 
 ## Stop history and route focus
 
@@ -302,7 +284,7 @@ pulse-cbd/
   pyproject.toml            Dependencies (runtime, plus [dev] for tests, [prep] for data prep)
   .env.example              Copy to .env and add TFNSW_API_KEY (.env is gitignored)
   data/                     gitignored: timetable cache, recordings, stop history,
-                            calibration, demand/BOAM/basemap inputs
+                            calibration, demand/basemap inputs
 
   engine/
     config.py                Loads config.yaml + .env
@@ -315,13 +297,12 @@ pulse-cbd/
                               deviation (trip_updates.py), adherence classification,
                               the rolling aggregate layer (aggregate.py), and enrich.py
                               which ties it all onto a VehicleRecord
-                              Also segments.py (street colours) and travel_time.py
-                              (our own congestion measure)
+                              Also headways.py (each trip's first stop and the
+                              scheduled gap to the next trip)
     history/                  stop_tracker.py (detects a vehicle passing a stop) and
                               store.py (SQLite stop visits and per-stop summaries)
-    demand/                   areas.py (jobs, service gap, Opal 2016), boam.py (typical
-                              bus load and time lost), pressure.py (combined score)
-    analysis/                 collect.py (data collection for the step 6 analysis)
+    demand/                   areas.py (jobs, service gap)
+    analysis/                 export.py (CSV export of a recorded peak)
     publish/                  Phase 4/5/6 — feed.py (long-running live service),
                               server.py (aiohttp: WebSocket + HTTP), control.py (shared
                               tablet/projector state), route_focus.py, shapes_export.py
@@ -339,12 +320,11 @@ pulse-cbd/
     run_publish.py            The real entry point — starts everything
     run_record.py             Record without the server
     install_server_service.py / install_recording_schedule.py   macOS launchd jobs
-    prepare_demand_data.py, import_boam.py, export_boam.py, fetch_basemap.py
+    prepare_demand_data.py, fetch_basemap.py
                               One-off data setup for the optional layers
-    build_freeflow.py, analyse_congestion.py, experiment_congestion_*.py
-                              Step 6 congestion analysis
+    export_peak.py            One recorded peak as three CSV files (also on the tablet: Display → Time)
 
-  tests/                     208 tests, one file per module
+  tests/                     173 tests, one file per module
   docs/DECISIONS.md          Every non-obvious judgment call made during the build,
                               and why — read this for the "why" behind anything
                               that looks like it could've been done differently
@@ -420,9 +400,9 @@ projector) and the `/control` URL the server prints on the tablet.
 **Keyboard backup** on the projector page (each key goes through the server, so the
 tablet stays in sync): **C** calibrate, **F** corner fit, **V** verification overlay, **H** status line,
 **T** theme, **M** background map (plain / detailed / full),
-**S** stop markers, **O** stop history, **L** dot colour (schedule / traffic / crowding),
-**K** street lines (off / traffic / crowding), **A** areas (off / jobs / service gap / Opal 2016 / pressure),
-**G** areas on travel zones / grid, **B** BOAM peak AM / PM, **D** street directions (one colour / side by side / to city / from city), **Space** pause/play a replay, **1–5** trains / metro / light rail / buses /
+**S** stop markers, **O** stop history, **L** dot colour (schedule / traffic / crowding), **E** early buses (blue) on / off,
+**A** areas (off / jobs / service gap),
+**G** areas on travel zones / grid, **Space** pause/play a replay, **1–5** trains / metro / light rail / buses /
 ferries, **arrows** nudge (shift ×10), **[ ]** scale, **0** reset nudge.
 
 **Headless dev/debug tools** (no rendering, just prove the data pipeline works and
@@ -436,14 +416,13 @@ python scripts/run_phase3.py --cycles 7            # + map matching/adherence + 
 **Tests**:
 
 ```bash
-pytest        # 208 tests, a few seconds, no network or API key required
+pytest        # 173 tests, a few seconds, no network or API key required
 ```
 
 **Troubleshooting**
 
-- *Tablet buttons for Jobs / Service gap / Opal / Pressure are greyed out*: the demand
+- *Tablet buttons for Jobs / Service gap are greyed out*: the demand
   input files aren't in `data/demand/` on this machine (see [Demand layers](#demand-layers)).
-- *BOAM street layers are greyed out*: no BOAM day files imported (see BOAM above).
 - *Detailed / Full background map greyed out*: run `scripts/fetch_basemap.py`.
 - *Stop history is empty*: it fills while the server runs live; stops need 20 visits.
 - *Nothing moves*: check `.env` has the API key and `/health` shows recent feed times.
@@ -489,20 +468,18 @@ unless noted.
 | `GET /ws` | WebSocket: vehicle frames (~2 Hz) and the shared control state; clients send `{"control": {...}}` patches |
 | `GET /health` | Feed ages, vehicles per mode, API usage, connected pages, playback state |
 | `GET /snapshot` | Every current vehicle record in full |
-| `GET /aggregate` | Rolling on-time shares by mode, active alerts, interchange activity |
+| `GET /aggregate` | Per-trip on-time shares by mode, active alerts, interchange activity |
 | `GET /config` | The renderer's settings: bounding box, thresholds, palette, labels |
 | `GET /shapes` | Route corridors clipped to the model footprint |
-| `GET /stops` | Stop locations |
+| `GET /stops` | Stop locations, each with the route names serving it |
 | `GET /stop_history` | Per-stop visits, median/average lateness, crowded share, seated vs fuller lateness |
 | `GET /routes` | Route catalogue for "Single out routes" |
 | `GET /route?name=333` | One route's shapes and stops (404 if unknown) |
-| `GET /segments` | Live street colours (traffic, crowding, our measure) |
 | `GET /areas` (`?meta=1`) | Area layers on zones and grid (or just what's available) |
-| `GET /pressure?unit=zones` | Pressure scores per area with the current weights |
-| `GET /boam` (`?meta=1`) | BOAM sections: typical load and time lost (or just the days used) |
 | `GET /basemap` | The offline background map, if downloaded |
 | `GET /recordings` | Replayable recorded peaks and their coverage |
 | `GET /calibration` / `POST /calibration` | The saved homography / save a new one from crosshair points |
+| `GET /export?session=2026-11-04-am&kind=vehicles` | One recorded peak as CSV (`vehicles`, `stop_visits` or `trips`); the first request replays the peak, about 2 minutes |
 
 ## Configuration reference
 
@@ -511,16 +488,14 @@ Everything tunable lives in `config/config.yaml`:
 - `bounding_box` — the model's footprint in lat/lon (~13.2 km E-W x 6.6 km N-S)
 - `static_gtfs` — the Complete GTFS bundle download URL and cache paths
 - `realtime_gtfs.feeds` — the full endpoint matrix for all 7 modes x 3 feed types (a mix of v1/v2 paths, verified live against the real API)
-- `adherence_thresholds_seconds` — per-mode on-time thresholds and the late→very_late multiplier
+- `punctuality` — per-mode on-time limits (late, and early for buses), each with its source: TfNSW rail punctuality, the Greater Sydney Bus Contract, and the borrowed 5-minute rail standard for Metro, light rail and ferries
 - `interchanges` / `interchange_radius_m` — which stations the Stats tab counts activity at, and the proximity radius
 - `calibration_path` — where the computed homography is persisted
 - `realtime_gtfs.poll_interval_seconds` (15) and `stale_after_seconds` (90) — how often
   feeds are polled, and how long a silent vehicle stays on the map
 - `server` — host and port (8765)
-- `controller.team_pin` — the PIN for the tablet's Team tab (not a security boundary)
 - `api_budget` — the daily request cap (57,000, ~5% under TfNSW's quota), the peak
   windows always polled at full rate, and the slowest pace when the budget runs low
-- `derived_congestion` — free-flow baseline path and thresholds for our own congestion measure
 
 The nudge and corner-fit offsets are saved separately in `data/projection_nudge.json`.
 
@@ -551,9 +526,10 @@ running on the physical model:
    nudge, corner fit)
 6. ✅ Interchange activity and the stats panel (now the tablet's Stats tab; the projected pulses were removed on 5 Nov)
 
-Built on top since: recording and replay of every peak, the tablet controller, street
-traffic and crowding layers, demand and BOAM layers, our own congestion measure
-(step 6), stop history with route focus, and an optional background map.
+Built on top since: recording and replay of every peak, the tablet controller, area
+layers, punctuality from TfNSW's published standards, per-trip on-time figures, stop
+history with route focus and hover highlighting, CSV export, and an optional background
+map. (Street colours, BOAM and the step 6 analysis code were built and later removed.)
 
 **Known limitations**: stop colours show lateness inherited from earlier in the trip,
 not only delay caused at that stop; the crowding–lateness relationship is an

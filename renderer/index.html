@@ -97,11 +97,11 @@
 // light mode uses darker, more saturated variants for contrast instead.
 const ADHERENCE_COLOR = {
   dark: {
-    on_time: "#39ff6a", late: "#ffb020", very_late: "#c81c2e",
+    early: "#4da3ff", on_time: "#39ff6a", late: "#ffb020", very_late: "#c81c2e",
     cancelled: "#c81c2e", unknown: "#93a3b5",
   },
   light: {
-    on_time: "#1a7f37", late: "#9a6700", very_late: "#cf222e",
+    early: "#0969da", on_time: "#1a7f37", late: "#9a6700", very_late: "#cf222e",
     cancelled: "#cf222e", unknown: "#57606a",
   },
 };
@@ -110,7 +110,7 @@ const ADHERENCE_COLOR = {
 // LEGENDS) and the engine's own labels (engine/normalise/levels.py), so the
 // hover tooltip never says something different from what the legend says.
 const ADHERENCE_LABEL = {
-  on_time: "On time", late: "Running late", very_late: "Very late",
+  early: "Early", on_time: "On time", late: "Late", very_late: "Missed its slot",
   cancelled: "Cancelled", unknown: "No schedule data",
 };
 const CONGESTION_LABEL = ["Running smoothly", "Stop and go", "Congested", "Severely congested"];
@@ -120,15 +120,9 @@ const CROWDING_LABEL = ["Seats available", "Few seats", "Standing room", "Crowde
 // (engine/normalise/levels.py): congestion 0 running smoothly .. 3 severe,
 // crowding 0 seats available .. 3 crowded/full. Each palette runs cool to
 // hot, distinct from the adherence greens so a glance tells you which lens
-// is on. Index = level; the server's segment means are rounded to a level.
+// is on. Index = level.
 const LEVEL_COLOR = {
   congestion: {
-    dark: ["#3ddc84", "#ffd23f", "#ff8c1a", "#ff2e4d"],
-    light: ["#1a7f37", "#9a6700", "#bc4c00", "#cf222e"],
-  },
-  // our travel-time index (step 6): same scale and colours as TfNSW's traffic,
-  // so the two can be compared by switching between them
-  derived: {
     dark: ["#3ddc84", "#ffd23f", "#ff8c1a", "#ff2e4d"],
     light: ["#1a7f37", "#9a6700", "#bc4c00", "#cf222e"],
   },
@@ -138,22 +132,12 @@ const LEVEL_COLOR = {
   },
 };
 
-// BOAM street layers (engine/demand/boam.py), 0-4 bins with fixed bands:
-// typical load (share of capacity) and time lost per 100m, for one peak.
-const BOAM_COLOR = {
-  boam_load: ["#5ec8ff", "#8fa8ff", "#b48cff", "#ff7ad9", "#ff2e4d"],
-  boam_lost: ["#3ddc84", "#c8e04a", "#ffd23f", "#ff8c1a", "#ff2e4d"],
-};
-const BOAM_BIN_FIELD = { boam_load: "load_bin", boam_lost: "lost_bin" };
-
 // Area layers (engine/demand/areas.py): each unit arrives with a 0-4 bin.
-// Jobs and Opal are sequential (brighter = more); the service gap diverges
+// Jobs are sequential (brighter = more); the service gap diverges
 // from blue (more service than jobs) through grey to orange (underserved).
 const AREA_COLOR = {
   jobs: ["#2a2f6b", "#43449e", "#6a56c9", "#9d6be3", "#d892ff"],
   service_gap: ["#2f7bff", "#86b4ff", "#62666e", "#ffb066", "#ff6a00"],
-  opal: ["#123f3b", "#16716a", "#1fa89e", "#4fd8ca", "#b0fff6"],
-  pressure: ["#3a2a12", "#6b3d0f", "#a4520c", "#e0610c", "#ff3b1f"],
 };
 const AREA_ALPHA = { dark: 0.55, light: 0.45 };
 // While an area layer is on, vehicles go neutral so they don't compete with it.
@@ -204,35 +188,14 @@ let theme = "dark";
 // the server first and comes back here via applyControl, so there is only
 // ever one source of truth.
 let control = {
-  theme: "dark", basemap: "plain", street_directions: "combined", verify: false, hud: false, calibrate: false, stops: false, stop_history: false, stop_metric: "median", routes: [], route_slots: {},
-  lens: "adherence", line_layer: "none", area_layer: "none", area_unit: "zones", boam_period: "am", weights: {}, modes: {}, nudge: { dx: 0, dy: 0, scale: 1 },
+  theme: "dark", basemap: "plain", verify: false, hud: false, calibrate: false, early_buses: true, stops: false, stop_history: false, stop_metric: "median", routes: [], route_slots: {},
+  lens: "adherence", area_layer: "none", area_unit: "zones", modes: {}, nudge: { dx: 0, dy: 0, scale: 1 },
   corners: false, warp: { tl: [0, 0], tr: [0, 0], br: [0, 0], bl: [0, 0] },
 };
 let modeToGroup = {}; // feed mode -> controller group, from /config
 
-// Street-segment layer (congestion or crowding along route shapes), polled
-// from /segments while a line layer is on. [{id, pts, congestion, crowding}]
-let segments = [];
-const LIVE_LINE_LAYERS = new Set(["congestion", "derived", "crowding"]);
-// Street layers (live and BOAM) are one solid line each. They used to have a
-// wide faint halo underneath, but several routes share most streets, so the
-// halos stacked and busy streets glowed brighter at the same level.
-const STREET_LINE_WIDTH = 4.5;
-const STREET_LINE_ALPHA = 0.95;
-// Live street colours rest on the buses seen in the last 10 minutes, pooled
-// along shared streets (engine/normalise/segments.py). Fewer than this many
-// and the street is drawn faint: one bus is a hint, not a measurement.
-const MIN_SOLID_VEHICLES = 2;
-const STREET_LINE_FAINT_ALPHA = 0.35;
-// BOAM gives one value per stop-to-stop section. Time lost averaged over a
-// long section (express routes on motorways, up to ~5 km) can't show where
-// on it the time goes, so those aren't drawn for that layer. Load is constant
-// between stops, so long sections are kept for it.
-const BOAM_LOST_MAX_SECTION_M = 800;
-const SEGMENT_POLL_MS = 10000;
-
 // Static area layers from /areas: {zones: [...], grid: [...]}, each unit
-// {rings: [[[lat, lon], ...]], bins: {jobs, service_gap, opal}}. Drawn once
+// {rings: [[[lat, lon], ...]], bins: {jobs, service_gap}}. Drawn once
 // into an offscreen canvas per (layer, unit, theme, projection).
 let areas = null;
 let areaLayerCanvas = null;
@@ -243,14 +206,12 @@ let basemap = null;
 let basemapCanvas = null;
 let basemapLabelsCanvas = null;
 
-// BOAM sections from /boam (static), drawn once per layer/period/theme/projection.
-let boam = null;
-
 // Stop markers from /stops (static for the life of a run, like shapes).
 // stopScreenPositions is a parallel [{name, x, y}, ...] in the SAME
 // projection as stopsLayerCanvas, kept alongside it so hover hit-testing
 // doesn't need to re-run projector.project() on ~2,900 points every frame.
 let stops = [];
+let stopRoutes = new Map(); // stop id -> route names serving it, from /stops
 let stopsLayerCanvas = null;
 let stopScreenPositions = [];
 
@@ -278,6 +239,62 @@ function focusedStopIds() {
     for (const id of (routeDetails[name] && routeDetails[name].stop_ids) || []) ids.add(id);
   }
   return ids;
+}
+
+// Hover highlight: pointing at a vehicle lights up its route; pointing at a
+// stop lights up every route serving it (from /stops' "routes"). Local to this
+// page -- it follows the pointer, not the shared display state -- and drawn
+// over the street colours, under the vehicles.
+const HOVER_ROUTE_COLOR = { dark: "#ffffff", light: "#0b3d91" };
+let hoverRoutesKey = "";
+let hoverRouteNames = [];
+let hoverRouteCanvas = null;
+
+async function fetchRouteDetails(names) {
+  const missing = names.filter((n) => !(n in routeDetails));
+  await Promise.all(missing.map(async (name) => {
+    try {
+      const resp = await fetch(`/route?name=${encodeURIComponent(name)}`);
+      routeDetails[name] = resp.ok ? await resp.json() : null;
+    } catch (_) { /* leave it missing so the next hover retries */ }
+  }));
+}
+
+async function setHoverRoutes(names) {
+  const key = names.join(",");
+  if (key === hoverRoutesKey) return;
+  hoverRoutesKey = key;
+  hoverRouteNames = names;
+  if (!names.length) { hoverRouteCanvas = null; return; }
+  await fetchRouteDetails(names);
+  if (hoverRoutesKey === key) hoverRouteCanvas = drawHoverRoutes(names); // unless the pointer has moved on
+}
+
+function drawHoverRoutes(names) {
+  if (!projector || !shapes) return null;
+  const off = document.createElement("canvas");
+  off.width = canvas.width;
+  off.height = canvas.height;
+  const octx = off.getContext("2d");
+  octx.lineCap = "round";
+  octx.lineJoin = "round";
+  for (const pass of [{ width: 9, alpha: 0.25 }, { width: 3, alpha: 0.95 }]) {
+    octx.lineWidth = pass.width;
+    octx.strokeStyle = withAlpha(HOVER_ROUTE_COLOR[theme], pass.alpha);
+    for (const name of names) {
+      for (const shapeId of (routeDetails[name] && routeDetails[name].shape_ids) || []) {
+        const pts = shapes[shapeId];
+        if (!pts || pts.length < 2) continue;
+        octx.beginPath();
+        pts.forEach(([lat, lon], i) => {
+          const [x, y] = projector.project(lat, lon);
+          if (i === 0) octx.moveTo(x, y); else octx.lineTo(x, y);
+        });
+        octx.stroke();
+      }
+    }
+  }
+  return off;
 }
 
 async function loadRouteFocus() {
@@ -358,43 +375,6 @@ function drawRouteFocusLayer() {
   return off;
 }
 
-async function loadBoam() {
-  try {
-    const resp = await fetch("/boam", { cache: "no-store" });
-    const body = resp.ok ? await resp.json() : null;
-    if (body && body.sections.length) {
-      boam = body;
-      streetCanvas = buildStreetCanvas();
-      return;
-    }
-  } catch (_) { /* retry below */ }
-  setTimeout(loadBoam, 5000); // still building, or nothing imported yet
-}
-
-
-// The combined pressure layer is live: its bins come from /pressure (scores
-// per area for the current unit and weights) and are written onto the same
-// unit objects as bins.pressure, then the layer is redrawn.
-let lastPressurePoll = 0;
-async function pollPressure() {
-  if (control.area_layer !== "pressure" || !areas) return;
-  lastPressurePoll = performance.now();
-  const unitType = control.area_unit;
-  try {
-    const resp = await fetch(`/pressure?unit=${unitType}`, { cache: "no-store" });
-    if (!resp.ok) return;
-    const scores = await resp.json();
-    for (const unit of areas[unitType] || []) {
-      unit.bins.pressure = scores[unit.id] ? scores[unit.id].bin : null;
-    }
-    if (control.area_layer === "pressure" && control.area_unit === unitType) areaLayerCanvas = drawAreaLayer();
-  } catch (_) { /* keep the last drawing; the next poll retries */ }
-}
-setInterval(() => {
-  const due = Math.max(2000, 10000 / (playback.speed || 1));
-  if (performance.now() - lastPressurePoll >= due) pollPressure();
-}, 1000);
-
 // Live or replay, from each vehicle frame. During a time-lapse, positions
 // arrive `speed` times faster, so interpolation and fade-out timing shrink to
 // match; a new epoch (source switched, or a replay looped) clears the screen.
@@ -419,14 +399,11 @@ function staleAfterMs() { return ((cfg.stale_after_seconds || 90) * 1000) / (pla
 
 function applyControl(next) {
   const areaChanged = next.area_layer !== control.area_layer || next.area_unit !== control.area_unit;
-  const weightsChanged = JSON.stringify(next.weights) !== JSON.stringify(control.weights);
-  const boamChanged = next.line_layer !== control.line_layer || next.boam_period !== control.boam_period;
   const stopHistoryChanged =
     next.stop_history !== control.stop_history || next.lens !== control.lens || next.stop_metric !== control.stop_metric;
   const routesChanged = JSON.stringify(next.routes || []) !== JSON.stringify(control.routes || []);
   const stopLayersChanged = next.stops !== control.stops || next.stop_history !== control.stop_history;
   const basemapChanged = next.basemap !== control.basemap;
-  const directionsChanged = next.street_directions !== control.street_directions;
   const layoutChanged =
     next.theme !== control.theme ||
     next.calibrate !== control.calibrate ||
@@ -444,8 +421,6 @@ function applyControl(next) {
   if (draggingCorner === null) dragWarp = null; // the server's copy has caught up
   if (layoutChanged) rebuildLayers();
   else if (areaChanged) areaLayerCanvas = drawAreaLayer();
-  if (control.area_layer === "pressure" && (areaChanged || weightsChanged || boamChanged)) pollPressure();
-  if ((boamChanged || directionsChanged) && !layoutChanged) streetCanvas = buildStreetCanvas();
   if (routesChanged) loadRouteFocus();
   else if (!layoutChanged && focusActive() && stopLayersChanged) {
     routeFocusCanvas = drawRouteFocusLayer();
@@ -454,28 +429,8 @@ function applyControl(next) {
     if (!stopHistory) pollStopHistory();
     else if (!layoutChanged) stopHistoryCanvas = drawStopHistoryLayer();
   }
-  if (LIVE_LINE_LAYERS.has(control.line_layer) && !segments.length) pollSegments();
   if (basemapChanged && control.basemap !== "plain" && !basemap) loadBasemap();
 }
-
-let lastSegmentPoll = 0;
-async function pollSegments() {
-  if (!LIVE_LINE_LAYERS.has(control.line_layer)) return;
-  lastSegmentPoll = performance.now();
-  try {
-    const resp = await fetch("/segments", { cache: "no-store" });
-    if (resp.ok) {
-      segments = await resp.json();
-      streetCanvas = buildStreetCanvas();
-    }
-  } catch (_) { /* keep the last good set; the next poll retries */ }
-}
-// Every 10s live; faster during a time-lapse (but no more than every 2s),
-// so street colours keep up with the recorded time.
-setInterval(() => {
-  const due = Math.max(2000, SEGMENT_POLL_MS / (playback.speed || 1));
-  if (performance.now() - lastSegmentPoll >= due) pollSegments();
-}, 1000);
 
 function levelColor(layer, level) {
   if (level === null || level === undefined) return null;
@@ -488,130 +443,10 @@ function dotColor(entry) {
   const unknown = ADHERENCE_COLOR[theme].unknown;
   if (control.lens === "congestion") return levelColor("congestion", entry.cg) || unknown;
   if (control.lens === "crowding") return levelColor("crowding", entry.oc) || unknown;
-  return ADHERENCE_COLOR[theme][entry.adherence] || unknown;
-}
-
-// Street lines (live layers and BOAM alike), built into one canvas whenever
-// the data, the layer, the directions setting or the layout changes. Each
-// stretch of street gets exactly one line per direction shown: lines are laid
-// down best evidence first (solid before faint, more vehicles or trips first,
-// then the worse level), and a later line only draws the parts of itself that
-// no earlier line runs beside -- going the same way, or either way for "one
-// colour per street". So no colour ever sits under another and peeks out.
-// Side by side: each direction on its own (left-hand) side, the two lines
-// just touching (offset = half the width), so the street reads as one band.
-const SIDE_LINE_WIDTH = 4;
-const SIDE_OFFSET_PX = SIDE_LINE_WIDTH / 2;
-const SAMPLE_STEP_PX = 2;
-const COVER_ACROSS_PX = 5;      // an earlier line this close beside a point covers it
-const COVER_CELL_PX = 6;
-const SAME_HEADING_COS = Math.cos(Math.PI / 6);
-const STREET_DIRECTIONS = ["combined", "split", "inbound", "outbound"];
-let streetCanvas = null;
-
-function streetItems() {
-  const layer = control.line_layer;
-  const mode = control.street_directions || "combined";
-  const keep = (inbound) => (mode === "inbound" ? inbound === true : mode === "outbound" ? inbound === false : true);
-  if (layer in BOAM_COLOR) {
-    if (!boam) return [];
-    const period = control.boam_period || "am";
-    const field = mode === "combined" ? BOAM_BIN_FIELD[layer].replace("_bin", "_all_bin") : BOAM_BIN_FIELD[layer];
-    return boam.sections
-      .filter((s) => s[period] && s[period][field] !== null && s[period][field] !== undefined && keep(s.inbound))
-      .filter((s) => layer !== "boam_lost" || !(s.length_m > BOAM_LOST_MAX_SECTION_M))
-      .map((s) => ({ pts: s.pts, color: BOAM_COLOR[layer][s[period][field]], alpha: STREET_LINE_ALPHA,
-                     rank: [1, s[period].trips || 0, s[period][field]] }));
-  }
-  if (!LIVE_LINE_LAYERS.has(layer)) return [];
-  const value = mode === "combined" ? `${layer}_all` : layer;
-  return segments
-    .filter((s) => s[value] !== null && s[value] !== undefined && s.pts.length >= 2 && keep(s.inbound))
-    .map((s) => {
-      const n = s[`${value}_n`] ?? s.vehicles;
-      const solid = n >= MIN_SOLID_VEHICLES;
-      return { pts: s.pts, color: levelColor(layer, s[value]), alpha: solid ? STREET_LINE_ALPHA : STREET_LINE_FAINT_ALPHA,
-               rank: [solid ? 1 : 0, n, s[value]] };
-    });
-}
-
-// Points every SAMPLE_STEP_PX along a screen polyline, with its direction,
-// shifted `offset` px to the left of travel (traffic keeps left).
-function sampleLine(pts, offset) {
-  const out = [];
-  let next = 0; // distance into the current piece of line at which the next sample falls
-  for (let i = 1; i < pts.length; i++) {
-    const [x1, y1] = pts[i - 1], [x2, y2] = pts[i];
-    const len = Math.hypot(x2 - x1, y2 - y1);
-    if (len === 0) continue;
-    const ux = (x2 - x1) / len, uy = (y2 - y1) / len;
-    for (; next <= len; next += SAMPLE_STEP_PX) {
-      out.push({ x: x1 + ux * next + uy * offset, y: y1 + uy * next - ux * offset, ux, uy });
-    }
-    next -= len;
-  }
-  return out;
-}
-
-function buildStreetCanvas() {
-  if (!projector || control.line_layer === "none") return null;
-  const items = streetItems();
-  if (!items.length) return null;
-  const mode = control.street_directions || "combined";
-  const eitherWay = mode === "combined";
-  items.sort((a, b) => b.rank[0] - a.rank[0] || b.rank[1] - a.rank[1] || b.rank[2] - a.rank[2]);
-  const off = document.createElement("canvas");
-  off.width = canvas.width;
-  off.height = canvas.height;
-  const octx = off.getContext("2d");
-  octx.lineCap = "round";
-  octx.lineJoin = "round";
-  octx.lineWidth = mode === "split" ? SIDE_LINE_WIDTH : STREET_LINE_WIDTH;
-  const grid = new Map(); // cell -> drawn samples
-  const cell = (x, y) => (Math.floor(x / COVER_CELL_PX) + 2000) * 10000 + (Math.floor(y / COVER_CELL_PX) + 2000);
-  const covered = (s) => {
-    const cx = Math.floor(s.x / COVER_CELL_PX), cy = Math.floor(s.y / COVER_CELL_PX);
-    for (let gx = cx - 1; gx <= cx + 1; gx++) {
-      for (let gy = cy - 1; gy <= cy + 1; gy++) {
-        for (const q of grid.get((gx + 2000) * 10000 + (gy + 2000)) || []) {
-          const dot = s.ux * q.ux + s.uy * q.uy;
-          if ((eitherWay ? Math.abs(dot) : dot) < SAME_HEADING_COS) continue;
-          const dx = s.x - q.x, dy = s.y - q.y;
-          // beside it, not ahead of or behind it: the next piece of the same
-          // route starts where the last one ended, and must not leave a gap
-          if (Math.abs(dx * q.ux + dy * q.uy) <= SAMPLE_STEP_PX / 2 && Math.abs(dx * q.uy - dy * q.ux) <= COVER_ACROSS_PX) return true;
-        }
-      }
-    }
-    return false;
-  };
-  const offset = mode === "split" ? SIDE_OFFSET_PX : 0;
-  for (const item of items) {
-    const samples = sampleLine(item.pts.map(([lat, lon]) => projector.project(lat, lon)), offset);
-    const free = samples.map((s) => !covered(s));
-    octx.strokeStyle = withAlpha(item.color, item.alpha);
-    let run = [];
-    const flush = () => {
-      if (run.length >= 2) {
-        octx.beginPath();
-        run.forEach((s, i) => (i ? octx.lineTo(s.x, s.y) : octx.moveTo(s.x, s.y)));
-        octx.stroke();
-        for (const s of run) {
-          const k = cell(s.x, s.y);
-          if (!grid.has(k)) grid.set(k, []);
-          grid.get(k).push(s);
-        }
-      }
-      run = [];
-    };
-    samples.forEach((s, i) => (free[i] ? run.push(s) : flush()));
-    flush();
-  }
-  return off;
-}
-
-function drawSegments() {
-  if (control.line_layer !== "none" && streetCanvas) ctx.drawImage(streetCanvas, 0, 0);
+  // Early buses switch off: a bus running early shows as on time (the Stats
+  // tab and exports keep the real state either way)
+  const state = entry.adherence === "early" && !control.early_buses ? "on_time" : entry.adherence;
+  return ADHERENCE_COLOR[theme][state] || unknown;
 }
 
 function sendControl(patch) {
@@ -658,12 +493,12 @@ function rebuildLayers() {
   corridorLayerDim = drawCorridorLayer(CANVAS_THEME[theme].corridorDim, 1);
   corridorLayerBright = drawCorridorLayer(CANVAS_THEME[theme].corridorBright, 1.6);
   areaLayerCanvas = drawAreaLayer();
-  streetCanvas = buildStreetCanvas();
   stopsLayerCanvas = drawStopsLayer();
   stopHistoryCanvas = drawStopHistoryLayer();
   routeFocusCanvas = drawRouteFocusLayer();
   basemapCanvas = drawBasemapLayer();
   basemapLabelsCanvas = drawBasemapLabels();
+  hoverRouteCanvas = hoverRouteNames.length ? drawHoverRoutes(hoverRouteNames) : null;
 }
 
 // Screen positions of the footprint's corners, in WARP_CORNERS order.
@@ -1221,7 +1056,7 @@ function render() {
   if (control.stops && stopsLayerCanvas) ctx.drawImage(stopsLayerCanvas, 0, 0);
   if (control.stop_history && stopHistoryCanvas) ctx.drawImage(stopHistoryCanvas, 0, 0);
 
-  drawSegments();
+  if (hoverRouteCanvas) ctx.drawImage(hoverRouteCanvas, 0, 0);
   // Names sit above the street colours but under the vehicles.
   if (control.basemap === "full" && basemapLabelsCanvas && !verificationMode) ctx.drawImage(basemapLabelsCanvas, 0, 0);
 
@@ -1320,11 +1155,18 @@ function render() {
     for (const list of lists) {
       for (const s of list) {
         const d = Math.hypot(s.x - hoverX, s.y - hoverY);
-        if (d <= STOP_HISTORY_RADIUS + 5 && d < dist2) { hoveredStop = s; dist2 = d; }
+        if (d > STOP_HISTORY_RADIUS + 5) continue;
+        // The timetable also lists "parent" stops (ids starting G) at the same
+        // spot with no routes of their own; prefer the stand that has routes.
+        const score = d + ((stopRoutes.get(s.id) || []).length ? 0 : 3);
+        if (score < dist2) { hoveredStop = s; dist2 = score; }
       }
     }
   }
   updateHoverTooltip(hoveredKey, hoveredStop);
+  const hoveredEntry = hoveredKey !== null ? vehicles.get(hoveredKey) : null;
+  setHoverRoutes(hoveredEntry ? [hoveredEntry.route_short_name].filter(Boolean)
+    : hoveredStop ? (stopRoutes.get(hoveredStop.id) || []) : []);
 
   if (control.hud) {
     const n = control.nudge;
@@ -1556,7 +1398,8 @@ function updateHoverTooltip(key, stop) {
   if (entry) {
     const route = entry.route_short_name || entry.mode;
     parts = [`<div class="route">${route}</div>`, `<div class="muted">${entry.mode}</div>`];
-    parts.push(`<div>${ADHERENCE_LABEL[entry.adherence] || "No schedule data"}</div>`);
+    const hiddenEarly = entry.adherence === "early" && !control.early_buses;
+    parts.push(`<div>${ADHERENCE_LABEL[entry.adherence] || "No schedule data"}${hiddenEarly ? " (shown as on time)" : ""}</div>`);
     const delayText = formatDelay(entry.deviation);
     if (delayText) parts.push(`<div>Delay: ${delayText}</div>`);
     if (entry.cg !== null && entry.cg !== undefined) {
@@ -1567,6 +1410,11 @@ function updateHoverTooltip(key, stop) {
     }
   } else {
     parts = [`<div class="route">${escapeHtml(stop.name)}</div>`];
+    const allRoutes = stopRoutes.get(stop.id) || [];
+    if (allRoutes.length && !focusActive()) {
+      const shown = allRoutes.slice(0, 12).join(", ") + (allRoutes.length > 12 ? ` +${allRoutes.length - 12} more` : "");
+      parts.push(`<div class="muted">Routes: ${escapeHtml(shown)}</div>`);
+    }
     if (focusActive()) {
       const serving = control.routes.filter((n) => routeDetails[n] && routeDetails[n].stop_ids.includes(stop.id));
       if (serving.length) parts.push(`<div class="muted">On route ${escapeHtml(serving.join(", "))}</div>`);
@@ -1648,17 +1496,14 @@ document.getElementById("cal-save").addEventListener("click", async () => {
 // Every key sends a patch to the server rather than changing this page
 // directly, so the tablet shows the same state.
 //   C calibrate   V verification overlay   H status line   T theme   M background map (plain / detailed / full)
-//   L dot colour (schedule / congestion / crowding)   K street lines (off / congestion / crowding)
-//   A areas (off / jobs / service gap / Opal 2016 / pressure)   G areas on travel zones / 150m grid
-//   K also reaches the BOAM streets (typical load / time lost)   B BOAM peak: AM / PM
-//   D street directions (one colour / side by side / towards the city / away from it)
+//   L dot colour (schedule / congestion / crowding)   E early buses on / off
+//   A areas (off / jobs / service gap)   G areas on travel zones / 150m grid
 //   Space pause / play a replay
 //   1-5 trains / metro / light rail / buses / ferries
 //   arrows nudge (shift = x10)   [ ] scale   0 reset nudge
 const KEY_MODE_GROUPS = ["trains", "metro", "lightrail", "buses", "ferries"];
 const LENSES = ["adherence", "congestion", "crowding"];
-const LINE_LAYERS = ["none", "congestion", "derived", "crowding", "boam_load", "boam_lost"];
-const AREA_LAYERS = ["none", "jobs", "service_gap", "opal", "pressure"];
+const AREA_LAYERS = ["none", "jobs", "service_gap"];
 const BASEMAPS = ["plain", "detailed", "full"];
 const nextOf = (list, current) => list[(list.indexOf(current) + 1) % list.length];
 const NUDGE_STEP_PX = 2;
@@ -1675,14 +1520,12 @@ document.addEventListener("keydown", (ev) => {
   else if (key === "h") sendControl({ hud: !control.hud });
   else if (key === "t") sendControl({ theme: control.theme === "dark" ? "light" : "dark" });
   else if (key === "m") sendControl({ basemap: nextOf(BASEMAPS, control.basemap) });
-  else if (key === "d") sendControl({ street_directions: nextOf(STREET_DIRECTIONS, control.street_directions) });
   else if (key === "s") sendControl({ stops: !control.stops });
   else if (key === "o") sendControl({ stop_history: !control.stop_history });
   else if (key === "l") sendControl({ lens: nextOf(LENSES, control.lens) });
-  else if (key === "k") sendControl({ line_layer: nextOf(LINE_LAYERS, control.line_layer) });
+  else if (key === "e") sendControl({ early_buses: !control.early_buses });
   else if (key === "a") sendControl({ area_layer: nextOf(AREA_LAYERS, control.area_layer) });
   else if (key === "g") sendControl({ area_unit: control.area_unit === "zones" ? "grid" : "zones" });
-  else if (key === "b") sendControl({ boam_period: control.boam_period === "am" ? "pm" : "am" });
   else if (key === " " && control.playback && control.playback.session !== "live") {
     sendControl({ playback: { paused: !control.playback.paused } });
   }
@@ -1717,8 +1560,6 @@ function connectWebSocket() {
     if (frame.epoch !== epoch) {
       epoch = frame.epoch;
       vehicles.clear();
-      segments = [];
-      pollSegments();
     }
     if (frame.playback) setPlayback(frame.playback);
     applyFrame(frame.vehicles);
@@ -1736,9 +1577,9 @@ async function boot() {
   shapes = await shapesResp.json();
   calibration = await calResp.json(); // null if none saved yet -- Phase 4's linear fit is used
   stops = await stopsResp.json();
+  stopRoutes = new Map(stops.map((s) => [s.id, s.routes || []]));
   resize();
   loadAreas();
-  loadBoam();
   connectWebSocket();
   requestAnimationFrame(render);
 }

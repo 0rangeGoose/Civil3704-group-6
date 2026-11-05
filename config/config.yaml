@@ -73,21 +73,26 @@ realtime_gtfs:
   # poll_interval before a vehicle is treated as gone rather than just late.
   stale_after_seconds: 90
 
-adherence_thresholds_seconds:
-  # Positive means running late. suburban_rail/intercity/metro/light_rail
-  # defaults are from the project brief; bus/ferry weren't specified there,
-  # so 300s (5 min) was chosen to match the suburban_rail default -- see
-  # docs/DECISIONS.md. Transport for NSW's own on-time definitions differ by
-  # mode; these are this project's own simplified single-threshold model.
-  suburban_rail: 300
-  intercity: 360
-  metro: 120
-  light_rail: 120
-  bus: 300
-  ferry: 300
-  # A trip beyond threshold * this multiplier is "very_late" rather than
-  # just "late". Not specified in the brief -- see docs/DECISIONS.md.
-  very_late_multiplier: 2
+punctuality:
+  # On time = no more than early_seconds early and no more than late_seconds
+  # late (positive delay = late), per mode category. Sources (docs/DECISIONS.md, 5 Nov):
+  # - suburban_rail, intercity: TfNSW Sydney Trains / NSW TrainLink (Intercity)
+  #   punctuality: within 5 / 6 minutes of the timetable at the final destination.
+  # - bus: Greater Sydney Bus Contract, Schedule 4 (KPIs), 2023: departing no more
+  #   than 59 s early and no more than 5 min 59 s late, measured at the first stop.
+  # - metro, light_rail, ferry: no published definition found; TfNSW's Sydney
+  #   Trains 5-minute standard applied by the project.
+  # "very_late" is the project's own: past the limit AND later than the scheduled
+  # gap to the next trip on the route (engine/normalise/headways.py).
+  late_seconds:
+    suburban_rail: 300
+    intercity: 360
+    metro: 300
+    light_rail: 300
+    bus: 359
+    ferry: 300
+  early_seconds:
+    bus: 59
 
 # How close a vehicle must be to an interchange's stop centroid to count
 # towards its pulse intensity (Phase 6).
@@ -111,11 +116,6 @@ server:
   host: "0.0.0.0"
   port: 8765
 
-controller:
-  # Keeps visitors out of the team panel on the tablet. Not a security
-  # boundary: it's sent to every page that loads /config.
-  team_pin: "3704"
-
 # TfNSW's daily request quota for our API key: measured 25 Oct 2026, refused
 # after 59,964 requests counted from midnight Sydney time, reset at midnight.
 # Every process that polls shares one count (usage_path); outside the peak
@@ -129,14 +129,3 @@ api_budget:
   max_interval_seconds: 600   # slowest pace when the budget is spent
   usage_path: "data/api_usage.json"
   heartbeat_path: "data/recordings/.server_polling"
-
-# Step 6: our own congestion measure, a travel-time index (TTI) against each
-# street's night-time free-flow speed. See engine/normalise/travel_time.py.
-derived_congestion:
-  freeflow_path: "data/analysis/freeflow.json"   # built by scripts/build_freeflow.py
-  # On the model: "how much slower than at night", easy to read for visitors.
-  thresholds_tti: [1.5, 2.0, 3.0]                 # smooth / slow / congested / severe
-  # In the step 6 analysis: fitted so our four levels occur as often as TfNSW's
-  # (quantile-matched on the Mon-Wed 26-28 Oct peaks, tested on Thu-Fri).
-  # See scripts/experiment_congestion.py and docs/DECISIONS.md, 30 Oct.
-  analysis_thresholds_tti: [2.66, 2.98, 3.32]

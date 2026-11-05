@@ -1,6 +1,6 @@
 import pytest
 
-from engine.demand.areas import bin_ranges, gap_bin, opal_base_name, percentile_ranks, quintile_bins, service_gap
+from engine.demand.areas import bin_ranges, gap_bin, percentile_ranks, quintile_bins, service_gap
 from engine.publish.control import ControlError, ControlState
 
 
@@ -31,24 +31,14 @@ def test_gap_bins(gap, expected):
     assert gap_bin(gap) == expected
 
 
-@pytest.mark.parametrize("mode, loc, expected", [
-    ("ferry", "Circular Quay, No. 3 Wharf", ("Circular Quay", "Wharf")),
-    ("ferry", "Darling Harbour Wharf 3", ("Darling Harbour", "Wharf")),
-    ("train", "Circular Quay Station", ("Circular Quay", "Station")),
-    ("lightrail", "Central Station Light Rail", ("Central", "Light Rail")),
-    ("lightrail", "The Star Light Rail", ("The Star", "Light Rail")),
-])
-def test_opal_names_reduce_to_place_and_mode_word(mode, loc, expected):
-    assert opal_base_name(mode, loc) == expected
-
-
 def test_area_controls():
     c = ControlState()
     assert c.state["area_layer"] == "none" and c.state["area_unit"] == "zones"
     c.apply({"area_layer": "service_gap", "area_unit": "grid"})
     assert c.state["area_layer"] == "service_gap" and c.state["area_unit"] == "grid"
-    with pytest.raises(ControlError):
-        c.apply({"area_layer": "population"})
+    for gone in ("population", "opal", "pressure"):  # opal and pressure were removed 5 Nov
+        with pytest.raises(ControlError):
+            c.apply({"area_layer": gone})
     with pytest.raises(ControlError):
         c.apply({"area_unit": "hexagons"})
 

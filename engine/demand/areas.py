@@ -1,4 +1,4 @@
-"""Static area layers: jobs, service gap and Opal 2016, on travel zones or a grid.
+"""Static area layers: jobs and the service gap, on travel zones or a grid.
 
 These describe *places*, not vehicles, so they're computed once at startup
 (and cached to disk) rather than every poll. Two spatial units, switchable on
@@ -21,15 +21,9 @@ Per unit:
   departures, among units with jobs. -1..1: positive = more jobs than service
   relative to the rest of the footprint (underserved), negative = more service
   than jobs.
-- **opal** -- Opal tap-ons + tap-offs, 7:00-9:00, average weekday of
-  21-25 Nov 2016 (Opal Tap On and Tap Off Release 2). Trains, light rail and
-  ferries are given by station and placed at that station; buses are only
-  given by postcode, so a postcode's bus taps are scaled by the share of its
-  area inside the footprint and split evenly across today's bus stops in it.
-  2016 predates the Metro and the CBD light rail, so those show nothing.
-
-Each layer also gets a 0-4 colour bin: quintiles for jobs and Opal (among
-units with any), fixed bands for the gap (see GAP_BANDS).
+Each layer also gets a 0-4 colour bin: quintiles for jobs (among units with
+any), fixed bands for the gap (see GAP_BANDS). An Opal 2016 tap layer was
+removed on 5 Nov 2026 (docs/DECISIONS.md).
 """
 from __future__ import annotations
 
@@ -37,7 +31,6 @@ import csv
 import hashlib
 import json
 import logging
-import re
 import sqlite3
 from collections import defaultdict
 from datetime import date, timedelta
@@ -56,10 +49,9 @@ GRID_CELL_M = 150.0
 SERVICE_WALK_M = 200.0
 PEAK_START, PEAK_END = "07:00:00", "09:00:00"
 JOBS_YEAR_COLUMN = "EMP_2026"
-OPAL_DAYS = {"20161121", "20161122", "20161123", "20161124", "20161125"}  # Mon-Fri
 GAP_BANDS = (-0.4, -0.15, 0.15, 0.4)  # -> bins 0 (well served) .. 4 (underserved)
 SIMPLIFY_M = 4.0
-CACHE_VERSION = 2
+CACHE_VERSION = 4  # 3: Opal 2016 removed; 4: pressure layer removed
 
 
 def _metric(geom):
@@ -103,7 +95,7 @@ def quintile_bins(values: dict[str, float]) -> dict[str, int]:
 
 
 def bin_ranges(units: list[dict], layer: str) -> list[list[int] | None]:
-    """[lowest, highest] of a layer's value (jobs, opal) in each of its five
+    """[lowest, highest] of a layer's value (jobs) in each of its five
     colour bins, for the tablet legend; None for a bin no unit falls in."""
     ranges: list[list[int] | None] = [None] * 5
     for u in units:
@@ -125,20 +117,6 @@ def service_gap(jobs: dict[str, float], departures: dict[str, float]) -> dict[st
 
 def gap_bin(gap: float) -> int:
     return sum(gap > band for band in GAP_BANDS)
-
-
-_STOP_KIND = {"train": "Station", "lightrail": "Light Rail", "ferry": "Wharf"}
-
-
-def opal_base_name(mode: str, loc: str) -> tuple[str, str]:
-    """('Circular Quay', 'Wharf') from ('ferry', 'Circular Quay, No. 3 Wharf'):
-    the place name before any comma or mode word, and the word the timetable's
-    stop names use for that mode."""
-    kind = _STOP_KIND[mode]
-    base = loc.split(",")[0]
-    base = re.sub(r"\s+(Station|Light Rail|Wharf)(\s+\d+)?$", "", base).strip()
-    base = re.sub(r"\s+Station$", "", base).strip()
-    return base, kind
 
 
 # --- inputs -------------------------------------------------------------------
@@ -183,61 +161,6 @@ def _stop_departures(conn: sqlite3.Connection, day: str) -> dict[str, int]:
     return counts
 
 
-def _bus_stop_ids(conn: sqlite3.Connection) -> set[str]:
-    return {r[0] for r in conn.execute(
-        "SELECT DISTINCT st.stop_id FROM stop_times st JOIN trips t ON t.trip_id = st.trip_id "
-        "JOIN routes r ON r.route_id = t.route_id WHERE r.route_type IN ('3', '700', '712', '714')")}
-
-
-def _opal_points(opal_csv: Path, stops: dict[str, tuple[float, float, str]],
-                 bus_stops: set[str], postcodes: list[tuple[str, object]], footprint_m) -> list[tuple[Point, float]]:
-    """[(metric point, average weekday AM-peak taps), ...]"""
-    station_taps: dict[tuple[str, str], float] = defaultdict(float)
-    postcode_taps: dict[str, float] = defaultdict(float)
-    with open(opal_csv, newline="", encoding="utf-8") as f:
-        for row in csv.DictReader(f):
-            if row["date"] not in OPAL_DAYS or not (PEAK_START[:5] <= row["time"] < PEAK_END[:5]):
-                continue
-            taps = int(row["count"]) / len(OPAL_DAYS)
-            if row["mode"] == "bus":
-                postcode_taps[row["loc"]] += taps
-            elif row["mode"] in _STOP_KIND and row["loc"] != "UNKNOWN":
-                station_taps[(row["mode"], row["loc"])] += taps
-
-    by_name: dict[str, list[tuple[float, float]]] = defaultdict(list)
-    for lat, lon, name in stops.values():
-        by_name[name].append((lat, lon))
-
-    points: list[tuple[Point, float]] = []
-    unplaced = 0.0
-    for (mode, loc), taps in station_taps.items():
-        coords = by_name.get(loc)
-        if not coords:
-            base, kind = opal_base_name(mode, loc)
-            coords = [c for name, cs in by_name.items()
-                      if name.startswith(base) and kind in name for c in cs]
-        if not coords:
-            unplaced += taps  # outside the footprint, or renamed beyond recognition
-            continue
-        lat = sum(c[0] for c in coords) / len(coords)
-        lon = sum(c[1] for c in coords) / len(coords)
-        points.append((Point(_to_metric.transform(lon, lat)), taps))
-
-    stop_points = {sid: Point(_to_metric.transform(lon, lat)) for sid, (lat, lon, _) in stops.items() if sid in bus_stops}
-    for postcode, poly_m in postcodes:
-        taps = postcode_taps.get(postcode, 0.0)
-        if not taps:
-            continue
-        inside = [p for p in stop_points.values() if poly_m.contains(p)]
-        share = poly_m.intersection(footprint_m).area / poly_m.area if poly_m.area else 0
-        if inside and share:
-            each = taps * share / len(inside)
-            points.extend((p, each) for p in inside)
-    logger.info("opal 2016: %d located points; %.0f station taps/day not placed (outside footprint)",
-                len(points), unplaced)
-    return points
-
-
 # --- build ----------------------------------------------------------------------
 
 def _signature(cfg: Config, files: list[Path], day: str) -> str:
@@ -253,8 +176,6 @@ def build_area_layers(cfg: Config) -> dict:
     demand_dir = cfg.root / "data" / "demand"
     zones_path = demand_dir / "zones_footprint.geojson"
     jobs_path = demand_dir / "tzp24_employment.csv"
-    postcodes_path = demand_dir / "postcodes_footprint.geojson"
-    opal_path = cfg.root / "data" / "opal" / "time_loc_20161121-27.csv"
     db_path = cfg.path("db_path")
     cache_path = demand_dir / "area_layers.json"
 
@@ -265,13 +186,13 @@ def build_area_layers(cfg: Config) -> dict:
     conn = sqlite3.connect(f"file:{db_path}?mode=ro", uri=True)
     try:
         day = _reference_weekday(conn, cfg.raw.get("demand", {}).get("service_date"))
-        signature = _signature(cfg, [zones_path, jobs_path, postcodes_path, opal_path, db_path], day)
+        signature = _signature(cfg, [zones_path, jobs_path, db_path], day)
         if cache_path.exists():
             cached = json.loads(cache_path.read_text(encoding="utf-8"))
             if cached.get("meta", {}).get("signature") == signature:
                 return cached
         logger.info("building area layers (service reference day %s) ...", day)
-        result = _build(cfg, conn, day, zones_path, jobs_path, postcodes_path, opal_path)
+        result = _build(cfg, conn, day, zones_path, jobs_path)
     finally:
         conn.close()
     result["meta"]["signature"] = signature
@@ -279,7 +200,7 @@ def build_area_layers(cfg: Config) -> dict:
     return result
 
 
-def _build(cfg, conn, day, zones_path, jobs_path, postcodes_path, opal_path) -> dict:
+def _build(cfg, conn, day, zones_path, jobs_path) -> dict:
     bb = cfg.bounding_box
     footprint_m = _metric(box(bb.west, bb.south, bb.east, bb.north))
 
@@ -340,32 +261,11 @@ def _build(cfg, conn, day, zones_path, jobs_path, postcodes_path, opal_path) -> 
     zone_dep = {z: departures_near(g) for z, g in zone_geoms.items()}
     cell_dep = {c: departures_near(g) for c, g in cells.items()}
 
-    # Opal 2016
-    opal_points: list[tuple[Point, float]] = []
-    if opal_path.exists():
-        postcodes = []
-        if postcodes_path.exists():
-            postcodes = [(str(f["properties"]["postcode"]), _metric(shape(f["geometry"])).buffer(0))
-                         for f in json.loads(postcodes_path.read_text(encoding="utf-8"))["features"]]
-        opal_points = _opal_points(opal_path, stops, _bus_stop_ids(conn), postcodes, footprint_m)
-    opal_tree = STRtree([p for p, _ in opal_points]) if opal_points else None
+    available = {"jobs": bool(zone_jobs), "service_gap": bool(zone_jobs)}
 
-    def opal_in(geom) -> float:
-        if opal_tree is None:
-            return 0.0
-        return round(sum(opal_points[int(i)][1] for i in opal_tree.query(geom, predicate="contains")), 1)
-
-    zone_opal = {z: opal_in(g) for z, g in zone_geoms.items()}
-    cell_opal = {c: opal_in(g) for c, g in cells.items()}
-
-    # The combined layer (engine/demand/pressure.py) adds live inputs on top,
-    # so it only needs one of these to be meaningful.
-    available = {"jobs": bool(zone_jobs), "service_gap": bool(zone_jobs), "opal": bool(opal_points),
-                 "pressure": bool(zone_jobs or opal_points)}
-
-    def assemble(geoms, jobs, deps, opal, names=None, simplify=True):
+    def assemble(geoms, jobs, deps, names=None, simplify=True):
         gaps = service_gap(jobs, deps)
-        jobs_bins, opal_bins = quintile_bins(jobs), quintile_bins(opal)
+        jobs_bins = quintile_bins(jobs)
         out = []
         for uid, geom in geoms.items():
             shown = geom.intersection(footprint_m)
@@ -379,11 +279,9 @@ def _build(cfg, conn, day, zones_path, jobs_path, postcodes_path, opal_path) -> 
                 "jobs": round(jobs.get(uid, 0.0)),
                 "departures": round(deps.get(uid, 0.0)),
                 "gap": gaps.get(uid),
-                "opal": round(opal.get(uid, 0.0)),
                 "bins": {
                     "jobs": jobs_bins.get(uid),
                     "service_gap": gap_bin(gaps[uid]) if uid in gaps else None,
-                    "opal": opal_bins.get(uid),
                 },
             }
             if names:
@@ -394,14 +292,13 @@ def _build(cfg, conn, day, zones_path, jobs_path, postcodes_path, opal_path) -> 
 
     return {
         "available": available,
-        "zones": assemble(zone_geoms, zone_jobs, zone_dep, zone_opal, zone_names),
-        "grid": assemble(cells, cell_jobs, cell_dep, cell_opal, simplify=False),
+        "zones": assemble(zone_geoms, zone_jobs, zone_dep, zone_names),
+        "grid": assemble(cells, cell_jobs, cell_dep, simplify=False),
         "meta": {
             "service_day": day,
             "peak": f"{PEAK_START[:5]}-{PEAK_END[:5]}",
             "jobs_year": JOBS_YEAR_COLUMN[-4:],
             "grid_cell_m": GRID_CELL_M,
             "walk_m": SERVICE_WALK_M,
-            "opal_points": len(opal_points),
         },
     }

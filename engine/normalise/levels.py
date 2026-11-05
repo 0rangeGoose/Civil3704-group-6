@@ -7,10 +7,10 @@ Both come straight from the realtime feed rather than being estimated:
 - ``occupancy_status``: vehicle-level for buses and Metro; Sydney Trains mostly
   report it per carriage instead, via TfNSW's 1007 ``consist`` extension.
 
-Each maps to a small integer level so segments can average readings from
-several vehicles. Levels are ordinal categories, not measurements -- a mean of
-1.4 means "between stop-and-go and congested", and is only ever shown by
-rounding back to a category.
+Each maps to a small integer level, 0-3, which colours a vehicle when the
+tablet's "Colour the vehicles by" is Traffic or Crowding. Levels are ordinal
+categories, not measurements. (Until 5 Nov 2026 street layers also averaged
+them along streets; removed, see docs/DECISIONS.md.)
 """
 from __future__ import annotations
 
@@ -20,6 +20,10 @@ CONGESTION_LEVELS = {
     "CONGESTION": 2,
     "SEVERE_CONGESTION": 3,
 }
+# Only buses are in road traffic: Metro sends a level but it isn't road
+# congestion, and Sydney Trains always send UNKNOWN.
+CONGESTION_MODES = {"buses"}
+
 CONGESTION_LABELS = ["Running smoothly", "Stop and go", "Congested", "Severely congested"]
 
 # EMPTY folds into "many seats" and the three "no room" states into one, so

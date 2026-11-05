@@ -184,3 +184,21 @@ def test_entities_without_trip_update_are_ignored():
     index = build_trip_update_index(feed.SerializeToString())
 
     assert index == {}
+
+
+def test_final_stop_delay_is_the_last_listed_stop():
+    # TfNSW measures train punctuality at the final destination
+    feed = pb.FeedMessage()
+    feed.header.gtfs_realtime_version = "2.0"
+    e = feed.entity.add()
+    e.id = "e1"
+    e.trip_update.trip.trip_id = "T1"
+    for stop_id, delay in (("A", 60), ("B", 120), ("C", 240)):
+        stu = e.trip_update.stop_time_update.add()
+        stu.stop_id = stop_id
+        stu.arrival.delay = delay
+
+    info = build_trip_update_index(feed.SerializeToString())["T1"]
+
+    assert (info.next_stop_id, info.next_stop_delay_seconds) == ("A", 60)
+    assert (info.final_stop_id, info.final_stop_delay_seconds) == ("C", 240)
