@@ -1,6 +1,6 @@
 import pytest
 
-from engine.demand.areas import bin_ranges, gap_bin, percentile_ranks, quintile_bins, service_gap
+from engine.demand.areas import bin_ranges, percentile_ranks, quintile_bins
 from engine.publish.control import ControlError, ControlState
 
 
@@ -17,26 +17,12 @@ def test_quintile_bins_skip_empty_units():
     assert sorted(set(bins.values())) == [0, 1, 2, 3, 4]
 
 
-def test_service_gap_compares_ranks_and_ignores_jobless_units():
-    jobs = {"busy_unserved": 900, "busy_served": 1000, "quiet_served": 10, "park": 0}
-    departures = {"busy_unserved": 2, "busy_served": 400, "quiet_served": 300, "park": 50}
-    gaps = service_gap(jobs, departures)
-    assert "park" not in gaps
-    assert gaps["busy_unserved"] > 0 > gaps["quiet_served"]
-    assert gap_bin(gaps["busy_unserved"]) > gap_bin(gaps["quiet_served"])
-
-
-@pytest.mark.parametrize("gap, expected", [(-1, 0), (-0.3, 1), (0, 2), (0.2, 3), (0.9, 4)])
-def test_gap_bins(gap, expected):
-    assert gap_bin(gap) == expected
-
-
 def test_area_controls():
     c = ControlState()
     assert c.state["area_layer"] == "none" and c.state["area_unit"] == "zones"
-    c.apply({"area_layer": "service_gap", "area_unit": "grid"})
-    assert c.state["area_layer"] == "service_gap" and c.state["area_unit"] == "grid"
-    for gone in ("population", "opal", "pressure"):  # opal and pressure were removed 5 Nov
+    c.apply({"area_layer": "jobs", "area_unit": "grid"})
+    assert c.state["area_layer"] == "jobs" and c.state["area_unit"] == "grid"
+    for gone in ("population", "opal", "pressure", "service_gap"):  # all removed
         with pytest.raises(ControlError):
             c.apply({"area_layer": gone})
     with pytest.raises(ControlError):

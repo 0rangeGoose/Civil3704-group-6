@@ -7,8 +7,8 @@ every train, metro, light rail vehicle, ferry and bus currently inside the model
 area (typically 270 to 490 at once) as a small arrow on the street or track it is
 really on, updated every 15 seconds from Transport for NSW's live data. Vehicles can be
 coloured by how late they are, how congested their traffic is or how full they are;
-stops can be coloured by their typical delay; and area layers show where many jobs are
-served by little public transport. It shows what is happening now, or replays any
+stops can be coloured by their typical delay; and an area layer shows where the jobs
+are. It shows what is happening now, or replays any
 recorded morning or evening peak as a sped-up time-lapse. Visitors control it from a
 tablet beside the model.
 
@@ -50,7 +50,7 @@ devices reaching each other.
 tablet stays in sync): **C** calibrate, **F** corner fit, **V** verification overlay,
 **H** status line, **T** theme, **M** background map (plain / detailed / full),
 **S** stop markers, **O** stop history, **L** colour view, **E** early buses on / off,
-**A** areas (off / jobs / service gap), **G** areas on travel zones / grid,
+**A** jobs layer on / off, **G** areas on travel zones / grid,
 **Space** pause or play a replay, **1–5** trains / metro / light rail / buses / ferries,
 **arrows** nudge (Shift ×10), **[ ]** scale, **0** reset nudge.
 
@@ -193,9 +193,9 @@ on the light theme), or in blue with the Display tab's Blue highlight switch on.
 
 ### Area layers
 
-Display → Colour the areas by: **jobs** (TZP24, 2026) or **service gap** (jobs against
-scheduled departures within 200 m, 7–9 am on a weekday), on TfNSW travel zones or a
-150 m grid. Calculations are in `engine/demand/areas.py`.
+Display → Colour the areas by: **jobs**, the employment projected for 2026 in each area
+(TfNSW TZP24, by place of work), on TfNSW travel zones or a 150 m grid, in five equal-sized
+groups. Calculations are in `engine/demand/areas.py`.
 
 The source files aren't in git (`data/` is ignored). To set them up:
 
@@ -363,7 +363,7 @@ python scripts/run_phase3.py --cycles 7    # + map matching and punctuality
 
 **Troubleshooting**
 
-- *Jobs / Service gap greyed out*: the input files aren't in `data/demand/` (see
+- *Jobs greyed out*: the input files aren't in `data/demand/` (see
   [Area layers](#area-layers)).
 - *Detailed / Full background map greyed out*: run `scripts/fetch_basemap.py`.
 - *Stop history empty*: it fills while the server runs live; stops need 20 visits.
@@ -407,7 +407,7 @@ engine/
   normalise/              Protobuf decoding, quirks, timetable join, map matching,
                           delay, punctuality, headways, the rolling aggregates
   history/                Stop visit detection and storage
-  demand/                 Area layers (jobs, service gap)
+  demand/                 Area layer (jobs)
   analysis/               CSV export of a recorded peak
   publish/                Live service, aiohttp server, shared control state,
                           route focus, shapes for the browser, calibration

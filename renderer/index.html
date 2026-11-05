@@ -133,11 +133,9 @@ const LEVEL_COLOR = {
 };
 
 // Area layers (engine/demand/areas.py): each unit arrives with a 0-4 bin.
-// Jobs are sequential (brighter = more); the service gap diverges
-// from blue (more service than jobs) through grey to orange (underserved).
+// Jobs are sequential (brighter = more).
 const AREA_COLOR = {
   jobs: ["#2a2f6b", "#43449e", "#6a56c9", "#9d6be3", "#d892ff"],
-  service_gap: ["#2f7bff", "#86b4ff", "#62666e", "#ffb066", "#ff6a00"],
 };
 const AREA_ALPHA = { dark: 0.55, light: 0.45 };
 // While an area layer is on, vehicles go neutral so they don't compete with it.
@@ -195,7 +193,7 @@ let control = {
 let modeToGroup = {}; // feed mode -> controller group, from /config
 
 // Static area layers from /areas: {zones: [...], grid: [...]}, each unit
-// {rings: [[[lat, lon], ...]], bins: {jobs, service_gap}}. Drawn once
+// {rings: [[[lat, lon], ...]], bins: {jobs}}. Drawn once
 // into an offscreen canvas per (layer, unit, theme, projection).
 let areas = null;
 let areaLayerCanvas = null;
@@ -1502,13 +1500,13 @@ document.getElementById("cal-save").addEventListener("click", async () => {
 // directly, so the tablet shows the same state.
 //   C calibrate   V verification overlay   H status line   T theme   M background map (plain / detailed / full)
 //   L dot colour (schedule / congestion / crowding)   E early buses on / off
-//   A areas (off / jobs / service gap)   G areas on travel zones / 150m grid
+//   A areas (off / jobs)   G areas on travel zones / 150m grid
 //   Space pause / play a replay
 //   1-5 trains / metro / light rail / buses / ferries
 //   arrows nudge (shift = x10)   [ ] scale   0 reset nudge
 const KEY_MODE_GROUPS = ["trains", "metro", "lightrail", "buses", "ferries"];
 const LENSES = ["adherence", "congestion", "crowding"];
-const AREA_LAYERS = ["none", "jobs", "service_gap"];
+const AREA_LAYERS = ["none", "jobs"];
 const BASEMAPS = ["plain", "detailed", "full"];
 const nextOf = (list, current) => list[(list.indexOf(current) + 1) % list.length];
 const NUDGE_STEP_PX = 2;

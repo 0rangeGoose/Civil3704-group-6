@@ -42,7 +42,7 @@ STOP_METRICS = ("median", "mean")
 BASEMAPS = ("plain", "detailed", "full")
 MAX_FOCUSED_ROUTES = 8
 # Static area layers (engine/demand/areas.py) and the unit they're drawn on.
-AREA_LAYERS = ("none", "jobs", "service_gap")
+AREA_LAYERS = ("none", "jobs")
 AREA_UNITS = ("zones", "grid")
 
 IDENTITY_NUDGE = {"dx": 0.0, "dy": 0.0, "scale": 1.0}
