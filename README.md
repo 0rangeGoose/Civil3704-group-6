@@ -18,20 +18,25 @@ scoring, and a browser-based renderer, all in one command.
 ## What it actually looks like
 
 Open `http://127.0.0.1:8765/` once the server is running: a black background with
-every bus, train, metro, light rail vehicle and ferry currently in the CBD shown as a
-soft glowing dot, colour-coded by whether it's running on time, sized by mode (a
-train reads bigger than a bus), with a short comet tail showing recent movement and
-dim route corridors underneath so an empty street reads as empty rather than as a gap.
+every bus, train, metro, light rail vehicle and ferry currently in the model's footprint
+shown as an arrow pointing the way it's travelling, colour-coded by whether it's running
+on time (or by traffic or crowding), sized by mode (a train reads bigger than a bus),
+with a short comet tail showing recent movement and dim route corridors underneath so
+an empty street reads as empty rather than as a gap. Street, area, stop and background
+map layers go on top; see `docs/PROJECT_REPORT.md` §6 for all of them.
 
 Open `http://<laptop address>:8765/control` on the tablet next to the model. The
 projector mirrors the laptop screen, so the projected view shows map content only (no
 buttons, hints or cursor), and everything is controlled from the tablet instead:
 
-- **Display** (for visitors): which vehicle types are shown, interchange pulses, and a
-  colour legend.
+- **Display** (for visitors): live or replay (Replay mode → day → AM/PM peak), vehicle
+  types and colour, street layers and directions, stops and stop history, route filter,
+  area layers, background map, and "What the colours mean", which defines every colour
+  shown with its cut-off.
 - **Team** (behind a PIN, `controller.team_pin` in config): projection theme,
   verification overlay, an on-projection status line, alignment nudge, crosshair
-  calibration, and system health (vehicles per mode, feed age).
+  calibration, pressure weights, and system health (vehicles per mode, feed age, API
+  requests used today).
 - **Stats**: on-time percentages by mode, active service alerts, and the busiest
   interchanges (this used to be the separate `/stats` page, which now redirects here).
 
@@ -46,12 +51,11 @@ scale model of the CBD on a table, a projector mounted above it pointing straigh
 down, and the browser renderer's output projected onto the model so vehicles appear
 to move along the model's actual streets and rail corridors in real time.
 
-That physical setup doesn't exist yet — no model, no projector. Everything through
-Phase 4 works identically with or without one. Phase 5 (calibration) is the piece
-that specifically bridges to the physical world: it's fully built and tested with
-synthetic data, but the *real* calibration session (physically aligning crosshairs to
-registration marks on an actual model) can only happen once that hardware exists.
-Until then, the renderer uses a simple flat aspect-correct projection of the
+The team's model and projector now exist (the footprint is the team's surveyed model
+corners, about 13.2 × 6.6 km). Everything works identically with or without them.
+Calibration (aligning crosshairs to registration marks on the model) is fully built and
+tested with synthetic points; the real calibration session happens on the model.
+Without a calibration, the renderer uses a simple flat aspect-correct fit of the
 bounding box — good enough to view on any screen.
 
 ---
@@ -104,8 +108,8 @@ Transport for NSW Open Data Hub
       compact vehicle frames     /shapes, /config, /calibration)
               │                        │
               ▼                        ▼
-      renderer/index.html      renderer/stats.html
-      (the model view)          (the wall-panel dashboard)
+      renderer/index.html      renderer/controller.html
+      (the model view)          (the tablet: controls, legend, stats)
 ```
 
 ---
@@ -288,7 +292,7 @@ pulse-cbd/
     run_phase3.py             + map matching/adherence (dev/debug tool)
     run_publish.py            The real entry point — starts everything
 
-  tests/                     203 tests, one file per module
+  tests/                     204 tests, one file per module
   docs/DECISIONS.md          Every non-obvious judgment call made during the build,
                               and why — read this for the "why" behind anything
                               that looks like it could've been done differently
@@ -356,10 +360,10 @@ python scripts/run_phase3.py --cycles 7            # + map matching/adherence + 
 **Tests**:
 
 ```bash
-pytest        # 203 tests, ~2s, no network required
+pytest        # 204 tests, ~2s, no network required
 ```
 
-### Calibrating onto a physical model (once one exists)
+### Calibrating onto the physical model
 
 1. Point a projector at the model, run `scripts/run_publish.py`, and full-screen
    `http://127.0.0.1:8765/` on the projector's display.
@@ -384,7 +388,7 @@ Saving a new calibration resets the nudge.
 
 Everything tunable lives in `config/config.yaml`:
 
-- `bounding_box` — the CBD lat/lon box (currently ~5km N-S x 4km E-W)
+- `bounding_box` — the model footprint, from the team's surveyed corners (~13.2 km E-W x 6.6 km N-S)
 - `static_gtfs` — the Complete GTFS bundle download URL and cache paths
 - `realtime_gtfs.feeds` — the full endpoint matrix for all 7 modes x 3 feed types (a mix of v1/v2 paths, verified live against the real API)
 - `adherence_thresholds_seconds` — per-mode on-time thresholds and the late→very_late multiplier
@@ -406,16 +410,21 @@ stopping to ask, in the order they were made, each with its reasoning. Highlight
 
 ## Current status
 
-All six phases from the original design brief are built, tested (203 automated
-tests, as of 4 Nov 2026), and live-verified against the real Transport for NSW API:
+All six phases from the original design brief are built, tested (204 automated
+tests, as of 5 Nov 2026), and live-verified against the real Transport for NSW API:
 
 1. ✅ Static GTFS foundation
 2. ✅ Headless realtime ingestion
 3. ✅ Map matching and schedule adherence
 4. ✅ Renderer on a flat screen
 5. ✅ Calibration and projection tooling (tested with synthetic data)
-6. ✅ Interchange pulses and the separate stats panel
+6. ✅ Interchange pulses and the stats panel (now the tablet's Stats tab)
 
-**What's not done, and can't be until the hardware exists**: the actual physical
-calibration session — aligning the renderer to a real 3D model under a real
-projector. Everything the software side of that needs is built and tested.
+On top of those, the showcase plan's steps 1–6 are done: street traffic and crowding
+(pooled along shared streets, with direction modes), replay and time-lapse of any
+recorded peak, jobs / service gap / Opal 2016 areas, the combined pressure layer, BOAM
+bus load and time lost, and our own congestion measure compared with TfNSW's.
+
+**What's not done**: testing on the physical model (calibration, checking every layer),
+the report figures and a rehearsal. The full picture — how everything is measured, why,
+what's left, and the state of the machine — is in `docs/PROJECT_REPORT.md`.
