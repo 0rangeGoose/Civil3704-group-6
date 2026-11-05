@@ -150,9 +150,8 @@ class LiveVehicleFeed:
             )
 
     def aggregate_snapshot(self) -> dict:
-        """Everything the stats panel (and the model renderer's interchange
-        pulses) need: rolling adherence by window, active alerts, and
-        per-interchange recent activity counts."""
+        """Everything the stats panel needs: rolling adherence by window,
+        active alerts, and per-interchange recent activity counts."""
         interchange_counts = self.rolling_interchange_activity.counts(now=self.clock)
         return {
             "adherence_by_window": self.rolling_adherence.breakdown_all_windows(now=self.clock),

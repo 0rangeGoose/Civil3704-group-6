@@ -77,7 +77,6 @@ DEFAULT_STATE: dict[str, Any] = {
     "hud": False,
     "calibrate": False,
     "corners": False,  # corner-fit mode: drag the footprint's corners on the projector
-    "interchanges": True,
     "stops": False,
     "stop_history": False,
     "stop_metric": "median",
@@ -183,7 +182,7 @@ class ControlState:
                     if isinstance(w, bool) or not isinstance(w, (int, float)):
                         raise ControlError(f"weights.{name} must be a number")
                     updated["weights"][name] = _clamp(float(w), WEIGHT_LIMITS)
-            elif key in ("verify", "hud", "calibrate", "corners", "interchanges", "stops", "stop_history"):
+            elif key in ("verify", "hud", "calibrate", "corners", "stops", "stop_history"):
                 if not isinstance(value, bool):
                     raise ControlError(f"{key} must be true/false")
                 updated[key] = value

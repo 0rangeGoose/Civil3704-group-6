@@ -2,6 +2,14 @@
 
 Judgment calls made without stopping to ask, per the project brief. Newest first.
 
+## 2026-11-05 — Interchange pulses removed from the projection
+
+At the owner's request, the glowing rings at the nine interchanges are gone: no longer
+drawn, and their `interchanges` setting, tablet toggle and **P** key are removed. The
+server stops sending interchange counts with every vehicle frame (only the rings used
+them). The counts themselves stay: the tablet's Stats tab still shows the busiest
+interchanges from `/aggregate`.
+
 ## 2026-11-05 — Tablet legend: a stated definition for every colour
 
 "What the colours mean" now gives each colour its cut-off, not just a name. Where the

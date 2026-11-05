@@ -62,14 +62,6 @@ def _vehicle_frame(record) -> dict:
     }
 
 
-def _interchange_frame(feed: "LiveVehicleFeed") -> list[dict]:
-    counts = feed.rolling_interchange_activity.counts(now=feed.clock)
-    return [
-        {"name": ic.name, "lat": ic.lat, "lon": ic.lon, "count": counts.get(ic.name, 0)}
-        for ic in feed.interchanges
-    ]
-
-
 async def index_handler(request: web.Request) -> web.Response:
     # encoding="utf-8" explicitly -- Path.read_text()'s default is the OS
     # locale encoding, which is UTF-8 on macOS/Linux but cp1252 on Windows;
@@ -434,7 +426,6 @@ async def _broadcast_loop(app: web.Application) -> None:
                 "epoch": feed.epoch,
                 "playback": _playback_frame(app),
                 "vehicles": [_vehicle_frame(r) for r in feed.snapshot.values()],
-                "interchanges": _interchange_frame(feed),
             }
         )
         await _broadcast(app, frame)

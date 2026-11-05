@@ -147,7 +147,7 @@ On top of individual vehicles, the engine maintains:
 
 - **Rolling schedule adherence** — % on-time/late/very-late/etc. by mode, over trailing 5, 15, and 60-minute windows.
 - **Active service alerts** — count and severity of alerts that intersect the CBD's routes/stops, out of everything TfNSW publishes statewide.
-- **Interchange activity** — for 9 named interchanges (Central, Town Hall, Wynyard, Martin Place, Circular Quay, Barangaroo, Gadigal, Museum, St James), how many *distinct* vehicles have passed within 300m in the last 5 minutes. This drives the pulsing interchange nodes on the model view.
+- **Interchange activity** — for 9 named interchanges (Central, Town Hall, Wynyard, Martin Place, Circular Quay, Barangaroo, Gadigal, Museum, St James), how many *distinct* vehicles have passed within 300m in the last 5 minutes. This feeds the busiest-interchanges bars on the tablet's Stats tab (the pulsing rings on the projection were removed on 5 Nov 2026).
 
 ## Documented feed quirks, and how they're handled
 
@@ -417,7 +417,7 @@ projector) and the `/control` URL the server prints on the tablet.
 
 **Keyboard backup** on the projector page (each key goes through the server, so the
 tablet stays in sync): **C** calibrate, **F** corner fit, **V** verification overlay, **H** status line,
-**T** theme, **M** background map (plain / detailed / full), **P** interchange pulses,
+**T** theme, **M** background map (plain / detailed / full),
 **S** stop markers, **O** stop history, **L** dot colour (schedule / traffic / crowding),
 **K** street lines (off / traffic / crowding), **A** areas (off / jobs / service gap / Opal 2016 / pressure),
 **G** areas on travel zones / grid, **B** BOAM peak AM / PM, **D** street directions (one colour / side by side / to city / from city), **Space** pause/play a replay, **1–5** trains / metro / light rail / buses /
@@ -510,7 +510,7 @@ Everything tunable lives in `config/config.yaml`:
 - `static_gtfs` — the Complete GTFS bundle download URL and cache paths
 - `realtime_gtfs.feeds` — the full endpoint matrix for all 7 modes x 3 feed types (a mix of v1/v2 paths, verified live against the real API)
 - `adherence_thresholds_seconds` — per-mode on-time thresholds and the late→very_late multiplier
-- `interchanges` / `interchange_radius_m` — which stations get pulse nodes, and the proximity radius
+- `interchanges` / `interchange_radius_m` — which stations the Stats tab counts activity at, and the proximity radius
 - `calibration_path` — where the computed homography is persisted
 - `realtime_gtfs.poll_interval_seconds` (15) and `stale_after_seconds` (90) — how often
   feeds are polled, and how long a silent vehicle stays on the map
@@ -547,7 +547,7 @@ running on the physical model:
 4. ✅ Renderer on a flat screen
 5. ✅ Calibration and projection onto the physical model (crosshair calibration,
    nudge, corner fit)
-6. ✅ Interchange pulses and the stats panel (now the tablet's Stats tab)
+6. ✅ Interchange activity and the stats panel (now the tablet's Stats tab; the projected pulses were removed on 5 Nov)
 
 Built on top since: recording and replay of every peak, the tablet controller, street
 traffic and crowding layers, demand and BOAM layers, our own congestion measure
