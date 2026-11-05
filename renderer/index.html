@@ -113,6 +113,51 @@ const ADHERENCE_LABEL = {
   on_time: "On time", late: "Running late", very_late: "Very late",
   cancelled: "Cancelled", unknown: "No schedule data",
 };
+// Lateness colours are a gradient: each state's colour is solid exactly at its
+// cut-off and blends in between, so a bus 4 min late already reads as turning
+// amber. Vehicle anchors: on schedule (0 s, early included) = on_time colour,
+// the mode's on-time limit = late colour, limit x very_late_multiplier = very
+// late colour. The state itself (hover label, legend counts) still flips at
+// the cut-offs, as the engine classifies it (engine/normalise/adherence.py).
+// Same mode -> threshold category as that file's MODE_TO_THRESHOLD_CATEGORY.
+const ADHERENCE_CATEGORY = {
+  sydneytrains: "suburban_rail", nswtrains: "intercity", metro: "metro",
+  lightrail_innerwest: "light_rail", lightrail_cbdandsoutheast: "light_rail",
+  buses: "bus", ferries: "ferry",
+};
+
+function hexRgb(hex) {
+  return [1, 3, 5].map((i) => parseInt(hex.slice(i, i + 2), 16));
+}
+
+// anchors: [[value, "#rrggbb"], ...] in increasing value order. Below the
+// first or above the last anchor the end colour is used unblended.
+function rampColor(value, anchors) {
+  if (value <= anchors[0][0]) return anchors[0][1];
+  for (let i = 1; i < anchors.length; i++) {
+    const [v1, c1] = anchors[i];
+    if (value < v1) {
+      const [v0, c0] = anchors[i - 1];
+      const t = (value - v0) / (v1 - v0);
+      const a = hexRgb(c0), b = hexRgb(c1);
+      return "#" + a.map((x, j) => Math.round(x + (b[j] - x) * t).toString(16).padStart(2, "0")).join("");
+    }
+  }
+  return anchors[anchors.length - 1][1];
+}
+
+function adherenceColor(entry) {
+  const pal = ADHERENCE_COLOR[theme];
+  const state = entry.adherence;
+  if (!state || state === "unknown") return pal.unknown;
+  if (state === "cancelled") return pal.cancelled;
+  const t = cfg.adherence_thresholds_seconds || {};
+  const limit = t[ADHERENCE_CATEGORY[entry.mode]];
+  if (typeof entry.deviation !== "number" || !limit) return pal[state] || pal.unknown;
+  const k = t.very_late_multiplier || 2;
+  return rampColor(entry.deviation, [[0, pal.on_time], [limit, pal.late], [limit * k, pal.very_late]]);
+}
+
 const CONGESTION_LABEL = ["Running smoothly", "Stop and go", "Congested", "Severely congested"];
 const CROWDING_LABEL = ["Seats available", "Few seats", "Standing room", "Crowded / full"];
 
@@ -488,7 +533,7 @@ function dotColor(entry) {
   const unknown = ADHERENCE_COLOR[theme].unknown;
   if (control.lens === "congestion") return levelColor("congestion", entry.cg) || unknown;
   if (control.lens === "crowding") return levelColor("crowding", entry.oc) || unknown;
-  return ADHERENCE_COLOR[theme][entry.adherence] || unknown;
+  return adherenceColor(entry);
 }
 
 // Street lines (live layers and BOAM alike), built into one canvas whenever
@@ -1068,7 +1113,10 @@ function stopHistoryColor(h) {
   }
   if (h.delay_visits < STOP_HISTORY_MIN_VISITS) return null;
   const delay = control.stop_metric === "mean" ? h.mean_delay_s : h.median_delay_s;
-  return STOP_DELAY_COLOR[theme][bandIndex(delay, STOP_DELAY_BANDS_S)];
+  // Gradient, solid at each cut-off: green on schedule (0 s, early included),
+  // yellow at 1 min, orange at 2 min, red from 4 min.
+  const pal = STOP_DELAY_COLOR[theme];
+  return rampColor(delay, [[0, pal[0]], ...STOP_DELAY_BANDS_S.map((s, i) => [s, pal[i + 1]])]);
 }
 
 async function pollStopHistory() {

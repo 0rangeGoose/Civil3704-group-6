@@ -68,6 +68,12 @@
   .legend.defs .swatch { margin-top: 3px; flex-shrink: 0; }
   .legend.defs small { display: block; color: var(--muted); font-size: 13px; line-height: 1.35; margin-top: 2px; }
   .swatch { width: 16px; height: 16px; border-radius: 50%; flex-shrink: 0; background: #000; }
+  .ramp { margin: 10px 0 4px; }
+  .ramp .bar { height: 12px; border-radius: 6px; }
+  .ramp .ticks { position: relative; height: 18px; font-size: 12px; color: var(--muted); }
+  .ramp .ticks span { position: absolute; top: 3px; transform: translateX(-50%); white-space: nowrap; }
+  .ramp .ticks span:first-child { transform: none; }
+  .ramp .ticks span:last-child { transform: translateX(-100%); }
   #now-showing { font-size: 17px; font-weight: 600; margin-bottom: 10px; }
   #now-showing small { display: block; font-size: 13px; font-weight: 400; color: var(--muted); }
   .transport { display: flex; gap: 8px; margin-bottom: 12px; }
@@ -476,9 +482,9 @@ const LEGENDS = {
     items: () => {
       const k = cfg.adherence_thresholds_seconds.very_late_multiplier;
       return [
-        ["#39ff6a", "On time", `Up to ${perMode((s) => `${minutes(s)} min`)} behind the timetable. Running early counts as on time.`],
-        ["#ffb020", "Running late", `Later than that, up to ${k}× it: ${perMode((s) => `${minutes(s)}–${minutes(s * k)} min`)}.`],
-        ["#c81c2e", "Very late / cancelled", `More than ${k}× it (over ${perMode((s) => `${minutes(s * k)} min`)}), or TfNSW has cancelled the trip.`],
+        ["#39ff6a", "On time", `Up to ${perMode((s) => `${minutes(s)} min`)} behind the timetable. Running early counts as on time. Solid green when on schedule, turning towards amber as it nears the limit.`],
+        ["#ffb020", "Running late", `Later than that, up to ${k}× it: ${perMode((s) => `${minutes(s)}–${minutes(s * k)} min`)}. Solid amber at the limit, turning towards red.`],
+        ["#c81c2e", "Very late / cancelled", `More than ${k}× it (over ${perMode((s) => `${minutes(s * k)} min`)}), solid red, or TfNSW has cancelled the trip.`],
         [GREY, "No schedule data", "No live delay prediction for the vehicle's trip, so it can't be compared with the timetable."],
       ];
     },
@@ -561,6 +567,15 @@ function defItems(items, round = false) {
     `<div><span class="swatch" style="background:${c}${shape}"></span><span>${name}${def ? `<small>${def}</small>` : ""}</span></div>`).join("")}</div>`;
 }
 
+// The projector blends lateness colours between cut-offs (renderer/index.html
+// rampColor), each colour solid exactly at its cut-off. stops: [[fraction 0-1,
+// colour, label], ...] along the bar.
+function rampBar(stops) {
+  const grad = stops.map(([f, c]) => `${c} ${(f * 100).toFixed(1)}%`).join(", ");
+  const ticks = stops.map(([f, , label]) => `<span style="left:${(f * 100).toFixed(1)}%">${label}</span>`).join("");
+  return `<div class="ramp"><div class="bar" style="background:linear-gradient(90deg, ${grad})"></div><div class="ticks">${ticks}</div></div>`;
+}
+
 function boamLegend(key) {
   const def = BOAM_LEGENDS[key];
   const period = control.boam_period === "pm" ? "PM peak (4:30–6:30pm)" : "AM peak (7–9am)";
@@ -629,19 +644,23 @@ function areaLegend(key) {
 // Stop history: same bands as renderer/index.html (STOP_DELAY_BANDS_S, STOP_CROWDED_BANDS)
 function stopHistoryLegend() {
   const crowding = control.lens === "crowding";
-  const items = crowding
-    ? [["#5ec8ff", "Under 10%"], ["#b48cff", "10% to under 25%"], ["#ff7ad9", "25% to under 50%"], ["#ff2e4d", "50% or more"]]
-    : [["#39ff6a", "Under 1 min late"], ["#ffd23f", "1 to under 2 min"], ["#ff8c1a", "2 to under 4 min"], ["#c81c2e", "4 min or more late"]];
   const what = crowding
     ? "Share of arrivals with few seats or fuller (crowding level 1 or more)"
-    : `${control.stop_metric === "mean" ? "Mean" : "Median"} delay on arrival (early counts as under 1 min)`;
-  return `<h3>Stops: history</h3>${defItems(items.map(([c, n]) => [c, n, ""]), true)}<p class="note">${what}, over every stop visit recorded live so far. Stops with fewer than 20 visits aren't coloured.</p>`;
+    : `${control.stop_metric === "mean" ? "Mean" : "Median"} delay on arrival (early counts as on schedule)`;
+  const body = crowding
+    ? defItems([["#5ec8ff", "Under 10%"], ["#b48cff", "10% to under 25%"], ["#ff7ad9", "25% to under 50%"], ["#ff2e4d", "50% or more"]].map(([c, n]) => [c, n, ""]), true)
+    : rampBar([[0, "#39ff6a", "On schedule"], [0.25, "#ffd23f", "1 min"], [0.5, "#ff8c1a", "2 min"], [1, "#c81c2e", "4+ min late"]])
+      + `<p class="note">Colours blend between these points and are solid at each one.</p>`;
+  return `<h3>Stops: history</h3>${body}<p class="note">${what}, over every stop visit recorded live so far. Stops with fewer than 20 visits aren't coloured.</p>`;
 }
 
 function lensLegend(key) {
   const def = LEGENDS[key];
   const street = control.line_layer === key ? ` ${STREET_RULE(STREET_WHAT[key])}` : "";
-  return `${defItems(def.items(), true)}<p class="note">${def.note}${street}</p>`;
+  const ramp = key === "adherence"
+    ? ((k) => rampBar([[0, "#39ff6a", "On schedule"], [1 / k, "#ffb020", "On-time limit"], [1, "#c81c2e", `${k}× limit`]]))(cfg.adherence_thresholds_seconds.very_late_multiplier || 2)
+    : "";
+  return `${ramp}${defItems(def.items(), true)}<p class="note">${def.note}${street}</p>`;
 }
 
 function renderLegend() {
