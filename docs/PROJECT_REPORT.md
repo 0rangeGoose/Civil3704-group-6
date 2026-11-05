@@ -3,7 +3,7 @@
 **As of:** Thursday 5 November 2026, 4:30 pm (Sydney), during the last recorded PM peak before the showcase  
 **Showcase:** Friday 6 November 2026  
 **Feature freeze:** 30 October 2026. Changes after it, all at the owner's request: background map (4 Nov), street-colour fixes and direction modes (4 Nov), replay day picker and full colour definitions on the tablet (5 Nov)  
-**Build:** branch `w12merge`, commit `95c722a`, 204 automated tests passing  
+**Build:** branch `w12merge` (the owner's `95c722a` merged with the teammate's corner fit, 5 Nov), 208 automated tests passing  
 **Author:** Yoseph Kim, with Claude Code  
 
 ---
@@ -47,7 +47,7 @@ cd ~/pulse-cbd && git status -sb && git log --oneline -3
 lsof -nP -iTCP:8765 -sTCP:LISTEN           # is the server running?
 curl -s http://127.0.0.1:8765/health        # vehicles, feed age, API quota use, playback mode
 tail -5 data/recordings/recorder.log        # scheduled peak recordings
-source .venv/bin/activate && pytest -q      # 204 tests should pass
+source .venv/bin/activate && pytest -q      # 208 tests should pass
 ```
 
 ---
@@ -92,13 +92,13 @@ The project was planned on 25 September as seven steps. Six are finished; the se
 | 4. Jobs, service gap, Opal 2016 | Area layers from employment, timetable and ticketing data | Done |
 | 5. Combined "pressure" score | One area score combining several inputs, with adjustable weights | Done |
 | 6. Our own congestion measure, compared with Transport for NSW's | An independent measure we can explain, and a statistical comparison | Done; the method changed and agreement turned out weak (§10) |
-| 7. Testing on the model, report figures, rehearsal | Calibrate onto the real model and rehearse the showcase | **Not recorded as done** (§16) |
+| 7. Testing on the model, report figures, rehearsal | Calibrate onto the real model and rehearse the showcase | **Partly.** The teammate's 5 Nov README says the system is running on the physical model, aligned with their new corner fit (§12.4). Report figures and a rehearsal aren't recorded (§16) |
 
 Beyond the plan, the project also has: bus load and time-lost layers from Transport for NSW's BOAM data; polling that automatically stays within the daily data quota; a refreshed timetable; a teammate's stop history, route filter and direction arrows (merged 30 Oct); an optional background street map; and full colour definitions on the tablet.
 
-- **Tests:** 204 automated tests run in about 2 seconds without internet access.
+- **Tests:** 208 automated tests run in about 2 seconds without internet access.
 - **Data recorded:** 16 weekday peaks (15 of them at least 98% complete), plus weekends, nights and middays — 26 replayable sessions in total. The Thursday 5 November PM peak is recording as this is written.
-- **Biggest risks:** nothing is recorded as having been checked on the physical model; the showcase network setup is untested (§16); a Wi-Fi drop during a live demo would freeze the vehicles; every recording is on one laptop disk.
+- **Biggest risks:** every layer hasn't been checked on the model in this record (alignment has, per the teammate); the showcase network setup is untested (§16); a Wi-Fi drop during a live demo would freeze the vehicles; every recording is on one laptop disk.
 
 ---
 
@@ -375,8 +375,7 @@ Where TfNSW only provides categories (its traffic and crowding fields), the lege
 - the theme (dark or light);
 - the verification overlay (route corridors drawn bright, to check alignment);
 - the status line on the projection;
-- the alignment nudge (shift by 2 px or 20 px, and scale);
-- crosshair calibration;
+- alignment: the nudge (shift by 2 px or 20 px, and scale), **corner fit** (drag the footprint's four corners onto the model's; teammate's, 5 Nov) and crosshair calibration;
 - pressure weights (0–3 for each input);
 - system health: vehicles per mode, how old each feed is, API requests used today, and the current polling interval.
 
@@ -386,7 +385,7 @@ Where TfNSW only provides categories (its traffic and crowding fields), the lege
 
 Every key goes through the server, so the tablet stays in sync:
 
-C calibrate · V verification overlay · H status line · T theme · M background map · P interchange pulses · S stop markers · O stop history · L dot colour · K street layer · A area layer · G zones/grid · B BOAM peak · D street directions · Space pause/play · 1–5 mode groups · arrow keys nudge (Shift ×10) · [ ] scale · 0 reset nudge.
+C calibrate · F corner fit · V verification overlay · H status line · T theme · M background map · P interchange pulses · S stop markers · O stop history · L dot colour · K street layer · A area layer · G zones/grid · B BOAM peak · D street directions · Space pause/play · 1–5 mode groups · arrow keys nudge (Shift ×10) · [ ] scale · 0 reset nudge.
 
 ---
 
@@ -951,12 +950,12 @@ Outputs are in `data/analysis/`:
 
 ### 11.1 Automated tests
 
-There are 204 automated tests (`pytest`), which run in about 2 seconds without internet access. They cover:
+There are 208 automated tests (`pytest`), which run in about 2 seconds without internet access. They cover:
 
 - the timetable filter and map matching;
 - punctuality, interchange counts and statistics;
 - calibration maths and footprint trimming;
-- the display-state rules (every allowed and rejected value);
+- the display-state rules (every allowed and rejected value, including the corner-fit offsets and their saving across restarts);
 - street pooling: same street, separate directions, parallel and crossing streets, order independence, both-direction values, the towards-city flag;
 - replay: pacing, looping, coverage, jumping, pausing, choosing between two recorders' files;
 - area maths, including the per-fifth ranges, and the pressure score;
@@ -1076,15 +1075,23 @@ Current usage and pace are under Team → System health on the tablet, and at `/
 4. Save. The server computes a homography (§3.3) and saves it to `data/calibration.json`. The projection switches to it immediately, and it survives restarts.
 5. Press **V** for the verification overlay. Route lines are drawn bright; check they sit on the model's streets and rail lines before trusting the projection.
 
-**Small drift** between weekly sessions is fixed with the **nudge** on the team panel: shift by 2 px or 20 px, and scale. The nudge is saved across restarts. Saving a new calibration resets the nudge to zero.
+**Small drift** between weekly sessions is fixed with the **nudge** on the team panel: shift by 2 px or 20 px, and scale.
 
-So far calibration has only been tested with synthetic points (§15).
+**Corner fit** (teammate's, merged 5 November) is the quick way to line the map up when the projector has moved or isn't square to the table: Team → Alignment → Corner fit, or **F**.
+- Four handles appear on the footprint's corners (north-west, north-east, south-east, south-west).
+- Drag each onto the matching corner of the model, and the whole map follows. It is a homography through those four points, so it also removes keystone (the trapezoid shape from a projector that isn't straight above).
+- For fine moves, set "Arrows move" to a corner and use the arrow pad.
+- **Reset corners** puts them back.
+
+The nudge and the corner offsets are both saved in `data/projection_nudge.json` and survive restarts. Saving a new crosshair calibration resets both.
+
+According to the teammate's README update of 5 November, the projection is now aligned on the physical model. The crosshair calibration itself is recorded as tested only with synthetic points (§15).
 
 ### 12.5 Weekly model session
 
 1. Check the server is running; open both pages.
 2. Team → verification overlay on. Do the corridors sit on the model's streets?
-3. Small drift: nudge. Large drift: recalibrate with at least four marks.
+3. Small drift: nudge. The projector moved or isn't square: corner fit. Neither enough: recalibrate with at least four marks.
 4. Try every layer on the model. Note:
     - whether colours read on the white model;
     - whether line widths are visible (the glow that hid small drift is gone);
@@ -1144,7 +1151,7 @@ The code is in a private GitHub repository shared by the team, `0rangeGoose/Civi
 
 | Branch | Where | What it holds |
 | --- | --- | --- |
-| `w12merge` | local + GitHub, `95c722a` | **Current, and what the laptop runs.** The owner's work merged with the teammate's (merge `3ab2a8a`, 30 Oct), plus everything since (see below) |
+| `w12merge` | local + GitHub | **Current, and the build to run.** The owner's work merged with the teammate's (merge `3ab2a8a`, 30 Oct), plus everything since (see below) |
 | `yosephW12` | local + GitHub | The owner's work through 30 October, before the merge (`3bfd432`) |
 | `integration` | GitHub, `67d4d9c` | The teammate's 11 commits of 29–30 October on top of the owner's work to 26 October. Fully contained in `w12merge` |
 | `test` | local + GitHub | The owner's prototype as of 28 August |
@@ -1159,6 +1166,8 @@ Commits on `w12merge` since the merge:
 | `6fcca03` | Background map (Plain, Detailed, Full) |
 | `14b7b9c` | Street pooling, faint streets, direction modes |
 | `95c722a` | Replay day picker and colour definitions |
+| `b456295`, `2494941`, `e6d99d9` | Teammate (4–5 Nov): corner fit, merged into `w12merge`, and a README rewrite; also adds `pulse-cbd-context.md`, their handoff notes |
+| (this commit) | Merge of the above with this report and the owner's README update; the teammate's README kept, as it already included those updates |
 
 **Which branch is the showcase build** still has to be agreed with the teammate (§18). `w12merge` is the only one with both sides' work and everything since.
 
@@ -1176,7 +1185,7 @@ Commits on `w12merge` since the merge:
 
 | Item | State |
 | --- | --- |
-| Server | launchd job running `w12merge` `95c722a` (restarted 5 Nov for the legend change), live, 487 vehicles, feeds 8–10 s old, 2 pages connected |
+| Server | launchd job, live, 487 vehicles, feeds 8–10 s old, 2 pages connected. It runs `95c722a`: **corner fit needs a server restart and page reloads** to appear (deliberately not done during the PM peak recording) |
 | Recorder | Installed; the 16:25 run started on time and is standing aside while the server polls |
 | Sleep | Disabled (`sudo pmset -a disablesleep 1`). Undo after 6 November with `sudo pmset -a disablesleep 0`. Keep the Mac **on power**: it was found on battery on 3 November |
 | API usage | About 57,000 on every full day from 29 October to 2 November, and on 4 November. 3 November: 39,663 (server down 11:30–18:33). 5 November: 33,450 by 4:27 pm, polling every 15 s (peak) |
@@ -1239,7 +1248,7 @@ These should be stated plainly in the final report.
 
 **Setup**
 
-- **No record of testing on the physical model.** Calibration has been tested only with synthetic points. The projector's resolution and aspect ratio are unknown. The glow that used to hide small drift is gone.
+- **Limited testing on the physical model.** The teammate reports the projection aligned on the model with corner fit; checks of every layer there aren't recorded. Crosshair calibration is recorded as tested only with synthetic points. The glow that used to hide small drift is gone.
 - **Replays aren't labelled.** The projection doesn't say it is showing a replay unless the status line is on.
 - **Weak access control.** The team PIN is checked only in the browser, and the server accepts connections from any device on the network (use the hotspot).
 - **One laptop.** Replays depend on one laptop and one disk, and the server log is never trimmed.
@@ -1251,7 +1260,7 @@ These should be stated plainly in the final report.
 
 **Before the showcase (today and tomorrow morning)**
 
-1. **Test on the physical model,** unless it has already been done (there is no record here). Calibrate, then check:
+1. **Restart the server and reload both pages** after today's PM peak (18:35), so the running build includes corner fit. Then **finish checking on the physical model** (alignment is reported done by the teammate):
     - every layer;
     - zones versus grid;
     - colours on the white model;
@@ -1334,7 +1343,8 @@ These should be stated plainly in the final report.
 | 30 Oct | Replay pause and seek. Timetable refreshed. Step 6: new method, experiment, final analysis. 12 more BOAM days (school term). Work pushed to `yosephW12`. Replay file-choice fix (Thursday 29 October PM from 50% to 99%). Merged with `integration` as `w12merge`. Stop visits made live-only |
 | 3 Nov | Mac shut down after 11:30. Server down until 18:33 and the PM peak lost. Server moved to a self-restarting launchd job |
 | 4 Nov | Optional background map (Plain, Detailed, Full). Street glow removed. Streets pooled, faint when thin; long BOAM sections left out of time lost. Street direction modes, with one line per stretch |
-| 5 Nov | Tablet: Replay mode with a day dropdown and AM/PM buttons; every colour defined with its cut-off, read from the server; stop-history legend. This report rewritten for readers without prior context |
+| 4–5 Nov | Teammate: corner fit for aligning the projection on the model (F), merged into `w12merge`; README rewrite |
+| 5 Nov | Tablet: Replay mode with a day dropdown and AM/PM buttons; every colour defined with its cut-off, read from the server; stop-history legend. This report rewritten for readers without prior context, and the teammate's work merged in |
 
 ---
 
@@ -1350,7 +1360,7 @@ These should be stated plainly in the final report.
 | Stop history (teammate) | `engine/history/stop_tracker.py`, `store.py` |
 | Pages | `renderer/index.html` (projector), `renderer/controller.html` (tablet) |
 | Scripts | `run_publish.py` (server), `run_record.py`, `install_server_service.py`, `install_recording_schedule.py`, `fetch_basemap.py`, `run_phase1.py` (timetable), `prepare_demand_data.py`, `import_boam.py`, `export_boam.py`, `build_freeflow.py`, `analyse_congestion.py`, `experiment_congestion_collect.py`, `experiment_congestion_evaluate.py` |
-| Tests | `tests/` (204 tests; e.g. `test_segments.py`, `test_boam.py`, `test_areas.py`, `test_control.py`, `test_replay.py`, `test_basemap.py`) |
+| Tests | `tests/` (208 tests; e.g. `test_segments.py`, `test_boam.py`, `test_areas.py`, `test_control.py`, `test_replay.py`, `test_basemap.py`) |
 | Data (not in Git) | `data/static_cache/` (timetable), `data/recordings/`, `data/demand/`, `data/opal/`, `data/boam/`, `data/analysis/`, `data/history/` (stop visits), `data/basemap/`, `data/api_usage.json`, `data/projection_nudge.json`, `data/calibration.json` |
 | Documents | `README.md`, `docs/DECISIONS.md`, `docs/PROJECT_REPORT.md` |
 
@@ -1358,7 +1368,7 @@ These should be stated plainly in the final report.
 
 ## Appendix A. Display settings (`engine/publish/control.py`)
 
-Every setting returns to its default when the server restarts, except the nudge, which is saved to `data/projection_nudge.json`.
+Every setting returns to its default when the server restarts, except the nudge and the corner-fit offsets, which are saved to `data/projection_nudge.json`.
 
 | Setting | What it controls | Allowed values | Default |
 | --- | --- | --- | --- |
@@ -1382,6 +1392,8 @@ Every setting returns to its default when the server restarts, except the nudge,
 | `playback` | Live or a session (e.g. `2026-11-04-am`), speed, paused | live or a recorded session; 1–100×; yes/no | live, 25×, not paused |
 | `modes` | Vehicle groups: trains, metro, lightrail, buses, ferries | on / off each | all on |
 | `nudge` | Alignment correction | dx and dy ±2000 px; scale 0.5–2 | 0, 0, 1 |
+| `corners` | Corner-fit handles shown | on / off | off |
+| `warp` | Corner-fit offset of each footprint corner (tl, tr, br, bl) | x and y ±2000 px each | all 0 |
 
 ## Appendix B. Server addresses (`engine/publish/server.py`, port 8765)
 

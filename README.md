@@ -2,41 +2,43 @@
 
 A real-time, multimodal transit "heartbeat" for Sydney's CBD. It ingests live train,
 metro, light rail, ferry and bus data from Transport for NSW, tracks every vehicle
-currently moving through the CBD, and renders them as glowing points of light on a
-map — built to eventually project onto a physical 3D scale model of the CBD, but
-fully usable on a normal screen today.
+currently moving through the CBD, and projects them onto a physical scale model of the
+CBD as arrows moving along the model's own streets and rail corridors. It also runs on
+any normal screen. Every live frame is recorded, so past peaks can be replayed and each
+stop builds up a history of how late and how full vehicles arrive.
 
 ```
 python scripts/run_publish.py
 ```
 
 ...starts the whole thing: live data ingestion, map matching, schedule-adherence
-scoring, and a browser-based renderer, all in one command.
+scoring, recording, stop history and a browser-based renderer, all in one command.
+First-time setup (Python environment, API key, timetable cache) is under
+[Running it](#running-it).
 
 ---
 
 ## What it actually looks like
 
 Open `http://127.0.0.1:8765/` once the server is running: a black background with
-every bus, train, metro, light rail vehicle and ferry currently in the model's footprint
-shown as an arrow pointing the way it's travelling, colour-coded by whether it's running
-on time (or by traffic or crowding), sized by mode (a train reads bigger than a bus),
-with a short comet tail showing recent movement and dim route corridors underneath so
-an empty street reads as empty rather than as a gap. Street, area, stop and background
-map layers go on top; see `docs/PROJECT_REPORT.md` §6 for all of them.
+every bus, train, metro, light rail vehicle and ferry currently in the CBD shown as an
+arrow pointing the way it's travelling, coloured by one of three views (schedule,
+traffic or crowding), sized by mode (a train reads bigger than a bus), with a short tail
+showing its last 30 seconds of travel and dim route corridors underneath so an empty
+street reads as empty rather than as a gap. Hovering over a vehicle on the laptop shows
+its exact lateness.
 
 Open `http://<laptop address>:8765/control` on the tablet next to the model. The
 projector mirrors the laptop screen, so the projected view shows map content only (no
 buttons, hints or cursor), and everything is controlled from the tablet instead:
 
-- **Display** (for visitors): live or replay (Replay mode → day → AM/PM peak), vehicle
-  types and colour, street layers and directions, stops and stop history, route filter,
-  area layers, background map, and "What the colours mean", which defines every colour
-  shown with its cut-off.
+- **Display** (for visitors): which vehicle types are shown, the colour view, street
+  and area layers, stop markers and stop history, singling out routes, live or replayed
+  time, and a legend that states the cut-off for every colour.
 - **Team** (behind a PIN, `controller.team_pin` in config): projection theme,
-  verification overlay, an on-projection status line, alignment nudge, crosshair
-  calibration, pressure weights, and system health (vehicles per mode, feed age, API
-  requests used today).
+  verification overlay, an on-projection status line, alignment (nudge, corner fit,
+  crosshair calibration), pressure weights, and system health (vehicles per mode, feed
+  age, API usage).
 - **Stats**: on-time percentages by mode, active service alerts, and the busiest
   interchanges (this used to be the separate `/stats` page, which now redirects here).
 
@@ -51,12 +53,11 @@ scale model of the CBD on a table, a projector mounted above it pointing straigh
 down, and the browser renderer's output projected onto the model so vehicles appear
 to move along the model's actual streets and rail corridors in real time.
 
-The team's model and projector now exist (the footprint is the team's surveyed model
-corners, about 13.2 × 6.6 km). Everything works identically with or without them.
-Calibration (aligning crosshairs to registration marks on the model) is fully built and
-tested with synthetic points; the real calibration session happens on the model.
-Without a calibration, the renderer uses a simple flat aspect-correct fit of the
-bounding box — good enough to view on any screen.
+That is how it runs at the showcase: the model and projector are set up, and the
+projection is aligned to the model with the calibration tools described under
+[Calibrating onto the physical model](#calibrating-onto-the-physical-model). Without a
+saved calibration (for example on a laptop screen), the renderer falls back to a simple
+aspect-correct fit of the bounding box, so everything also works on any normal screen.
 
 ---
 
@@ -66,10 +67,11 @@ bounding box — good enough to view on any screen.
 normalises them, and publishes a clean stream of positioned vehicles with
 schedule-adherence state. It has no idea a projector exists.
 
-**The projection renderer** consumes that stream and draws it. Today that means a
-plain aspect-correct fit of the bounding box into whatever browser window it's in;
-once real calibration data exists, it'll mean a homography onto actual projector
-pixel space — without any change to the drawing code itself.
+**The projection renderer** consumes that stream and draws it. With a saved
+calibration it maps coordinates onto projector pixels through a homography, with the
+nudge and corner fit on top; without one, it uses a plain aspect-correct fit of the
+bounding box into the browser window. The drawing code is the same either way: only the
+object that turns latitude/longitude into pixels changes.
 
 The data engine runs completely headlessly and can be (and was, throughout
 development) verified with no renderer attached at all.
@@ -104,12 +106,13 @@ Transport for NSW Open Data Hub
                           │
               ┌───────────┴────────────┐
               ▼                        ▼
-      WebSocket (~2Hz)           HTTP (/snapshot, /aggregate,
-      compact vehicle frames     /shapes, /config, /calibration)
+      WebSocket (~2Hz)           HTTP (see API reference below)
+      vehicle frames +           shapes, stops, stop history,
+      shared control state       street segments, layers, replays
               │                        │
               ▼                        ▼
       renderer/index.html      renderer/controller.html
-      (the model view)          (the tablet: controls, legend, stats)
+      (the projected model view) (the tablet: Display / Team / Stats)
 ```
 
 ---
@@ -210,6 +213,35 @@ python scripts/analyse_congestion.py    # agreement with TfNSW's labels -> data/
 
 Restart the server after rebuilding the baseline.
 
+## Stop history and route focus
+
+Every time a vehicle passes a stop, the server records how late it was and how full it
+was (`engine/history/`, stored in `data/history/stop_visits.sqlite`). A vehicle has
+passed a stop when the next stop in its TfNSW trip update changes. Only live data is
+recorded: replays never write to the history.
+
+**Stop history** (tablet: Display → Stop history, or **O**) colours each stop by its
+median lateness, with fixed bands of 1, 2 and 4 minutes, or by how often vehicles arrive
+with few seats left. The **Median / Average** switch changes the lateness summary: a big
+gap between the two marks a stop that is usually fine but occasionally very late.
+Hovering over a stop shows its visit count, median and average lateness, and lateness
+for vehicles with seats available against fuller ones.
+
+Rules applied before a stop is coloured:
+
+- at least **20 visits** (at 20, the median is typically within ~25 s of the long-run
+  value, under half the narrowest colour band);
+- lateness outside **30 minutes early to 3 hours late** is treated as a feed error and
+  left out (e.g. light rail readings ~42 hours late);
+- a whole trip reporting exactly 0 s means TfNSW has no live prediction, so it counts
+  as unknown, not on time; stops marked skipped or no-data, and stops a feed lists after
+  the vehicle has already passed them, are ignored.
+
+**Single out routes** (Display → Single out routes): type up to 8 route numbers. Each gets
+its own colour from a colour-blind-safe palette, other vehicles fade out, and the stop
+layers show only those routes' stops. Endpoints: `/stop_history`, `/routes`,
+`/route?name=`.
+
 ## Background map
 
 The model has its own streets, so the projection's background is plain by default. For a
@@ -265,20 +297,32 @@ pulse-cbd/
   config/config.yaml       Single source of truth: bounding box, GTFS endpoints,
                             adherence thresholds, interchange list, calibration path.
                             Secrets never live here.
-  .env                      TFNSW_API_KEY (gitignored)
-  data/                     gitignored: static cache, recordings, calibration.json
+  pyproject.toml            Dependencies (runtime, plus [dev] for tests, [prep] for data prep)
+  .env.example              Copy to .env and add TFNSW_API_KEY (.env is gitignored)
+  data/                     gitignored: timetable cache, recordings, stop history,
+                            calibration, demand/BOAM/basemap inputs
 
   engine/
     config.py                Loads config.yaml + .env
     static/                  Phase 1 — fetch.py, filter.py, cache.py
-    sources/                 Phase 2 — base.py (Source interface), live.py, recorder.py
+    sources/                 Phase 2 — base.py (Source interface), live.py, recorder.py,
+                              replay.py, footprint.py (trims recordings), budget.py
+                              (daily API quota)
     normalise/                Phase 2/3 — protobuf decode, quirk handling, static join,
                               map matching (projection.py, map_match.py), schedule
                               deviation (trip_updates.py), adherence classification,
                               the rolling aggregate layer (aggregate.py), and enrich.py
                               which ties it all onto a VehicleRecord
+                              Also segments.py (street colours) and travel_time.py
+                              (our own congestion measure)
+    history/                  stop_tracker.py (detects a vehicle passing a stop) and
+                              store.py (SQLite stop visits and per-stop summaries)
+    demand/                   areas.py (jobs, service gap, Opal 2016), boam.py (typical
+                              bus load and time lost), pressure.py (combined score)
+    analysis/                 collect.py (data collection for the step 6 analysis)
     publish/                  Phase 4/5/6 — feed.py (long-running live service),
-                              server.py (aiohttp: WebSocket + HTTP), shapes_export.py
+                              server.py (aiohttp: WebSocket + HTTP), control.py (shared
+                              tablet/projector state), route_focus.py, shapes_export.py
                               (clips corridor geometry for the browser), homography.py
                               + calibration.py (Phase 5)
 
@@ -291,8 +335,14 @@ pulse-cbd/
     run_phase2.py             Headless realtime ingestion (dev/debug tool)
     run_phase3.py             + map matching/adherence (dev/debug tool)
     run_publish.py            The real entry point — starts everything
+    run_record.py             Record without the server
+    install_server_service.py / install_recording_schedule.py   macOS launchd jobs
+    prepare_demand_data.py, import_boam.py, export_boam.py, fetch_basemap.py
+                              One-off data setup for the optional layers
+    build_freeflow.py, analyse_congestion.py, experiment_congestion_*.py
+                              Step 6 congestion analysis
 
-  tests/                     204 tests, one file per module
+  tests/                     208 tests, one file per module
   docs/DECISIONS.md          Every non-obvious judgment call made during the build,
                               and why — read this for the "why" behind anything
                               that looks like it could've been done differently
@@ -302,14 +352,32 @@ pulse-cbd/
 
 ## Running it
 
-**Prerequisites**: Python 3.11+, a free Transport for NSW Open Data Hub API key
-(register at opendata.transport.nsw.gov.au), and the venv set up:
+**Prerequisites**: Python 3.11+, git, and a free Transport for NSW Open Data Hub API key
+(register at opendata.transport.nsw.gov.au). Git LFS is only needed for the optional
+demand layers.
+
+**Install** (from the repository folder). macOS / Linux:
 
 ```bash
-cd ~/pulse-cbd
-python3 -m venv .venv && source .venv/bin/activate
-pip install -e .
+python3 -m venv .venv
+source .venv/bin/activate
+pip install -e ".[dev]"        # runtime dependencies + pytest
+cp .env.example .env
 ```
+
+Windows (PowerShell):
+
+```powershell
+py -3 -m venv .venv
+.venv\Scripts\Activate.ps1
+pip install -e ".[dev]"
+copy .env.example .env
+```
+
+All dependencies are declared in `pyproject.toml`: shapely, pyproj, pyyaml, httpx,
+protobuf, aiohttp and numpy at run time; pytest and grpcio-tools under `[dev]`; pyshp
+under `[prep]`, only for `scripts/prepare_demand_data.py`. Plain `pip install -e .` is
+enough to run the system but not the tests.
 
 Put your API key in `.env` (never commit this file):
 
@@ -326,8 +394,14 @@ python scripts/run_phase1.py --seed-dir /path/to/gtfs/extract
 python scripts/run_phase1.py
 ```
 
-**Run it for real**, kept running by launchd (starts at login, restarts within 30 s if it
-stops; log in `data/recordings/server.log`):
+**Run it**: on any platform,
+
+```bash
+python scripts/run_publish.py
+```
+
+**On the showcase Mac**, keep it running with launchd instead (starts at login, restarts
+within 30 s if it stops; log in `data/recordings/server.log`; macOS only):
 
 ```bash
 python scripts/install_server_service.py              # install and start
@@ -335,14 +409,14 @@ launchctl kickstart -k gui/$(id -u)/com.pulsecbd.server   # restart (e.g. after 
 python scripts/install_server_service.py --uninstall  # stop for good
 ```
 
-While it's installed, `kill` only restarts the server. For a one-off run in the terminal
-instead (uninstall the service first, or the port is taken): `python scripts/run_publish.py`.
+While it's installed, `kill` only restarts the server, and `run_publish.py` in a
+terminal will fail because the port is taken: uninstall the service first.
 
 Then open `http://127.0.0.1:8765/` full-screen on the laptop (it's mirrored to the
 projector) and the `/control` URL the server prints on the tablet.
 
 **Keyboard backup** on the projector page (each key goes through the server, so the
-tablet stays in sync): **C** calibrate, **V** verification overlay, **H** status line,
+tablet stays in sync): **C** calibrate, **F** corner fit, **V** verification overlay, **H** status line,
 **T** theme, **M** background map (plain / detailed / full), **P** interchange pulses,
 **S** stop markers, **O** stop history, **L** dot colour (schedule / traffic / crowding),
 **K** street lines (off / traffic / crowding), **A** areas (off / jobs / service gap / Opal 2016 / pressure),
@@ -360,8 +434,17 @@ python scripts/run_phase3.py --cycles 7            # + map matching/adherence + 
 **Tests**:
 
 ```bash
-pytest        # 204 tests, ~2s, no network required
+pytest        # 208 tests, a few seconds, no network or API key required
 ```
+
+**Troubleshooting**
+
+- *Tablet buttons for Jobs / Service gap / Opal / Pressure are greyed out*: the demand
+  input files aren't in `data/demand/` on this machine (see [Demand layers](#demand-layers)).
+- *BOAM street layers are greyed out*: no BOAM day files imported (see BOAM above).
+- *Detailed / Full background map greyed out*: run `scripts/fetch_basemap.py`.
+- *Stop history is empty*: it fills while the server runs live; stops need 20 visits.
+- *Nothing moves*: check `.env` has the API key and `/health` shows recent feed times.
 
 ### Calibrating onto the physical model
 
@@ -380,20 +463,64 @@ pytest        # 204 tests, ~2s, no network required
 
 Between weekly sessions the rig stays set up, so start each session with **V** and
 fix small drift with the tablet's nudge (Team → Alignment) rather than recalibrating.
-Saving a new calibration resets the nudge.
+
+**Corner fit** (Team → Alignment → Corner fit, or **F**) is the quick way to line the
+map up when the projector has moved or isn't square to the table: four handles appear
+on the footprint's corners (NW, NE, SE, SW); drag each onto the matching corner of the
+model on the laptop, and the whole map follows (it's a homography through those four
+points, so it also takes out keystone). For fine moves, set "Arrows move" to a corner
+and use the arrow pad. The offsets are saved with the nudge and survive restarts;
+**Reset corners** puts them back. Saving a new crosshair calibration resets both the
+nudge and the corners.
 
 ---
+
+## API reference
+
+The server (`engine/publish/server.py`) listens on port 8765. All responses are JSON
+unless noted.
+
+| Endpoint | What it returns |
+|---|---|
+| `GET /` | The projector page (`renderer/index.html`) |
+| `GET /control` | The tablet controller (`renderer/controller.html`); `/stats` redirects here |
+| `GET /ws` | WebSocket: vehicle frames (~2 Hz) and the shared control state; clients send `{"control": {...}}` patches |
+| `GET /health` | Feed ages, vehicles per mode, API usage, connected pages, playback state |
+| `GET /snapshot` | Every current vehicle record in full |
+| `GET /aggregate` | Rolling on-time shares by mode, active alerts, interchange activity |
+| `GET /config` | The renderer's settings: bounding box, thresholds, palette, labels |
+| `GET /shapes` | Route corridors clipped to the model footprint |
+| `GET /stops` | Stop locations |
+| `GET /stop_history` | Per-stop visits, median/average lateness, crowded share, seated vs fuller lateness |
+| `GET /routes` | Route catalogue for "Single out routes" |
+| `GET /route?name=333` | One route's shapes and stops (404 if unknown) |
+| `GET /segments` | Live street colours (traffic, crowding, our measure) |
+| `GET /areas` (`?meta=1`) | Area layers on zones and grid (or just what's available) |
+| `GET /pressure?unit=zones` | Pressure scores per area with the current weights |
+| `GET /boam` (`?meta=1`) | BOAM sections: typical load and time lost (or just the days used) |
+| `GET /basemap` | The offline background map, if downloaded |
+| `GET /recordings` | Replayable recorded peaks and their coverage |
+| `GET /calibration` / `POST /calibration` | The saved homography / save a new one from crosshair points |
 
 ## Configuration reference
 
 Everything tunable lives in `config/config.yaml`:
 
-- `bounding_box` — the model footprint, from the team's surveyed corners (~13.2 km E-W x 6.6 km N-S)
+- `bounding_box` — the model's footprint in lat/lon (~13.2 km E-W x 6.6 km N-S)
 - `static_gtfs` — the Complete GTFS bundle download URL and cache paths
 - `realtime_gtfs.feeds` — the full endpoint matrix for all 7 modes x 3 feed types (a mix of v1/v2 paths, verified live against the real API)
 - `adherence_thresholds_seconds` — per-mode on-time thresholds and the late→very_late multiplier
 - `interchanges` / `interchange_radius_m` — which stations get pulse nodes, and the proximity radius
 - `calibration_path` — where the computed homography is persisted
+- `realtime_gtfs.poll_interval_seconds` (15) and `stale_after_seconds` (90) — how often
+  feeds are polled, and how long a silent vehicle stays on the map
+- `server` — host and port (8765)
+- `controller.team_pin` — the PIN for the tablet's Team tab (not a security boundary)
+- `api_budget` — the daily request cap (57,000, ~5% under TfNSW's quota), the peak
+  windows always polled at full rate, and the slowest pace when the budget runs low
+- `derived_congestion` — free-flow baseline path and thresholds for our own congestion measure
+
+The nudge and corner-fit offsets are saved separately in `data/projection_nudge.json`.
 
 ## Notable design decisions
 
@@ -410,21 +537,25 @@ stopping to ask, in the order they were made, each with its reasoning. Highlight
 
 ## Current status
 
-All six phases from the original design brief are built, tested (204 automated
-tests, as of 5 Nov 2026), and live-verified against the real Transport for NSW API:
+All six phases from the original design brief are built, tested (208 automated
+tests, as of 5 Nov 2026), live-verified against the real Transport for NSW API, and
+running on the physical model:
 
 1. ✅ Static GTFS foundation
 2. ✅ Headless realtime ingestion
 3. ✅ Map matching and schedule adherence
 4. ✅ Renderer on a flat screen
-5. ✅ Calibration and projection tooling (tested with synthetic data)
+5. ✅ Calibration and projection onto the physical model (crosshair calibration,
+   nudge, corner fit)
 6. ✅ Interchange pulses and the stats panel (now the tablet's Stats tab)
 
-On top of those, the showcase plan's steps 1–6 are done: street traffic and crowding
-(pooled along shared streets, with direction modes), replay and time-lapse of any
-recorded peak, jobs / service gap / Opal 2016 areas, the combined pressure layer, BOAM
-bus load and time lost, and our own congestion measure compared with TfNSW's.
+Built on top since: recording and replay of every peak, the tablet controller, street
+traffic and crowding layers, demand and BOAM layers, our own congestion measure
+(step 6), stop history with route focus, and an optional background map.
 
-**What's not done**: testing on the physical model (calibration, checking every layer),
-the report figures and a rehearsal. The full picture — how everything is measured, why,
-what's left, and the state of the machine — is in `docs/PROJECT_REPORT.md`.
+**Known limitations**: stop colours show lateness inherited from earlier in the trip,
+not only delay caused at that stop; the crowding–lateness relationship is an
+association, not proof of cause; the morning peak has far fewer recorded visits than the
+evening peak; and occasionally TfNSW attaches a bus to the wrong trip, which the median
+(not the average) protects against. See `docs/DECISIONS.md` for the reasoning behind
+every threshold.
