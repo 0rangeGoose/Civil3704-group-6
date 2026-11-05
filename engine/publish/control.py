@@ -8,8 +8,10 @@ and broadcasts the result to every connected page -- so the projector, the
 tablet and any other open controller always agree.
 
 Only the nudge (a small shift/scale on top of the calibration, for drift
-between weekly sessions) is persisted across restarts; everything else
-resets to its default, which is the safe state to start a showcase from.
+between weekly sessions) and the corner warp (each corner of the footprint
+dragged onto the model's corner, which also takes out projector keystone)
+are persisted across restarts; everything else resets to its default, which
+is the safe state to start a showcase from.
 """
 from __future__ import annotations
 
@@ -61,6 +63,11 @@ IDENTITY_NUDGE = {"dx": 0.0, "dy": 0.0, "scale": 1.0}
 REPLAY_SPEED_LIMITS = (1.0, 100.0)
 DEFAULT_REPLAY_SPEED = 25.0  # a 2h10m peak in ~5 minutes: the showcase default
 _NUDGE_LIMITS = {"dx": (-2000.0, 2000.0), "dy": (-2000.0, 2000.0), "scale": (0.5, 2.0)}
+# Corner warp: screen-pixel offset of each footprint corner from where the
+# calibration (plus nudge) puts it. North-west, north-east, south-east, south-west.
+WARP_CORNERS = ("tl", "tr", "br", "bl")
+_WARP_LIMIT = (-2000.0, 2000.0)
+IDENTITY_WARP = {corner: [0.0, 0.0] for corner in WARP_CORNERS}
 
 DEFAULT_STATE: dict[str, Any] = {
     "theme": "dark",
@@ -69,6 +76,7 @@ DEFAULT_STATE: dict[str, Any] = {
     "verify": False,
     "hud": False,
     "calibrate": False,
+    "corners": False,  # corner-fit mode: drag the footprint's corners on the projector
     "interchanges": True,
     "stops": False,
     "stop_history": False,
@@ -84,6 +92,7 @@ DEFAULT_STATE: dict[str, Any] = {
     "playback": {"session": "live", "speed": DEFAULT_REPLAY_SPEED, "paused": False},
     "modes": {group: True for group in MODE_GROUPS},
     "nudge": dict(IDENTITY_NUDGE),
+    "warp": copy.deepcopy(IDENTITY_WARP),
 }
 
 
@@ -101,7 +110,9 @@ class ControlState:
         self.state: dict[str, Any] = copy.deepcopy(DEFAULT_STATE)
         if nudge_path is not None and nudge_path.exists():
             try:
-                self.apply({"nudge": json.loads(nudge_path.read_text(encoding="utf-8"))})
+                saved = json.loads(nudge_path.read_text(encoding="utf-8"))
+                # Older files hold just the nudge.
+                self.apply(saved if isinstance(saved, dict) and "nudge" in saved else {"nudge": saved})
             except (ControlError, ValueError) as exc:
                 logger.warning("ignoring unreadable nudge file %s: %s", nudge_path, exc)
 
@@ -172,7 +183,7 @@ class ControlState:
                     if isinstance(w, bool) or not isinstance(w, (int, float)):
                         raise ControlError(f"weights.{name} must be a number")
                     updated["weights"][name] = _clamp(float(w), WEIGHT_LIMITS)
-            elif key in ("verify", "hud", "calibrate", "interchanges", "stops", "stop_history"):
+            elif key in ("verify", "hud", "calibrate", "corners", "interchanges", "stops", "stop_history"):
                 if not isinstance(value, bool):
                     raise ControlError(f"{key} must be true/false")
                 updated[key] = value
@@ -212,20 +223,32 @@ class ControlState:
                     if isinstance(amount, bool) or not isinstance(amount, (int, float)):
                         raise ControlError(f"nudge.{field} must be a number")
                     updated["nudge"][field] = _clamp(float(amount), _NUDGE_LIMITS[field])
+            elif key == "warp":
+                if not isinstance(value, dict):
+                    raise ControlError("warp must be an object")
+                for corner, offset in value.items():
+                    if corner not in WARP_CORNERS:
+                        raise ControlError(f"unknown warp corner {corner!r}")
+                    if (not isinstance(offset, list) or len(offset) != 2
+                            or any(isinstance(v, bool) or not isinstance(v, (int, float)) for v in offset)):
+                        raise ControlError(f"warp.{corner} must be [dx, dy]")
+                    updated["warp"][corner] = [_clamp(float(v), _WARP_LIMIT) for v in offset]
             else:
                 raise ControlError(f"unknown control {key!r}")
 
-        nudge_changed = updated["nudge"] != self.state["nudge"]
+        alignment_changed = updated["nudge"] != self.state["nudge"] or updated["warp"] != self.state["warp"]
         self.state = updated
-        if nudge_changed:
+        if alignment_changed:
             self._save_nudge()
         return self.state
 
     def reset_nudge(self) -> dict[str, Any]:
-        return self.apply({"nudge": dict(IDENTITY_NUDGE)})
+        """Back to the bare calibration: no nudge, no corner warp."""
+        return self.apply({"nudge": dict(IDENTITY_NUDGE), "warp": copy.deepcopy(IDENTITY_WARP)})
 
     def _save_nudge(self) -> None:
         if self._nudge_path is None:
             return
         self._nudge_path.parent.mkdir(parents=True, exist_ok=True)
-        self._nudge_path.write_text(json.dumps(self.state["nudge"]), encoding="utf-8")
+        self._nudge_path.write_text(
+            json.dumps({"nudge": self.state["nudge"], "warp": self.state["warp"]}), encoding="utf-8")

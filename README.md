@@ -338,7 +338,7 @@ Then open `http://127.0.0.1:8765/` full-screen on the laptop (it's mirrored to t
 projector) and the `/control` URL the server prints on the tablet.
 
 **Keyboard backup** on the projector page (each key goes through the server, so the
-tablet stays in sync): **C** calibrate, **V** verification overlay, **H** status line,
+tablet stays in sync): **C** calibrate, **F** corner fit, **V** verification overlay, **H** status line,
 **T** theme, **M** background map (plain / detailed / full), **P** interchange pulses,
 **S** stop markers, **O** stop history, **L** dot colour (schedule / traffic / crowding),
 **K** street lines (off / traffic / crowding), **A** areas (off / jobs / service gap / Opal 2016 / pressure),
@@ -376,7 +376,15 @@ pytest        # 203 tests, ~2s, no network required
 
 Between weekly sessions the rig stays set up, so start each session with **V** and
 fix small drift with the tablet's nudge (Team → Alignment) rather than recalibrating.
-Saving a new calibration resets the nudge.
+
+**Corner fit** (Team → Alignment → Corner fit, or **F**) is the quick way to line the
+map up when the projector has moved or isn't square to the table: four handles appear
+on the footprint's corners (NW, NE, SE, SW); drag each onto the matching corner of the
+model on the laptop, and the whole map follows (it's a homography through those four
+points, so it also takes out keystone). For fine moves, set "Arrows move" to a corner
+and use the arrow pad. The offsets are saved with the nudge and survive restarts;
+**Reset corners** puts them back. Saving a new crosshair calibration resets both the
+nudge and the corners.
 
 ---
 
