@@ -9,8 +9,7 @@ Both come straight from the realtime feed rather than being estimated:
 
 Each maps to a small integer level, 0-3, which colours a vehicle when the
 tablet's "Colour the vehicles by" is Traffic or Crowding. Levels are ordinal
-categories, not measurements. (Until 5 Nov 2026 street layers also averaged
-them along streets; removed, see docs/DECISIONS.md.)
+categories, not measurements.
 """
 from __future__ import annotations
 

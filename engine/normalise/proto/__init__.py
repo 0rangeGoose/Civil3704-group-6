@@ -9,8 +9,9 @@ vehicle-positions-v2 dataset) via:
         engine/normalise/proto/gtfs-realtime_1007_extension.proto
 
 Re-run that if the .proto file is ever refreshed from the Open Data Hub.
-See docs/DECISIONS.md for why this is compiled standalone rather than via
-the gtfs-realtime-bindings package.
+It is compiled standalone rather than via the gtfs-realtime-bindings package
+because the TfNSW extension file redefines the base messages inline instead of
+importing Google's official proto.
 """
 from . import gtfs_realtime_1007_extension_pb2 as pb
 

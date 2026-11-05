@@ -33,8 +33,7 @@ MODE_GROUPS: dict[str, list[str]] = {
     "ferries": ["ferries"],
 }
 
-# What vehicle-dot colour shows. (Street layers, and their direction and BOAM
-# peak settings, were removed on 5 Nov 2026; see docs/DECISIONS.md.)
+# What vehicle-dot colour shows.
 LENSES = ("adherence", "congestion", "crowding")
 STOP_METRICS = ("median", "mean")
 # Background under everything: plain fill (the default -- the model has the
@@ -68,6 +67,7 @@ DEFAULT_STATE: dict[str, Any] = {
     "corners": False,  # corner-fit mode: drag the footprint's corners on the projector
     "stops": False,
     "early_buses": True,  # show buses more than 59 s early in blue; off: as on time
+    "blue_highlight": False,  # routes lit up on hover/tap: blue (on) or the usual white/navy (off)
     "stop_history": False,
     "stop_metric": "median",
     "routes": [],  # route short names singled out; empty shows everything
@@ -148,7 +148,7 @@ class ControlState:
                         slots[name] = free.pop(0)
                 updated["routes"] = routes
                 updated["route_slots"] = slots
-            elif key in ("verify", "hud", "calibrate", "corners", "stops", "stop_history", "early_buses"):
+            elif key in ("verify", "hud", "calibrate", "corners", "stops", "stop_history", "early_buses", "blue_highlight"):
                 if not isinstance(value, bool):
                     raise ControlError(f"{key} must be true/false")
                 updated[key] = value

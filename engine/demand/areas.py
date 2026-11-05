@@ -22,8 +22,7 @@ Per unit:
   relative to the rest of the footprint (underserved), negative = more service
   than jobs.
 Each layer also gets a 0-4 colour bin: quintiles for jobs (among units with
-any), fixed bands for the gap (see GAP_BANDS). An Opal 2016 tap layer was
-removed on 5 Nov 2026 (docs/DECISIONS.md).
+any), fixed bands for the gap (see GAP_BANDS).
 """
 from __future__ import annotations
 

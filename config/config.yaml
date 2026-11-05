@@ -44,8 +44,7 @@ realtime_gtfs:
   # couldn't be confirmed against a live 200 -- the live source in
   # engine/sources/live.py logs and skips (not crashes on) any path that
   # 404s/403s, per the project brief, so a wrong guess here surfaces
-  # immediately in logs rather than silently losing a mode. See
-  # docs/DECISIONS.md.
+  # immediately in logs rather than silently losing a mode.
   feeds:
     trip_updates:
       sydneytrains: "/v2/gtfs/realtime/sydneytrains"
@@ -75,7 +74,7 @@ realtime_gtfs:
 
 punctuality:
   # On time = no more than early_seconds early and no more than late_seconds
-  # late (positive delay = late), per mode category. Sources (docs/DECISIONS.md, 5 Nov):
+  # late (positive delay = late), per mode category. Sources:
   # - suburban_rail, intercity: TfNSW Sydney Trains / NSW TrainLink (Intercity)
   #   punctuality: within 5 / 6 minutes of the timetable at the final destination.
   # - bus: Greater Sydney Bus Contract, Schedule 4 (KPIs), 2023: departing no more

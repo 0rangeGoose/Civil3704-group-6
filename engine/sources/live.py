@@ -124,7 +124,7 @@ class LiveSource:
         if resp.status_code in (404, 403):
             logger.error(
                 "%s: %s %s -- disabling this endpoint for the rest of the run "
-                "(check docs/DECISIONS.md, this path may need correcting)",
+                "(this path may need correcting in config/config.yaml)",
                 key, resp.status_code, path,
             )
             self._disabled.add(key)

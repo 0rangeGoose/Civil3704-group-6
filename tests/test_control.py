@@ -164,6 +164,15 @@ def test_corrupt_nudge_file_is_ignored(tmp_path):
     assert ControlState(path).state["nudge"] == {"dx": 0.0, "dy": 0.0, "scale": 1.0}
 
 
+def test_blue_highlight_off_by_default_and_switchable():
+    c = ControlState()
+    assert c.state["blue_highlight"] is False
+    c.apply({"blue_highlight": True})
+    assert c.state["blue_highlight"] is True
+    with pytest.raises(ControlError):
+        c.apply({"blue_highlight": "on"})
+
+
 def test_early_buses_shown_by_default_and_switchable():
     c = ControlState()
     assert c.state["early_buses"] is True

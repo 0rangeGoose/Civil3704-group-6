@@ -12,8 +12,7 @@ code the projection runs), and three tables are written in that one pass:
   their first stop, other modes' predicted delay at the final stop), with its
   on-time state: what the Stats tab counts (engine/normalise/aggregate.py).
 
-(A streets.csv of the street colours was removed with the street layers on
-5 Nov 2026.) The replay starts 10 minutes before the peak so trips and stop
+The replay starts 10 minutes before the peak so trips and stop
 visits already in progress are tracked; rows before the peak's start aren't
 written.
 """

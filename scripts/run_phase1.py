@@ -3,7 +3,7 @@
 
 Fetch (or seed) the static GTFS bundle, filter it to the CBD bounding box,
 build the local SQLite cache, and print a summary of what was retained.
-No realtime, no rendering -- see docs/DECISIONS.md and the project brief.
+No realtime, no rendering.
 """
 from __future__ import annotations
 

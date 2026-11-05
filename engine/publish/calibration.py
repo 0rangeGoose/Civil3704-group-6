@@ -5,7 +5,7 @@ a simple equirectangular projection anchored at the bounding box centre here
 -- the brief's suggested alternative to UTM 56S -- rather than the pyproj
 UTM transform map matching uses (engine/normalise/projection.py), because
 the renderer has to reproduce this exact same lat/lon -> metric step in
-plain JS with no pyproj available. See docs/DECISIONS.md.
+plain JS with no pyproj available.
 """
 from __future__ import annotations
 

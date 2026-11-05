@@ -3,7 +3,7 @@
 States: early, on_time, late, very_late, cancelled, unknown.
 
 The on-time window per mode comes from config (``punctuality``), each limit
-from a published source where one exists (docs/DECISIONS.md, 5 Nov):
+from a published source where one exists:
 
 - Sydney Trains and NSW TrainLink intercity: TfNSW's punctuality standard,
   within 5 and 6 minutes of the timetable (measured by TfNSW at the final

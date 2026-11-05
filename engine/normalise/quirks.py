@@ -27,7 +27,7 @@ def dedupe_ferry_entities(entities: list, fetched_at: datetime) -> list:
     ``fetched_at`` (a future/scheduled position, not a current one), then
     keeps the most recently timestamped survivor in each group. The exact
     rule for "current" isn't documented anywhere public, so this is a
-    judgment call -- see docs/DECISIONS.md.
+    judgment call.
     """
     fetched_epoch = fetched_at.timestamp()
     best: dict[str, tuple[int, object]] = {}

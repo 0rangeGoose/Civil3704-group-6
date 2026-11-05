@@ -1,7 +1,7 @@
 """Prepares route-corridor shapes for the renderer's base layer.
 
 The Phase 1 cache retains a shape in full if *any* point crosses the CBD
-bounding box (see docs/DECISIONS.md's "Use the Complete GTFS bundle" entry),
+bounding box (the Complete GTFS bundle is used, filtered to the box),
 so a regional NSW Trains shape can run hundreds of km outside the box.
 Sending that whole thing to a browser would be enormous (the cache has 2500
 shapes / 3.8M points total) and pointless -- this clips each shape down to a

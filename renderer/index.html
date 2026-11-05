@@ -188,7 +188,7 @@ let theme = "dark";
 // the server first and comes back here via applyControl, so there is only
 // ever one source of truth.
 let control = {
-  theme: "dark", basemap: "plain", verify: false, hud: false, calibrate: false, early_buses: true, stops: false, stop_history: false, stop_metric: "median", routes: [], route_slots: {},
+  theme: "dark", basemap: "plain", verify: false, hud: false, calibrate: false, early_buses: true, blue_highlight: false, stops: false, stop_history: false, stop_metric: "median", routes: [], route_slots: {},
   lens: "adherence", area_layer: "none", area_unit: "zones", modes: {}, nudge: { dx: 0, dy: 0, scale: 1 },
   corners: false, warp: { tl: [0, 0], tr: [0, 0], br: [0, 0], bl: [0, 0] },
 };
@@ -244,8 +244,11 @@ function focusedStopIds() {
 // Hover highlight: pointing at a vehicle lights up its route; pointing at a
 // stop lights up every route serving it (from /stops' "routes"). Local to this
 // page -- it follows the pointer, not the shared display state -- and drawn
-// over the street colours, under the vehicles.
+// over the street colours, under the vehicles. The tablet's "Highlight colour"
+// switch (control.blue_highlight) swaps the usual colour for a bright blue.
 const HOVER_ROUTE_COLOR = { dark: "#ffffff", light: "#0b3d91" };
+const HOVER_ROUTE_BLUE = { dark: "#3d7bff", light: "#0a5cff" };
+function hoverRouteColor() { return (control.blue_highlight ? HOVER_ROUTE_BLUE : HOVER_ROUTE_COLOR)[theme]; }
 let hoverRoutesKey = "";
 let hoverRouteNames = [];
 let hoverRouteCanvas = null;
@@ -280,7 +283,7 @@ function drawHoverRoutes(names) {
   octx.lineJoin = "round";
   for (const pass of [{ width: 9, alpha: 0.25 }, { width: 3, alpha: 0.95 }]) {
     octx.lineWidth = pass.width;
-    octx.strokeStyle = withAlpha(HOVER_ROUTE_COLOR[theme], pass.alpha);
+    octx.strokeStyle = withAlpha(hoverRouteColor(), pass.alpha);
     for (const name of names) {
       for (const shapeId of (routeDetails[name] && routeDetails[name].shape_ids) || []) {
         const pts = shapes[shapeId];
@@ -404,6 +407,7 @@ function applyControl(next) {
   const routesChanged = JSON.stringify(next.routes || []) !== JSON.stringify(control.routes || []);
   const stopLayersChanged = next.stops !== control.stops || next.stop_history !== control.stop_history;
   const basemapChanged = next.basemap !== control.basemap;
+  const highlightChanged = next.blue_highlight !== control.blue_highlight;
   const layoutChanged =
     next.theme !== control.theme ||
     next.calibrate !== control.calibrate ||
@@ -420,6 +424,7 @@ function applyControl(next) {
   document.body.classList.toggle("fitting-corners", fittingCorners);
   if (draggingCorner === null) dragWarp = null; // the server's copy has caught up
   if (layoutChanged) rebuildLayers();
+  else if (highlightChanged) hoverRouteCanvas = hoverRouteNames.length ? drawHoverRoutes(hoverRouteNames) : null;
   else if (areaChanged) areaLayerCanvas = drawAreaLayer();
   if (routesChanged) loadRouteFocus();
   else if (!layoutChanged && focusActive() && stopLayersChanged) {
@@ -692,7 +697,7 @@ function makeProjector(bbox, width, height) {
 
 // Same simple equirectangular-at-box-centre projection calibration.py uses
 // to build the homography, reproduced here since the browser has no pyproj.
-// Must match calibration.py's to_local_metric exactly -- see DECISIONS.md.
+// Must match calibration.py's to_local_metric exactly.
 const DEG_TO_M = 111320.0;
 function toLocalMetric(lat, lon, centerLat, centerLon) {
   const x = (lon - centerLon) * Math.cos(centerLat * Math.PI / 180) * DEG_TO_M;
