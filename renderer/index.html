@@ -239,10 +239,11 @@ function focusedStopIds() {
   return ids;
 }
 
-// Hover highlight: pointing at a vehicle lights up its route; pointing at a
-// stop lights up every route serving it (from /stops' "routes"). Local to this
-// page -- it follows the pointer, not the shared display state -- and drawn
-// over the street colours, under the vehicles. The tablet's "Highlight colour"
+// Route highlight: clicking a vehicle lights up its route; clicking a stop
+// lights up every route serving it (from /stops' "routes"). It stays until you
+// click the same thing again or click empty map. Local to this page, not the
+// shared display state, and drawn over the street colours, under the vehicles.
+// (Pointing still shows the tooltip; only a click changes the highlight.) The tablet's "Highlight colour"
 // switch (control.blue_highlight) swaps the usual colour for a bright blue.
 const HOVER_ROUTE_COLOR = { dark: "#ffffff", light: "#0b3d91" };
 const HOVER_ROUTE_BLUE = { dark: "#3d7bff", light: "#0a5cff" };
@@ -481,6 +482,11 @@ const vehicles = new Map();
 // isn't over the canvas at all.
 let hoverX = null;
 let hoverY = null;
+// What the pointer was over on the last frame (set by the render loop), read
+// when the canvas is clicked; and what the current highlight was clicked on.
+let pointedKey = null;
+let pointedStop = null;
+let highlightedTarget = null; // "v:<vehicle key>" or "s:<stop id>"
 const hoverTooltipEl = document.getElementById("hover-tooltip");
 
 function resize() {
@@ -1167,9 +1173,8 @@ function render() {
     }
   }
   updateHoverTooltip(hoveredKey, hoveredStop);
-  const hoveredEntry = hoveredKey !== null ? vehicles.get(hoveredKey) : null;
-  setHoverRoutes(hoveredEntry ? [hoveredEntry.route_short_name].filter(Boolean)
-    : hoveredStop ? (stopRoutes.get(hoveredStop.id) || []) : []);
+  pointedKey = hoveredKey;
+  pointedStop = hoveredStop;
 
   if (control.hud) {
     const n = control.nudge;
@@ -1375,6 +1380,24 @@ canvas.addEventListener("mousemove", (ev) => {
 canvas.addEventListener("mouseleave", () => {
   hoverX = null;
   hoverY = null;
+});
+
+// Click a vehicle or stop to highlight its routes; click it again, or click
+// empty map, to clear. Ignored while calibrating or fitting corners, where
+// clicks drag handles instead.
+canvas.addEventListener("click", (ev) => {
+  if (calibrateMode || fittingCorners) return;
+  hoverX = ev.offsetX; // in case no frame has run since the pointer arrived
+  hoverY = ev.offsetY;
+  const entry = pointedKey !== null ? vehicles.get(pointedKey) : null;
+  const target = entry ? `v:${pointedKey}` : pointedStop ? `s:${pointedStop.id}` : null;
+  if (target === null || target === highlightedTarget) {
+    highlightedTarget = null;
+    setHoverRoutes([]);
+    return;
+  }
+  highlightedTarget = target;
+  setHoverRoutes(entry ? [entry.route_short_name].filter(Boolean) : (stopRoutes.get(pointedStop.id) || []));
 });
 
 function escapeHtml(text) {

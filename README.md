@@ -29,8 +29,8 @@ Open `http://127.0.0.1:8765/` full-screen on the laptop; the projector mirrors t
 screen. The projected page shows only map content: a black background, every vehicle as
 an arrow pointing the way it's travelling, sized by mode, with a short tail of its last
 30 seconds and dim route corridors underneath. Pointing at a vehicle shows its exact
-lateness and highlights its route; pointing at a stop lists and highlights the routes
-serving it.
+lateness, and pointing at a stop lists the routes serving it. Clicking a vehicle or stop
+highlights those routes until you click it again or click empty map.
 
 Open `http://<laptop address>:8765/control` on the tablet (the server prints this URL
 on startup). Use the laptop's own hotspot: venue and university Wi-Fi often stops
@@ -188,7 +188,7 @@ coloured:
 colour-blind-safe palette, other vehicles fade back, and the stop layers show only
 those routes' stops.
 
-**Route highlight**: pointing at a vehicle or stop lights up its routes in white (navy
+**Route highlight**: clicking a vehicle or stop lights up its routes in white (navy
 on the light theme), or in blue with the Display tab's Blue highlight switch on.
 
 ### Area layers
