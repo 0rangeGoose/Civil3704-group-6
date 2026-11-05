@@ -3,7 +3,7 @@
 **As of:** Thursday 5 November 2026, 11 pm (Sydney), the night before the showcase  
 **Showcase:** Friday 6 November 2026  
 **Feature freeze:** 30 October 2026. Every change after it was at the owner's request; §0 lists the ones made on 5 November  
-**Build:** branch `w12merge`, pushed to GitHub (`git log -1` for the exact commit), 173 automated tests passing  
+**Build:** branch **`week13`**, pushed to GitHub (`git log -1` for the exact commit), 173 automated tests passing  
 **Author:** Yoseph Kim, with Claude Code  
 **Name:** formerly *Pulse CBD*, renamed on 5 November 2026. The folder, code, service and log names still use `pulse-cbd` / `pulsecbd`  
 
@@ -29,7 +29,7 @@ The appendices list every display setting, every server address and every config
 | Thing | Where |
 | --- | --- |
 | Project folder | `~/pulse-cbd` (Python 3.13 virtual environment in `.venv`; activate with `source .venv/bin/activate`) |
-| Branch the laptop runs | `w12merge`, pushed to GitHub (latest commit: `git log -1`) |
+| Branch the laptop runs | **`week13`**, pushed to GitHub (latest commit: `git log -1`). See §13 for how it relates to `w12merge` |
 | GitHub remote | `group-repo` → `https://github.com/0rangeGoose/Civil3704-group-6` (private) |
 | Decision log | `docs/DECISIONS.md` (newest first) |
 | How to run everything | `README.md` |
@@ -37,7 +37,7 @@ The appendices list every display setting, every server address and every config
 
 The owner's working rules (from `~/.claude/CLAUDE.md` and instructions given in sessions):
 
-- Ask before any git commit unless told to commit. New work goes to **`w12merge`**. **Never push to `integration`** without an explicit instruction.
+- Ask before any git commit unless told to commit. New work goes to **`week13`** (since 5 Nov evening; before that `w12merge`). **Never push to `integration`** without an explicit instruction.
 - Check the changes for the TfNSW API key (kept in `.env`) before every push.
 - Use the `gh` command-line tool for GitHub.
 - When instructions are unclear or conflicting, stop and ask; never override or skip an instruction without asking.
@@ -60,7 +60,7 @@ Read this first if you are a new Claude Code session picking the project up.
 
 **State right now**
 
-- **Code:** everything below is committed and pushed to `w12merge` on GitHub. `git status` should be clean apart from the untracked teammate file `pulse-cbd-context.md`, if it reappears.
+- **Code:** everything below is committed and pushed to the new branch **`week13`** on GitHub, by the owner's choice, *without* merging anything from other branches. In particular, the teammate's "gradient" commit `3b32562` (pushed to `w12merge` at 9:22 pm on 5 Nov) is **not** in `week13`. It blends vehicle lateness colours from green to amber to red, and stop-history delay colours too, but it was written for the old 2× very-late rule and conflicts with the new punctuality code. Combining the two would mean adapting the gradient to the sourced limits. Ask the owner first. `git status` should be clean apart from the untracked teammate file `pulse-cbd-context.md`, if it reappears.
 - **The server** (launchd job `com.pulsecbd.server`) is running that code. It was last restarted at 10:45 pm on 5 Nov, live, with about 150–490 vehicles depending on the hour.
 - **The pages** load fresh code from disk. Any projector or tablet page opened before 10:45 pm needs a **reload**.
 - **Recordings:** the Thursday 5 Nov AM and PM peaks are both recorded at 100%, giving 28 replayable sessions.
@@ -99,7 +99,7 @@ Read this first if you are a new Claude Code session picking the project up.
 **Still to decide or do before the showcase** (details in §16)
 
 - **Mouse pointer:** the projector page is meant to hide it, but the teammate disabled that on 29 Oct for testing. Hover needs a pointer, so the owner must choose.
-- **The physical model:** every layer still needs checking on it (alignment was done by the teammate). Test the networking (hotspot versus Wi-Fi). Agree with the teammate that `w12merge` is the showcase build.
+- **The physical model:** every layer still needs checking on it (alignment was done by the teammate). Test the networking (hotspot versus Wi-Fi). Agree with the teammate that `week13` is the showcase build, and what to do about their gradient commit on `w12merge`.
 - **Showcase replay:** pick the default (e.g. Wed 4 Nov AM or Thu 5 Nov AM, both 100%). Remember to press **Live now** after each demonstration.
 
 **How the owner likes to work:** see the working rules below. In particular, ask before committing unless told to commit, verify with the owner before removing features, and check pages in Chrome after changes.
@@ -1090,13 +1090,14 @@ The code is in a private GitHub repository shared by the team, `0rangeGoose/Civi
 
 | Branch | Where | What it holds |
 | --- | --- | --- |
-| `w12merge` | local + GitHub | **Current, and the build to run.** The owner's work merged with the teammate's (merge `3ab2a8a`, 30 Oct), plus everything since (see below) |
+| `week13` | local + GitHub | **Current, and the build to run (since 5 Nov evening).** Everything on `w12merge` up to `5676e3b`, plus the 5 Nov evening commit(s) below. Pushed as a separate branch at the owner's request; nothing else merged in |
+| `w12merge` | local + GitHub | The owner's work merged with the teammate's (merge `3ab2a8a`, 30 Oct), plus everything up to `5676e3b`. On GitHub it also has the teammate's `3b32562` "gradient" (9:22 pm, 5 Nov), which `week13` doesn't include. The local copy has the 5 Nov evening commit but was never pushed |
 | `yosephW12` | local + GitHub | The owner's work through 30 October, before the merge (`3bfd432`) |
 | `integration` | GitHub, `67d4d9c` | The teammate's 11 commits of 29–30 October on top of the owner's work to 26 October. Fully contained in `w12merge` |
 | `test` | local + GitHub | The owner's prototype as of 28 August |
 | `main`, `mid-project-demo`, `test-pipline`, `Mid-project-demo-A-edits` | GitHub | The teammates' template and dashboard work |
 
-Commits on `w12merge` since the merge:
+Commits since the 30 Oct merge (on both branches up to `5676e3b`; the last row is on `week13` only):
 
 | Commit | What it did |
 | --- | --- |
@@ -1111,7 +1112,7 @@ Commits on `w12merge` since the merge:
 | `5676e3b` | Renamed to Inner Sydney Transit Projection Model; tablet fits phones. **Last commit with the street colours, BOAM and step 6 code**, for anyone who needs them back |
 | 5 Nov evening (latest) | CSV export; PIN, Opal 2016, pressure and street colours (with BOAM and step 6 code) removed; punctuality from published standards with per-trip Stats and the Early buses switch; hover highlights routes; this report |
 
-**Which branch is the showcase build** still has to be agreed with the teammate (§18). `w12merge` is the only one with both sides' work and everything since.
+**Which branch is the showcase build** still has to be agreed with the teammate (§18). The laptop runs `week13`. The teammate's newest work, the gradient, is only on `w12merge`.
 
 **Clean-up before submission.** The teammate committed:
 
@@ -1137,7 +1138,7 @@ Commits on `w12merge` since the merge:
 
 | Item | State |
 | --- | --- |
-| Server | launchd job, live, running the latest `w12merge` code (last restarted 10:45 pm on 5 Nov). 149 vehicles at 10:53 pm. Open pages need a reload to pick up the code |
+| Server | launchd job, live, running the `week13` code (last restarted 10:45 pm on 5 Nov). 149 vehicles at 10:53 pm. Open pages need a reload to pick up the code |
 | Recorder | Installed; its runs stand aside while the server is polling (its log then says "0 feed payloads received", which is normal) |
 | Sleep | Disabled (`sudo pmset -a disablesleep 1`). Undo after 6 November with `sudo pmset -a disablesleep 0`. Keep the Mac **on power**: it was found on battery on 3 November |
 | API usage | About 57,000 on every full day from 29 October to 2 November, and on 4 November. 3 November: 39,663 (server down 11:30–18:33). 5 November: 53,700 by 10:53 pm |
@@ -1223,7 +1224,7 @@ These should be stated plainly in the final report.
 
     If none works, run replays only; they need no internet.
 
-5. **Agree with the teammate** that `w12merge` is the showcase build, and that about 60–70% of Sydney Trains show grey (no live prediction).
+5. **Agree with the teammate** that `week13` is the showcase build (and whether to bring in their gradient from `w12merge`), and that about 60–70% of Sydney Trains show grey (no live prediction).
 6. **Pick the showcase replay** (§12.6), and rehearse the tablet flow: Replay mode → day → peak → **Live now** afterwards.
 7. **Make it clear when a replay is showing:** status line on, or say so out loud.
 8. **Make the report figures:**
@@ -1261,7 +1262,7 @@ Done on 5 November: the PM peak was recorded (100%), everything in `data/` was b
 
 ## 18. Open decisions waiting on the owner
 
-1. Confirm `w12merge` as the showcase build, with the teammate.
+1. Confirm `week13` as the showcase build with the teammate, and decide about their gradient commit on `w12merge`.
 2. Which peak is the showcase's default replay?
 3. Build the Wi-Fi stall alert?
 4. Show the mouse pointer on the projection (needed for hover), or hide it?
