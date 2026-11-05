@@ -9,7 +9,7 @@ def test_defaults_are_the_safe_showcase_state():
     s = ControlState().state
     assert s["theme"] == "dark"
     assert s["hud"] is False and s["calibrate"] is False and s["verify"] is False
-    assert s["stops"] is False  # off by default, same as the other static overlay (interchanges is on, stops isn't -- 2,903 markers is a lot to default to)
+    assert s["stops"] is False  # off by default -- 2,903 markers is a lot to default to
     assert all(s["modes"].values())
     assert s["nudge"] == {"dx": 0.0, "dy": 0.0, "scale": 1.0}
 

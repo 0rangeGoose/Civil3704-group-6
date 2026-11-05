@@ -169,13 +169,13 @@ const DEFAULT_RADIUS = 4;
 
 const TAIL_WINDOW_MS = 30000; // "last 30 seconds of travel"
 
-// Canvas fill + corridor/interchange colours per theme -- kept in JS since
+// Canvas fill + corridor colours per theme -- kept in JS since
 // these are drawn per-frame rather than styled with CSS. The theme itself
 // comes from the server's control state (see applyControl), so the tablet
 // controller and this page stay in sync.
 const CANVAS_THEME = {
-  dark: { bg: "#000", corridorDim: "rgba(220,228,238,0.55)", corridorBright: "rgba(255,255,255,0.95)", interchange: "#bfe8ff", stop: "rgba(180,196,214,0.65)" },
-  light: { bg: "#f4f6f8", corridorDim: "rgba(60,80,110,0.28)", corridorBright: "rgba(9,105,218,0.85)", interchange: "#0969da", stop: "rgba(60,90,130,0.55)" },
+  dark: { bg: "#000", corridorDim: "rgba(220,228,238,0.55)", corridorBright: "rgba(255,255,255,0.95)", stop: "rgba(180,196,214,0.65)" },
+  light: { bg: "#f4f6f8", corridorDim: "rgba(60,80,110,0.28)", corridorBright: "rgba(9,105,218,0.85)", stop: "rgba(60,90,130,0.55)" },
 };
 // Detailed background map (control.basemap = "detailed"), per theme: kept
 // faint so routes, vehicles and the data layers stay on top visually.
@@ -204,7 +204,7 @@ let theme = "dark";
 // the server first and comes back here via applyControl, so there is only
 // ever one source of truth.
 let control = {
-  theme: "dark", basemap: "plain", street_directions: "combined", verify: false, hud: false, calibrate: false, interchanges: true, stops: false, stop_history: false, stop_metric: "median", routes: [], route_slots: {},
+  theme: "dark", basemap: "plain", street_directions: "combined", verify: false, hud: false, calibrate: false, stops: false, stop_history: false, stop_metric: "median", routes: [], route_slots: {},
   lens: "adherence", line_layer: "none", area_layer: "none", area_unit: "zones", boam_period: "am", weights: {}, modes: {}, nudge: { dx: 0, dy: 0, scale: 1 },
   corners: false, warp: { tl: [0, 0], tr: [0, 0], br: [0, 0], bl: [0, 0] },
 };
@@ -644,10 +644,6 @@ const vehicles = new Map();
 let hoverX = null;
 let hoverY = null;
 const hoverTooltipEl = document.getElementById("hover-tooltip");
-
-// [{name, lat, lon, count}, ...] -- "services passing through in the last
-// few minutes" per interchange, from the same WS frame as vehicles.
-let interchanges = [];
 
 function resize() {
   canvas.width = window.innerWidth;
@@ -1226,14 +1222,13 @@ function render() {
   if (control.stop_history && stopHistoryCanvas) ctx.drawImage(stopHistoryCanvas, 0, 0);
 
   drawSegments();
-  if (control.interchanges) drawInterchangePulses(performance.now());
   // Names sit above the street colours but under the vehicles.
   if (control.basemap === "full" && basemapLabelsCanvas && !verificationMode) ctx.drawImage(basemapLabelsCanvas, 0, 0);
 
   if (calibrateMode) drawCalibrationCrosshairs();
 
   // Paused replay: the picture holds still (positions and fade-outs use the
-  // moment it paused), apart from the interchange glow.
+  // moment it paused).
   const nowMs = pausedAtMs ?? performance.now();
   const staleMs = staleAfterMs();
   const pollMs = pollIntervalMs();
@@ -1344,35 +1339,6 @@ function render() {
       : "LIVE";
     statusEl.textContent = `pulse-cbd  |  ${when}  |  ${vehicles.size} vehicles  |  ${wsStatus}` +
       (modeFlags.length ? `  |  ${modeFlags.join(" ")}` : "");
-  }
-}
-
-const INTERCHANGE_PULSE_PERIOD_MS = 2200;
-
-// "Pulse the interchange nodes with an intensity proportional to services
-// passing through them in the last few minutes" -- per the brief. A faint
-// base ring always marks the interchange location; brightness/size scale
-// with recent activity, breathing via a sine wave so a busy node reads as
-// alive rather than a static blob.
-function drawInterchangePulses(nowMs) {
-  if (!interchanges.length) return;
-  const phase = 0.5 + 0.5 * Math.sin((nowMs / INTERCHANGE_PULSE_PERIOD_MS) * 2 * Math.PI);
-  const interchangeColor = CANVAS_THEME[theme].interchange;
-  for (const ic of interchanges) {
-    const [x, y] = projector.project(ic.lat, ic.lon);
-    const activity = Math.min(1, Math.sqrt(ic.count) / 5); // sqrt so a handful of extra services doesn't dominate
-    const baseRadius = 6 + activity * 22;
-    const radius = baseRadius * (0.85 + 0.15 * phase);
-    const coreAlpha = 0.15 + activity * 0.55 * (0.7 + 0.3 * phase);
-
-    const grad = ctx.createRadialGradient(x, y, 0, x, y, radius);
-    grad.addColorStop(0, withAlpha(interchangeColor, coreAlpha));
-    grad.addColorStop(0.5, withAlpha(interchangeColor, coreAlpha * 0.35));
-    grad.addColorStop(1, withAlpha(interchangeColor, 0));
-    ctx.fillStyle = grad;
-    ctx.beginPath();
-    ctx.arc(x, y, radius, 0, Math.PI * 2);
-    ctx.fill();
   }
 }
 
@@ -1681,7 +1647,7 @@ document.getElementById("cal-save").addEventListener("click", async () => {
 // Keyboard backup for the team; the tablet controller is the main way in.
 // Every key sends a patch to the server rather than changing this page
 // directly, so the tablet shows the same state.
-//   C calibrate   V verification overlay   H status line   T theme   P pulses   M background map (plain / detailed / full)
+//   C calibrate   V verification overlay   H status line   T theme   M background map (plain / detailed / full)
 //   L dot colour (schedule / congestion / crowding)   K street lines (off / congestion / crowding)
 //   A areas (off / jobs / service gap / Opal 2016 / pressure)   G areas on travel zones / 150m grid
 //   K also reaches the BOAM streets (typical load / time lost)   B BOAM peak: AM / PM
@@ -1708,7 +1674,6 @@ document.addEventListener("keydown", (ev) => {
   else if (key === "v") sendControl({ verify: !control.verify });
   else if (key === "h") sendControl({ hud: !control.hud });
   else if (key === "t") sendControl({ theme: control.theme === "dark" ? "light" : "dark" });
-  else if (key === "p") sendControl({ interchanges: !control.interchanges });
   else if (key === "m") sendControl({ basemap: nextOf(BASEMAPS, control.basemap) });
   else if (key === "d") sendControl({ street_directions: nextOf(STREET_DIRECTIONS, control.street_directions) });
   else if (key === "s") sendControl({ stops: !control.stops });
@@ -1757,7 +1722,6 @@ function connectWebSocket() {
     }
     if (frame.playback) setPlayback(frame.playback);
     applyFrame(frame.vehicles);
-    if (frame.interchanges) interchanges = frame.interchanges;
   };
 }
 

@@ -65,11 +65,14 @@ Pulse CBD turns a physical scale model of inner Sydney into a live map of its pu
 Someone walking up to the model during the showcase would see, in a typical demonstration:
 
 1. **The network moving.** Hundreds of arrows travel along the model's streets and rail lines. Bigger arrows are trains, metro and light rail; smaller ones are buses and ferries. Each leaves a short fading tail so its movement is visible even between updates. By default each arrow is coloured by punctuality: green on time, amber running late, red very late or cancelled, grey when there is no schedule information to compare with.
-2. **Interchanges breathing.** Nine major stations (Central, Town Hall, Wynyard, Martin Place, Circular Quay, Barangaroo, Gadigal, Museum, St James) are marked by soft glowing rings that grow and brighten when more vehicles pass nearby.
-3. **A peak hour in five minutes.** The team taps *Replay mode* on the tablet, picks a day and *AM peak*. The model jumps to 7:00 that morning and plays it back 25 times faster than real time, so two hours of the morning rush pass in under five minutes. The presenter can pause, jump forwards or back, and point out where buses bunch up.
-4. **Coloured streets.** Turning on *Traffic* colours the streets buses are using: green where they are running smoothly, yellow stop-and-go, orange congested, red severely congested. Turning on *Crowding* colours them by how full vehicles are. Other street layers show typical bus loads and where buses typically fall behind the timetable, from Transport for NSW's bus ticketing data.
-5. **Coloured areas.** Turning on an area layer shades the whole model in patches — either Transport for NSW's "travel zones" or a regular 150 m grid — by how many jobs are there, by how well-served those jobs are by public transport (the *service gap*), by how many Opal card taps were made there, or by a combined *pressure* score.
-6. **A legend that explains everything.** The tablet's *What the colours mean* section explains every colour currently shown, with the exact numbers behind it — for example, "On time: up to 5 min behind the timetable for trains, buses and ferries; 2 min for metro and light rail".
+2. **A peak hour in five minutes.** The team taps *Replay mode* on the tablet, picks a day and *AM peak*. The model jumps to 7:00 that morning and plays it back 25 times faster than real time, so two hours of the morning rush pass in under five minutes. The presenter can pause, jump forwards or back, and point out where buses bunch up.
+3. **Coloured streets.** Turning on *Traffic* colours the streets buses are using: green where they are running smoothly, yellow stop-and-go, orange congested, red severely congested. Turning on *Crowding* colours them by how full vehicles are. Other street layers show typical bus loads and where buses typically fall behind the timetable, from Transport for NSW's bus ticketing data.
+4. **Coloured areas.** Turning on an area layer shades the whole model in patches — either Transport for NSW's "travel zones" or a regular 150 m grid — by how many jobs are there, by how well-served those jobs are by public transport (the *service gap*), by how many Opal card taps were made there, or by a combined *pressure* score.
+5. **Stops with a history.** *Stop markers* show every bus, train, light rail and ferry stop on the model. Turning on *Stop history* colours each stop by how late vehicles typically are when they reach it (median or mean), or, with the crowding colours on, by how often they arrive with few seats or fuller. It draws on every stop visit recorded live since 30 October — 865,907 by the afternoon of 5 November — and a stop needs at least 20 visits before it is coloured. The teammate's notes (as of 4 November) report that at 610 of 662 stops (92%) crowded vehicles arrived later than seated ones: an association, not proof that crowding causes delay. A stop's colour shows lateness *inherited* from earlier in the trip, not only delay caused at that stop (§7.13).
+6. **One route at a time.** Typing route names into the *route filter* — for example 333, T1 or L2, up to eight at once — makes those routes' vehicles, line and stops stand out, each in its own fixed colour, while everything else fades back. It is the easiest way to follow one bus route through the peak.
+7. **Both directions of a street.** By default each street shows one colour for both directions. *Street directions* switches to *Side by side*, with each direction drawn on its own side of the street, or to *To city* or *From city*, showing only traffic heading towards or away from Town Hall. On the 4 November AM peak replay, for example, it showed a congested inbound side right next to a clear outbound one, a difference the one-colour view averages away.
+8. **A map underneath, on a screen.** The model already has streets, so the background is plain by default. For a laptop or flat-screen demonstration, *Background map* adds faint roads, rail, water and parks (*Detailed*), or those plus suburb, station, landmark and street names (*Full*).
+9. **A legend that explains everything.** The tablet's *What the colours mean* section explains every colour currently shown, with the exact numbers behind it — for example, "On time: up to 5 min behind the timetable for trains, buses and ferries; 2 min for metro and light rail".
 
 ### 1.3 What it is for
 
@@ -225,7 +228,7 @@ There are three parts, all on one laptop:
 
 1. **The engine** (Python, folder `engine/`). Every 15 seconds during peaks it downloads the live feeds, decodes them, works out which trip and route each vehicle is on, snaps it onto its route, classifies its punctuality, adds its traffic and crowding readings to the street it is on, computes our own speed-based congestion reading, notes when it passes a stop, and saves the raw download to disk. At startup it also builds the slower "static" layers — jobs, service gap, Opal, BOAM and the pressure model — in the background, and keeps them in a cache file so later startups are almost instant.
 2. **The server** (`engine/publish/server.py`, using the aiohttp library, on port 8765). It sends the vehicle positions to every open page about twice a second over a WebSocket, answers requests for layers (streets, areas, BOAM, recordings, and so on), and holds the display-control state.
-3. **Two web pages** (`renderer/`). The **projector page** (`index.html`) draws everything on an HTML canvas: background, area colours, street colours, route corridors, vehicles and interchange rings. The **tablet page** (`controller.html`) has the buttons, the legend and the statistics.
+3. **Two web pages** (`renderer/`). The **projector page** (`index.html`) draws everything on an HTML canvas: background, area colours, street colours, route corridors and vehicles. The **tablet page** (`controller.html`) has the buttons, the legend and the statistics.
 
 ### 4.2 One shared display state
 
@@ -306,8 +309,6 @@ The teammate's stop history (merged 30 October) records one row each time a vehi
 
 While an area layer is on, vehicles turn white so they don't compete with the area colours.
 
-**Interchange rings** mark nine major stations and grow and brighten with the number of distinct vehicles that passed within 300 m in the last five minutes.
-
 **Street layers** colour the streets themselves. Only one is shown at a time:
 
 | Layer | What it shows | Source | Time basis |
@@ -368,7 +369,7 @@ Since 5 November the legend gives every colour a definition with its cut-off, no
 - "On time: up to 5 min trains, buses & ferries; 6 min intercity trains; 2 min metro & light rail behind the timetable."
 - "Jobs, second fifth: 14–28 jobs per 150 m square."
 
-Where TfNSW only provides categories (its traffic and crowding fields), the legend says so and names the feed value behind each colour rather than inventing ranges. It also explains the street rounding rule, solid versus faint lines, the stop-history bands and the interchange rings. Every definition is in §8.
+Where TfNSW only provides categories (its traffic and crowding fields), the legend says so and names the feed value behind each colour rather than inventing ranges. It also explains the street rounding rule, solid versus faint lines, and the stop-history bands. Every definition is in §8.
 
 **Team** (behind a PIN, `3704`; the check happens in the browser only, so it keeps visitors out but isn't real security) holds:
 
@@ -385,7 +386,7 @@ Where TfNSW only provides categories (its traffic and crowding fields), the lege
 
 Every key goes through the server, so the tablet stays in sync:
 
-C calibrate · F corner fit · V verification overlay · H status line · T theme · M background map · P interchange pulses · S stop markers · O stop history · L dot colour · K street layer · A area layer · G zones/grid · B BOAM peak · D street directions · Space pause/play · 1–5 mode groups · arrow keys nudge (Shift ×10) · [ ] scale · 0 reset nudge.
+C calibrate · F corner fit · V verification overlay · H status line · T theme · M background map · S stop markers · O stop history · L dot colour · K street layer · A area layer · G zones/grid · B BOAM peak · D street directions · Space pause/play · 1–5 mode groups · arrow keys nudge (Shift ×10) · [ ] scale · 0 reset nudge.
 
 ---
 
@@ -434,7 +435,9 @@ The rules:
 
 ### 7.3 Interchange activity (`engine/normalise/aggregate.py`)
 
-For each of nine interchanges, the engine counts the **distinct** vehicles seen within **300 m** in the last **5 minutes**. "Distinct" matters: a train waiting at a platform across several updates counts once, not once per update. The ring's size and brightness grow with √count ÷ 5, capped at 1, so a ring is at full strength from 25 vehicles. The square root keeps a handful of extra services from dominating: going from 1 to 4 vehicles doubles the strength, but so does going from 4 to 16.
+For each of nine interchanges (Central, Town Hall, Wynyard, Martin Place, Circular Quay, Barangaroo, Gadigal, Museum, St James), the engine counts the **distinct** vehicles seen within **300 m** in the last **5 minutes**. "Distinct" matters: a train waiting at a platform across several updates counts once, not once per update. The counts feed the "busiest interchanges" bars on the tablet's Stats tab.
+
+Until 5 November they also drove glowing rings on the projection that grew and brightened with activity (the "interchange pulses"). The owner had them removed: they are no longer drawn, and their toggle and **P** key are gone.
 
 ### 7.4 TfNSW's traffic and crowding fields (`engine/normalise/levels.py`)
 
@@ -678,6 +681,10 @@ Delays outside −30 minutes to +3 hours are treated as glitches and ignored.
 
 **Median versus mean.** Both are offered because they say different things. The median is the typical vehicle; the mean also carries how bad the occasional very late one is. A big gap between them marks an unreliable stop.
 
+**What a stop's colour does and doesn't say.** A vehicle arrives at a stop carrying all the delay it picked up earlier in its trip. A red stop therefore means "vehicles are typically late by the time they get here", not "this stop causes delay". That is also why the CBD tends to look greener: it has more rail, and buses pick up more delay towards the ends of their routes. To find where delay is *added*, compare consecutive stops, or use the BOAM "Where buses lose time" layer (§7.9).
+
+**A finding from the teammate's notes (as of 4 November).** At 610 of 662 stops (92%) with enough visits, crowded vehicles arrived later than seated ones. That is an association, not proof that crowding causes delay: crowded vehicles are likely also the ones running at peak times and on the busiest routes, which are late for other reasons too.
+
 **Only live data is recorded (fixed 30 October).** The visit recorder sat in code that replays also run through, so every replay, and every loop of a replay, wrote recorded visits into the history again. Now visits are written only while live. Checked: 30 seconds of a 50× replay added no visits.
 
 **Speed.** The `/stop_history` address recomputes everything at most once a minute, without holding up anything else on the server. A full recompute takes about 2 seconds at 866,000 visits (5 November). A cached answer takes 0.03 seconds.
@@ -748,14 +755,13 @@ All four are relative. Note how uneven the top fifth is: it runs from about 3,00
 - **Service gap** (fixed bands on the rank difference, §7.6): −0.40 or less, much more service than jobs; −0.40 to −0.15, more service; −0.15 to +0.15, balanced; +0.15 to +0.40, more jobs; over +0.40, much more jobs than service.
 - **Pressure:** fifths of the combined score (§7.8). It has no fixed values; only the order matters.
 
-### 8.4 Stops and interchanges
+### 8.4 Stops and background
 
 | Overlay | Bands |
 | --- | --- |
 | Stop history, delay (median or mean on arrival) | Under 1 min, 1 to under 2 min, 2 to under 4 min, 4 min or more late. Early counts as under 1 min |
 | Stop history, when the crowding lens is on | Share of arrivals with few seats or fuller: under 10%, 10 to under 25%, 25 to under 50%, 50% or more |
 | Stop history, any | Stops with fewer than 20 visits aren't coloured |
-| Interchange rings | Strength = √(distinct vehicles within 300 m in the last 5 min) ÷ 5, full from 25 vehicles |
 | Background map | Not data: roads, rail, water and parks, drawn faint |
 
 ---
@@ -1345,7 +1351,7 @@ These should be stated plainly in the final report.
 | 3 Nov | Mac shut down after 11:30. Server down until 18:33 and the PM peak lost. Server moved to a self-restarting launchd job |
 | 4 Nov | Optional background map (Plain, Detailed, Full). Street glow removed. Streets pooled, faint when thin; long BOAM sections left out of time lost. Street direction modes, with one line per stretch |
 | 4–5 Nov | Teammate: corner fit for aligning the projection on the model (F), merged into `w12merge`; README rewrite |
-| 5 Nov | Tablet: Replay mode with a day dropdown and AM/PM buttons; every colour defined with its cut-off, read from the server; stop-history legend. This report rewritten for readers without prior context, and the teammate's work merged in |
+| 5 Nov | Tablet: Replay mode with a day dropdown and AM/PM buttons; every colour defined with its cut-off, read from the server; stop-history legend. This report rewritten for readers without prior context, and the teammate's work merged in. Interchange pulses removed from the projection |
 
 ---
 
@@ -1379,7 +1385,6 @@ Every setting returns to its default when the server restarts, except the nudge 
 | `verify` | Verification overlay | on / off | off |
 | `hud` | Status line on the projection | on / off | off |
 | `calibrate` | Calibration crosshairs | on / off | off |
-| `interchanges` | Interchange rings | on / off | on |
 | `stops`, `stop_history` | Stop markers; stop history colours | on / off | off |
 | `stop_metric` | Stop history delay statistic | median, mean | median |
 | `routes` | Routes singled out by the filter | up to 8 route names | none |
@@ -1427,7 +1432,7 @@ Every setting returns to its default when the server restarts, except the nudge 
 | `static_gtfs` | Timetable download address and cache location |
 | `realtime_gtfs` | The 15 live feeds polled (7 vehicle-position, 7 trip-update, 1 combined alerts), the polling interval, and `stale_after_seconds` (90 s: how long without an update before a vehicle is treated as gone) |
 | `adherence_thresholds_seconds` | Per-mode on-time thresholds and the "very late" multiplier (§7.2) |
-| `interchanges`, `interchange_radius_m` | The nine interchanges and the 300 m radius (§7.3) |
+| `interchanges`, `interchange_radius_m` | The nine interchanges and the 300 m radius counted for the Stats tab (§7.3) |
 | `server` | Listens on every network interface, port 8765 |
 | `controller` | The team PIN (`3704`) |
 | `api_budget` | Daily limit 57,000, the peak windows, the 600 s slowest interval, file locations (§12.3) |
