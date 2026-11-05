@@ -1078,6 +1078,7 @@ Current usage and pace are under Team → System health on the tablet, and at `/
 **Small drift** between weekly sessions is fixed with the **nudge** on the team panel: shift by 2 px or 20 px, and scale.
 
 **Corner fit** (teammate's, merged 5 November) is the quick way to line the map up when the projector has moved or isn't square to the table: Team → Alignment → Corner fit, or **F**.
+
 - Four handles appear on the footprint's corners (north-west, north-east, south-east, south-west).
 - Drag each onto the matching corner of the model, and the whole map follows. It is a homography through those four points, so it also removes keystone (the trapezoid shape from a projector that isn't straight above).
 - For fine moves, set "Arrows move" to a corner and use the arrow pad.
